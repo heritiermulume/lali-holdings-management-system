@@ -1,0 +1,200 @@
+{
+  "app": {
+    "name": "LHMS",
+    "full": "LALI Holdings Management System",
+    "tagline": "The central management system for LALI Holdings"
+  },
+  "auth": {
+    "welcome": "Welcome",
+    "signin": "Secure sign in",
+    "email": "Email address",
+    "password": "Password",
+    "submit": "Enter LHMS",
+    "hint": "Multi-country, multi-company ERP platform",
+    "error": "Invalid credentials or inactive account."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "modules": "Modules",
+    "organization": "Organization",
+    "companies": "Companies",
+    "users": "Users",
+    "roles": "Roles",
+    "notifications": "Notifications",
+    "audit": "Audit log",
+    "settings": "Settings",
+    "kams": "KAMS",
+    "more": "More",
+    "moreOptions": "More options",
+    "home": "Home"
+  },
+  "dashboard": {
+    "hello": "Hello",
+    "goodMorning": "Good morning",
+    "goodAfternoon": "Good afternoon",
+    "goodEvening": "Good evening",
+    "goodNight": "Good night",
+    "overview": "Group overview",
+    "countries": "Countries",
+    "cities": "Cities",
+    "companies": "Companies",
+    "offices": "Offices",
+    "users": "Users",
+    "modules": "Active modules",
+    "revenue": "Revenue",
+    "expenses": "Expenses",
+    "profit": "Profit",
+    "cash": "Cash",
+    "assets": "Assets",
+    "liabilities": "Liabilities",
+    "receivables": "Receivables",
+    "payables": "Payables",
+    "performance": "Company performance",
+    "activity": "Recent activity",
+    "tasks": "Tasks",
+    "alerts": "Alerts",
+    "quick": "Quick access",
+    "trend": "Consolidated trend",
+    "launcher": "Choose a module to continue",
+    "searchApps": "Search apps"
+  },
+  "groupDash": {
+    "title": "Dashboard",
+    "overview": "Overview",
+    "actions": "Decisions",
+    "overviewHint": "Group indicators, consolidated finances and company performance.",
+    "actionsHint": "Alerts, tasks and activity that need attention now.",
+    "decision": "Decision center",
+    "watch": "Modules to watch",
+    "attention": "Needs attention",
+    "details": "Module details",
+    "moduleHint": "Operational dashboard for this module.",
+    "modulePending": "Detailed indicators will be populated once the module is fully operational.",
+    "noAccess": "You do not have access to this dashboard."
+  },
+  "moduleDash": {
+    "heavy-equipment": {
+      "fleet": "Fleet",
+      "rentals": "Rentals",
+      "maintenance": "Maintenance",
+      "utilization": "Utilization"
+    },
+    "real-estate": {
+      "properties": "Properties",
+      "occupancy": "Occupancy",
+      "leases": "Leases",
+      "rent": "Rent"
+    },
+    "rice-mills": {
+      "production": "Production",
+      "stock": "Stock",
+      "shipments": "Shipments",
+      "yield": "Yield"
+    },
+    "lali-tv": {
+      "programs": "Programs",
+      "audience": "Audience",
+      "ads": "Advertising",
+      "broadcast": "Broadcast"
+    },
+    "generic": {
+      "items": "Items",
+      "active": "Active",
+      "pending": "Pending",
+      "alerts": "Alerts"
+    }
+  },
+  "modules": {
+    "title": "Business modules",
+    "subtitle": "Each company only activates the modules it needs.",
+    "open": "Open module",
+    "active": "Active",
+    "in_development": "In development",
+    "coming_soon": "Coming soon",
+    "inactive": "Inactive module"
+  },
+  "org": {
+    "title": "Organization",
+    "subtitle": "Countries, cities, companies, offices and departments",
+    "countries": "Countries",
+    "provinces": "Provinces",
+    "cities": "Cities",
+    "companies": "Companies",
+    "offices": "Offices",
+    "departments": "Departments",
+    "add": "Add",
+    "name": "Name",
+    "nameFr": "Name (FR)",
+    "code": "Code",
+    "status": "Status",
+    "active": "Active"
+  },
+  "users": {
+    "title": "Users and access",
+    "subtitle": "Granular roles and access scopes",
+    "create": "New user",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "role": "Role",
+    "company": "Company",
+    "email": "Email",
+    "phone": "Phone",
+    "office": "Office",
+    "timezone": "Timezone",
+    "photo": "Profile photo",
+    "photoHint": "Click to change the photo. It is saved automatically.",
+    "photoError": "Unable to save the photo."
+  },
+  "common": {
+    "search": "Search",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "view": "View",
+    "actions": "Actions",
+    "loading": "Loading...",
+    "empty": "No data yet.",
+    "logout": "Sign out",
+    "language": "Language",
+    "all": "All",
+    "create": "Create",
+    "close": "Close",
+    "saved": "Saved"
+  },
+  "kams": {
+    "title": "King Attitude Management System",
+    "subtitle": "Commercial operations for King Attitude.",
+    "dashboardHint": "Overview of sales, finances and recent orders.",
+    "clientsHint": "View and manage King Attitude clients.",
+    "productsHint": "Product catalog, stock levels and pricing.",
+    "ordersHint": "Track orders and their status.",
+    "campaignsHint": "Marketing campaigns, channels and budgets.",
+    "clients": "Clients",
+    "products": "Products",
+    "orders": "Orders",
+    "campaigns": "Campaigns",
+    "newClient": "New client",
+    "newProduct": "New product",
+    "newOrder": "New order",
+    "newCampaign": "New campaign"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "subtitle": "System alerts and messages.",
+    "markAll": "Mark all as read",
+    "empty": "No notifications."
+  },
+  "audit": {
+    "title": "Audit log",
+    "subtitle": "Every important action can be traced."
+  },
+  "settings": {
+    "title": "Settings",
+    "general": "General",
+    "profile": "Profile",
+    "admin": "Administration",
+    "organizationHint": "Countries, cities, offices and departments",
+    "companiesHint": "Group companies"
+  }
+}

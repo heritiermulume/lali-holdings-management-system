@@ -1,0 +1,7 @@
+.DS_Store
+.idea
+.vscode
+*.log
+
+# Local scratch (not the Laravel storage tree)
+/storage

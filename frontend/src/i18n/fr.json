@@ -1,0 +1,200 @@
+{
+  "app": {
+    "name": "LHMS",
+    "full": "LALI Holdings Management System",
+    "tagline": "Le système central de gestion de LALI Holdings"
+  },
+  "auth": {
+    "welcome": "Bienvenue",
+    "signin": "Connexion sécurisée",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "submit": "Accéder à LHMS",
+    "hint": "Plateforme ERP multi-pays et multi-sociétés",
+    "error": "Identifiants incorrects ou compte inactif."
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "modules": "Modules",
+    "organization": "Organisation",
+    "companies": "Sociétés",
+    "users": "Utilisateurs",
+    "roles": "Rôles",
+    "notifications": "Notifications",
+    "audit": "Journal d'audit",
+    "settings": "Paramètres",
+    "kams": "KAMS",
+    "more": "Plus",
+    "moreOptions": "Plus d'options",
+    "home": "Accueil"
+  },
+  "dashboard": {
+    "hello": "Bonjour",
+    "goodMorning": "Bonjour",
+    "goodAfternoon": "Bon après-midi",
+    "goodEvening": "Bonsoir",
+    "goodNight": "Bonne nuit",
+    "overview": "Vue globale du groupe",
+    "countries": "Pays",
+    "cities": "Villes",
+    "companies": "Sociétés",
+    "offices": "Bureaux",
+    "users": "Utilisateurs",
+    "modules": "Modules actifs",
+    "revenue": "Chiffre d'affaires",
+    "expenses": "Dépenses",
+    "profit": "Bénéfices",
+    "cash": "Trésorerie",
+    "assets": "Actifs",
+    "liabilities": "Passifs",
+    "receivables": "Créances",
+    "payables": "Dettes",
+    "performance": "Performance des sociétés",
+    "activity": "Activités récentes",
+    "tasks": "Tâches",
+    "alerts": "Alertes",
+    "quick": "Accès rapides",
+    "trend": "Tendance consolidée",
+    "launcher": "Choisissez un module pour continuer",
+    "searchApps": "Rechercher une application"
+  },
+  "groupDash": {
+    "title": "Tableau de bord",
+    "overview": "Vue globale",
+    "actions": "Décisions",
+    "overviewHint": "Indicateurs du groupe, finances consolidées et performance des sociétés.",
+    "actionsHint": "Alertes, tâches et activités à traiter maintenant.",
+    "decision": "Centre de décision",
+    "watch": "Modules à suivre",
+    "attention": "À traiter",
+    "details": "Détails du module",
+    "moduleHint": "Tableau de bord opérationnel du module.",
+    "modulePending": "Les indicateurs détaillés seront alimentés dès que le module sera pleinement opérationnel.",
+    "noAccess": "Vous n'avez pas accès à ce tableau de bord."
+  },
+  "moduleDash": {
+    "heavy-equipment": {
+      "fleet": "Parc",
+      "rentals": "Locations",
+      "maintenance": "Maintenance",
+      "utilization": "Utilisation"
+    },
+    "real-estate": {
+      "properties": "Biens",
+      "occupancy": "Occupation",
+      "leases": "Baux",
+      "rent": "Loyers"
+    },
+    "rice-mills": {
+      "production": "Production",
+      "stock": "Stocks",
+      "shipments": "Livraisons",
+      "yield": "Rendement"
+    },
+    "lali-tv": {
+      "programs": "Programmes",
+      "audience": "Audience",
+      "ads": "Publicité",
+      "broadcast": "Diffusion"
+    },
+    "generic": {
+      "items": "Éléments",
+      "active": "Actifs",
+      "pending": "En attente",
+      "alerts": "Alertes"
+    }
+  },
+  "modules": {
+    "title": "Modules métier",
+    "subtitle": "Chaque société active uniquement les modules dont elle a besoin.",
+    "open": "Ouvrir le module",
+    "active": "Actif",
+    "in_development": "En développement",
+    "coming_soon": "Bientôt disponible",
+    "inactive": "Module inactif"
+  },
+  "org": {
+    "title": "Organisation",
+    "subtitle": "Pays, villes, sociétés, bureaux et départements",
+    "countries": "Pays",
+    "provinces": "Provinces",
+    "cities": "Villes",
+    "companies": "Sociétés",
+    "offices": "Bureaux",
+    "departments": "Départements",
+    "add": "Ajouter",
+    "name": "Nom",
+    "nameFr": "Nom (FR)",
+    "code": "Code",
+    "status": "Statut",
+    "active": "Actif"
+  },
+  "users": {
+    "title": "Utilisateurs et accès",
+    "subtitle": "Rôles granulaires et périmètres d'accès",
+    "create": "Nouvel utilisateur",
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "role": "Rôle",
+    "company": "Société",
+    "email": "E-mail",
+    "phone": "Téléphone",
+    "office": "Bureau",
+    "timezone": "Fuseau horaire",
+    "photo": "Photo de profil",
+    "photoHint": "Cliquez pour changer la photo. Elle est enregistrée automatiquement.",
+    "photoError": "Impossible d'enregistrer la photo."
+  },
+  "common": {
+    "search": "Rechercher",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "view": "Consulter",
+    "actions": "Actions",
+    "loading": "Chargement...",
+    "empty": "Aucune donnée pour le moment.",
+    "logout": "Déconnexion",
+    "language": "Langue",
+    "all": "Tous",
+    "create": "Créer",
+    "close": "Fermer",
+    "saved": "Enregistré"
+  },
+  "kams": {
+    "title": "King Attitude Management System",
+    "subtitle": "Gestion commerciale de King Attitude.",
+    "dashboardHint": "Vue d'ensemble des ventes, des finances et des commandes récentes.",
+    "clientsHint": "Consultez et gérez les clients de King Attitude.",
+    "productsHint": "Catalogue, stocks et tarifs des produits.",
+    "ordersHint": "Suivi des commandes et de leur statut.",
+    "campaignsHint": "Campagnes marketing, canaux et budgets.",
+    "clients": "Clients",
+    "products": "Produits",
+    "orders": "Commandes",
+    "campaigns": "Campagnes",
+    "newClient": "Nouveau client",
+    "newProduct": "Nouveau produit",
+    "newOrder": "Nouvelle commande",
+    "newCampaign": "Nouvelle campagne"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "subtitle": "Alertes et messages du système.",
+    "markAll": "Tout marquer comme lu",
+    "empty": "Aucune notification."
+  },
+  "audit": {
+    "title": "Journal d'audit",
+    "subtitle": "Chaque action importante est traçable."
+  },
+  "settings": {
+    "title": "Paramètres",
+    "general": "Général",
+    "profile": "Profil",
+    "admin": "Administration",
+    "organizationHint": "Pays, villes, bureaux et départements",
+    "companiesHint": "Sociétés du groupe"
+  }
+}
