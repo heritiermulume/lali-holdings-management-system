@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Office;
 use App\Models\Role;
+use App\Models\Setting;
 use App\Models\User;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
@@ -40,7 +41,7 @@ class UserController extends Controller
         $data = $this->validated($request);
         $data['password'] = $data['password'] ?? 'Password123!';
         $data['locale'] = $data['locale'] ?? SettingsCatalog::defaultLocale();
-        $data['timezone'] = $data['timezone'] ?? (string) \App\Models\Setting::value('general', 'default_timezone', 'Africa/Kinshasa');
+        $data['timezone'] = $data['timezone'] ?? (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa');
         unset($data['role_ids'], $data['scopes'], $data['company_ids'], $data['office_ids'], $data['assignments'], $data['platform_role_id']);
 
         $user = User::query()->create($data);

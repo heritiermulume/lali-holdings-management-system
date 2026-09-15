@@ -2,8 +2,8 @@
 
 namespace App\Modules\Kams\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Modules\Kams\KamsModule;
 use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;

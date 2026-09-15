@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Support\AuditLogger;
 use App\Core\Support\ModuleManager;
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\SystemModule;
 use Illuminate\Http\JsonResponse;

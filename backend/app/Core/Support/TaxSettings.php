@@ -13,7 +13,7 @@ class TaxSettings
             return (string) $country->tax_name;
         }
 
-        return (string) Setting::value('finance', 'tax_name', 'TVA');
+        return (string) Setting::getValue('finance', 'tax_name', 'TVA');
     }
 
     public static function rate(?Country $country = null): float
@@ -22,9 +22,9 @@ class TaxSettings
             return max(0, (float) $country->tax_rate);
         }
 
-        $rate = Setting::value('finance', 'default_tax_rate', null);
+        $rate = Setting::getValue('finance', 'default_tax_rate', null);
         if ($rate === null) {
-            $rate = Setting::value('kams', 'default_tax_rate', 16);
+            $rate = Setting::getValue('kams', 'default_tax_rate', 16);
         }
 
         return max(0, (float) $rate);
@@ -32,7 +32,7 @@ class TaxSettings
 
     public static function inclusive(): bool
     {
-        return (bool) Setting::value('finance', 'tax_inclusive_prices', false);
+        return (bool) Setting::getValue('finance', 'tax_inclusive_prices', false);
     }
 
     /**

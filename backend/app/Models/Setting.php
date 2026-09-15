@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 #[Fillable(['group', 'key', 'value', 'type'])]
 class Setting extends Model
 {
-    public static function value(string $group, string $key, mixed $default = null): mixed
+    public static function getValue(string $group, string $key, mixed $default = null): mixed
     {
         $row = static::query()->where('group', $group)->where('key', $key)->first();
         if (! $row) {

@@ -37,7 +37,7 @@ class AgentAccountService
             'phone' => $member->phone,
             'avatar_path' => $member->photo_path,
             'locale' => SettingsCatalog::defaultLocale(),
-            'timezone' => (string) Setting::value('general', 'default_timezone', 'Africa/Kinshasa'),
+            'timezone' => (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa'),
             'is_active' => false,
             'primary_company_id' => $member->company_id,
             'primary_office_id' => $member->office_id,

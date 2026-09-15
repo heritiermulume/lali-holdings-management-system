@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Support\AuditLogger;
 use App\Core\Support\RoleCatalog;
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Models\Permission;
 use App\Models\Role;
 use Illuminate\Http\JsonResponse;

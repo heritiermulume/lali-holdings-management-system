@@ -3,9 +3,11 @@
 namespace App\Modules\Kams\Http\Controllers;
 
 use App\Core\Support\AuditLogger;
+use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
-use App\Core\Support\RoleCatalog;
+use App\Models\Company;
+use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsCandidate;
@@ -26,6 +28,7 @@ use App\Modules\Kams\Support\PersonName;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class KamsRecruitmentController extends Controller
 {
@@ -44,12 +47,12 @@ class KamsRecruitmentController extends Controller
     {
         $companyIds = $request->user()->accessibleCompanyIds();
 
-        $companies = \App\Models\Company::query()
+        $companies = Company::query()
             ->when(! $request->user()->isGroupAdmin(), fn ($q) => $q->whereIn('id', $companyIds ?: [0]))
             ->orderBy('name')
             ->get(['id', 'name', 'code']);
 
-        $offices = \App\Models\Office::query()
+        $offices = Office::query()
             ->when(! $request->user()->isGroupAdmin(), function ($q) use ($request, $companyIds) {
                 $officeIds = $request->user()->accessibleOfficeIds();
                 $q->whereIn('company_id', $companyIds ?: [0]);
@@ -270,8 +273,8 @@ class KamsRecruitmentController extends Controller
         $this->assertCompany($request, (int) $candidate->company_id);
         abort_unless(in_array($candidate->status, ['received', 'under_review', 'shortlisted', 'on_hold'], true), 422, 'Interview is not available for this application.');
 
-        $interviewer = \App\Models\User::query()->where('is_active', true)->findOrFail($data['interviewer_user_id']);
-        $started = \Illuminate\Support\Carbon::parse($data['interview_starts_at']);
+        $interviewer = User::query()->where('is_active', true)->findOrFail($data['interviewer_user_id']);
+        $started = Carbon::parse($data['interview_starts_at']);
         $ended = now();
         if ($ended->lt($started)) {
             $ended = $started->copy();
@@ -819,7 +822,7 @@ class KamsRecruitmentController extends Controller
             return;
         }
 
-        $officeCompany = \App\Models\Office::query()->whereKey($officeId)->value('company_id');
+        $officeCompany = Office::query()->whereKey($officeId)->value('company_id');
         abort_unless((int) $officeCompany === $companyId, 422, 'The selected office does not belong to this company.');
     }
 

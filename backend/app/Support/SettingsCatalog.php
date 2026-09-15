@@ -90,7 +90,7 @@ class SettingsCatalog
     public static function defaultLocale(): string
     {
         self::ensure();
-        $locale = strtolower((string) Setting::value('general', 'default_locale', 'fr'));
+        $locale = strtolower((string) Setting::getValue('general', 'default_locale', 'fr'));
 
         return in_array($locale, ['fr', 'en'], true) ? $locale : 'fr';
     }

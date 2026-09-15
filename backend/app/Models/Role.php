@@ -3,9 +3,6 @@
 namespace App\Models;
 
 use App\Core\Support\RoleCatalog;
-use App\Models\Office;
-use App\Models\Permission;
-use App\Models\User;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -28,7 +25,7 @@ class Role extends Model
 
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(User::class);
+        return $this->belongsToMany(User::class)->withPivot('company_id');
     }
 
     public function offices(): BelongsToMany

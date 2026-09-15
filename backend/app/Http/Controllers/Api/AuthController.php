@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Core\Support\AuditLogger;
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Modules\Kams\Models\KamsMember;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -134,7 +135,7 @@ class AuthController extends Controller
         ]);
 
         $request->user()->forceFill(['password' => $data['password']])->save();
-        \App\Modules\Kams\Models\KamsMember::query()
+        KamsMember::query()
             ->where('user_id', $request->user()->id)
             ->update(['login_password' => null]);
         AuditLogger::record('password_change', $request->user());

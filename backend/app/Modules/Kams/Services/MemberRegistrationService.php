@@ -3,7 +3,6 @@
 namespace App\Modules\Kams\Services;
 
 use App\Core\Support\AuditLogger;
-use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsMemberHistory;
 use App\Modules\Kams\Models\KamsObservationDay;

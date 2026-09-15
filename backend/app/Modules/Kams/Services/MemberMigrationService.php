@@ -60,7 +60,7 @@ class MemberMigrationService
                     'status' => $issues === [] ? 'pending_verification' : 'imported',
                 ]);
 
-                    $this->storeOpeningPositions($companyId, $member, $normalized);
+                $this->storeOpeningPositions($companyId, $member, $normalized);
                 $this->communications->notifyMigration($member, $issues === [] ? 'profile_verification' : 'missing_information', 'fr', implode(', ', $issues));
 
                 if ($issues !== []) {

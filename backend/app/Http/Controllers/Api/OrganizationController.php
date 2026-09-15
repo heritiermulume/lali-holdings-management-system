@@ -16,6 +16,7 @@ use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Province;
 use App\Support\CountryTaxCatalog;
+use App\Support\CurrencyCatalog;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -80,7 +81,7 @@ class OrganizationController extends Controller
             'is_active' => ['boolean'],
         ]);
         if (! empty($data['currency_code']) && empty($data['currency_symbol'])) {
-            $data['currency_symbol'] = \App\Support\CurrencyCatalog::find($data['currency_code'])['symbol'];
+            $data['currency_symbol'] = CurrencyCatalog::find($data['currency_code'])['symbol'];
         }
         $response = $this->updateModel($country, $data);
         CurrencySync::ensureFromCountries();

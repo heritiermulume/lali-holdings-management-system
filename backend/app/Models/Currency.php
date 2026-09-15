@@ -19,6 +19,6 @@ class Currency extends Model
     public static function defaultCode(): string
     {
         return static::query()->where('is_default', true)->value('code')
-            ?: (string) Setting::value('finance', 'reporting_currency', 'USD');
+            ?: (string) Setting::getValue('finance', 'reporting_currency', 'USD');
     }
 }

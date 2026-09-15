@@ -33,14 +33,14 @@ class CurrencyConverter
 
     public function spread(): float
     {
-        $percent = (float) Setting::value('finance', 'fx_spread_percent', 1.5);
+        $percent = (float) Setting::getValue('finance', 'fx_spread_percent', 1.5);
 
         return max(0, $percent) / 100;
     }
 
     public function decimals(): int
     {
-        $places = (int) Setting::value('finance', 'decimal_places', 2);
+        $places = (int) Setting::getValue('finance', 'decimal_places', 2);
 
         return max(0, min(6, $places));
     }

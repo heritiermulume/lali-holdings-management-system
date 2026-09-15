@@ -75,7 +75,7 @@ class SpreadsheetRows
      */
     private static function fromXlsx(string $path): array
     {
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         abort_unless($zip->open($path) === true, 422, __('Unable to read the Excel file.'));
 
         $strings = self::sharedStrings($zip->getFromName('xl/sharedStrings.xml') ?: '');
