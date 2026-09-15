@@ -21,19 +21,23 @@ import { ProfileModal } from '../ProfileModal'
 import { UserAvatar } from '../UserAvatar'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
-import { businessModuleIcon, dashboardBusinessSlug, moduleFromPath, moduleRegistry } from '../../modules/registry'
+import { canAccessModule, DASHBOARD_PERMS, SETTINGS_PERMS } from '../../lib/access'
+import { SettingsMobileTabs } from './SettingsMobileTabs'
+import { businessModuleIcon, dashboardBusinessSlug, moduleFromPath, moduleRegistry, navItemLabel, settingsNavItems } from '../../modules/registry'
 import { cn } from '../../lib/cn'
+import { roleLabel } from '../../lib/format'
 import api from '../../lib/api'
 
 const links = [
-  { to: '/', key: 'dashboard', icon: LayoutDashboard, perm: 'dashboard.company' },
+  { to: '/', key: 'home', icon: House },
+  { to: '/modules/dashboard', key: 'dashboard', icon: LayoutDashboard, anyPerm: DASHBOARD_PERMS },
   { to: '/modules', key: 'modules', icon: Crown, perm: 'modules.view' },
   { to: '/organization', key: 'organization', icon: Globe2, perm: 'organization.view' },
   { to: '/companies', key: 'companies', icon: Building2, perm: 'companies.view' },
   { to: '/users', key: 'users', icon: Users, perm: 'users.view' },
   { to: '/notifications', key: 'notifications', icon: Bell, perm: 'notifications.view' },
   { to: '/audit', key: 'audit', icon: ScrollText, perm: 'audit.view' },
-  { to: '/settings', key: 'settings', icon: Settings, perm: 'settings.manage' },
+  { to: '/settings', key: 'settings', icon: Settings, anyPerm: SETTINGS_PERMS },
 ]
 
 function navClass(isActive: boolean) {
@@ -45,7 +49,7 @@ function navClass(isActive: boolean) {
 
 export function AppShell() {
   const { t, i18n } = useTranslation()
-  const { user, logout, hasPermission, setLocale } = useAuth()
+  const { user, logout, hasPermission, hasAnyPermission, setLocale } = useAuth()
   const [open, setOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
@@ -57,6 +61,7 @@ export function AppShell() {
   const ModuleIcon = currentModule?.icon
   const { modules } = useSystemModules()
   const isDashboardWorkspace = currentModule?.slug === 'dashboard'
+  const isSettings = currentModule?.slug === 'settings'
   const businessSlug = dashboardBusinessSlug(location.pathname)
   const plusModule = businessSlug ? (moduleRegistry[businessSlug] ?? null) : currentModule
 
@@ -67,17 +72,30 @@ export function AppShell() {
   }, [location.pathname])
 
   useEffect(() => {
+    if (!hasPermission('notifications.view')) {
+      setUnread(0)
+      return
+    }
     api.get('/notifications', { params: { unread: 1, per_page: 1 } }).then((res) => {
       setUnread(res.data.meta?.unread_count ?? 0)
     }).catch(() => undefined)
-  }, [location.pathname])
+  }, [location.pathname, hasPermission])
 
-  const visible = links.filter((link) => !link.perm || hasPermission(link.perm) || link.to === '/' || link.to === '/settings')
+  const canSeeItem = (item: { perm?: string; anyPerm?: string[] }) => {
+    if (item.anyPerm?.length) return item.anyPerm.some((perm) => hasPermission(perm))
+    return !item.perm || hasPermission(item.perm)
+  }
   const isHome = location.pathname === '/'
-  const moduleItems = (currentModule?.items ?? []).filter((item) => !item.perm || hasPermission(item.perm))
-  const plusItems = (plusModule?.items ?? []).filter((item) => !item.perm || hasPermission(item.perm))
-  const needsMore = Boolean(currentModule && (moduleItems.length > 3 || isDashboardWorkspace))
-  const bottomItems = currentModule
+  const sourceItems = isSettings
+    ? settingsNavItems(modules, i18n.language)
+    : (currentModule?.items ?? [])
+  const visible = links.filter(canSeeItem)
+  const moduleItems = sourceItems.filter(canSeeItem)
+  const plusItems = (plusModule?.items ?? []).filter(canSeeItem)
+  const needsMore = Boolean(currentModule && !isSettings && (moduleItems.length > 3 || isDashboardWorkspace))
+  const bottomItems = isSettings
+    ? [{ to: '/', key: 'nav.home', icon: House, end: true }]
+    : currentModule
     ? [
         { to: '/', key: 'nav.home', icon: House, end: true },
         ...moduleItems.slice(0, needsMore ? 2 : 4).map((item) => ({
@@ -90,13 +108,13 @@ export function AppShell() {
       ]
     : [
         { to: '/', key: 'nav.home', icon: House, end: true },
-        { to: '/notifications', key: 'nav.notifications', icon: Bell, end: false },
-        { to: '/settings', key: 'nav.settings', icon: Settings, end: false },
+        ...(hasPermission('notifications.view') ? [{ to: '/notifications', key: 'nav.notifications', icon: Bell, end: false }] : []),
+        ...(hasAnyPermission(SETTINGS_PERMS) ? [{ to: '/settings', key: 'nav.settings', icon: Settings, end: false }] : []),
       ]
   const visibleBottomPaths = new Set(bottomItems.filter((item) => item.to !== '__more__').map((item) => item.to))
   const extraModuleItems = plusItems.filter((item) => !visibleBottomPaths.has(item.to))
   const extraDashboardModules = plusModule?.slug === 'dashboard'
-    ? modules.filter((item) => !visibleBottomPaths.has(`/modules/dashboard/${item.slug}`))
+    ? modules.filter((item) => !visibleBottomPaths.has(`/modules/dashboard/${item.slug}`) && canAccessModule(user, item.slug))
     : []
 
   return (
@@ -111,18 +129,18 @@ export function AppShell() {
       ) : null}
       {!isHome ? (
       <aside className={cn(
-        'fixed inset-y-0 left-0 z-40 w-[272px] bg-lhms text-white transition-transform lg:static lg:translate-x-0',
+        'fixed inset-y-0 left-0 z-40 flex w-[272px] flex-col overflow-hidden bg-lhms text-white transition-transform lg:sticky lg:top-0 lg:h-dvh lg:self-start lg:translate-x-0',
         open ? 'translate-x-0' : '-translate-x-full',
       )}>
-        <div className="flex h-full flex-col">
-          <div className="flex items-center justify-between px-5 py-6">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex shrink-0 items-center justify-between px-5 py-6">
             <div>
               <div className="text-xs font-semibold tracking-[0.28em] text-white/60">LALI HOLDINGS</div>
               <div className="mt-1 text-2xl font-extrabold">{currentModule ? t(currentModule.nameKey) : 'LHMS'}</div>
             </div>
             <button className="lg:hidden" onClick={() => setOpen(false)}><X /></button>
           </div>
-          <nav className="flex-1 space-y-1 overflow-y-auto px-3">
+          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3">
             {currentModule ? (
               <>
                 <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
@@ -132,7 +150,7 @@ export function AppShell() {
                 <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40">
                   {t(currentModule.titleKey)}
                 </div>
-                {moduleItems.map((item) => {
+                {moduleItems.filter((item) => !item.to.startsWith('/settings/modules/')).map((item) => {
                   const Icon = item.icon
                   return (
                     <NavLink
@@ -142,16 +160,36 @@ export function AppShell() {
                       className={({ isActive }) => navClass(isActive)}
                     >
                       <Icon size={18} />
-                      {t(item.labelKey)}
+                      {navItemLabel(item, t)}
                     </NavLink>
                   )
                 })}
+                {isSettings ? (
+                  <>
+                    <div className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40">
+                      {t('nav.modules')}
+                    </div>
+                    {moduleItems.filter((item) => item.to.startsWith('/settings/modules/')).map((item) => {
+                      const Icon = item.icon
+                      return (
+                        <NavLink
+                          key={item.to}
+                          to={item.to}
+                          className={({ isActive }) => navClass(isActive)}
+                        >
+                          <Icon size={18} className="shrink-0" />
+                          <span className="line-clamp-2">{navItemLabel(item, t)}</span>
+                        </NavLink>
+                      )
+                    })}
+                  </>
+                ) : null}
                 {isDashboardWorkspace && modules.length > 0 ? (
                   <>
                     <div className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/40">
                       {t('nav.modules')}
                     </div>
-                    {modules.map((item) => {
+                    {modules.filter((item) => canAccessModule(user, item.slug)).map((item) => {
                       const Icon = businessModuleIcon(item.slug)
                       const label = i18n.language.startsWith('fr') ? item.name_fr : item.name
                       return (
@@ -188,23 +226,23 @@ export function AppShell() {
               })
             )}
           </nav>
-          <div className="p-4">
+          <div className="shrink-0 p-4">
             <div className="rounded-2xl bg-white/10 p-3">
               <div className="text-sm font-semibold">{user?.name}</div>
-              <div className="text-xs text-white/70">{user?.roles?.[0]?.name}</div>
+              <div className="text-xs text-white/70">{roleLabel(t, user?.roles?.[0])}</div>
             </div>
           </div>
         </div>
       </aside>
       ) : null}
 
-      <div className={cn('flex min-w-0 flex-col', isHome ? 'min-h-dvh' : 'pb-20 lg:pb-0')}>
+      <div className={cn('flex min-w-0 flex-col', isHome ? 'min-h-dvh' : isSettings ? 'pb-0 lg:pb-0' : 'pb-20 lg:pb-0')}>
         <header className={cn(
           'sticky top-0 z-30 flex items-center justify-between gap-3 px-4 py-3 lg:px-8',
           isHome ? 'border-b border-white/10 bg-black/20 text-white backdrop-blur-xl' : 'border-b border-line bg-white/90 backdrop-blur',
         )}>
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            {!isHome && !currentModule ? (
+            {!isHome && (!currentModule || isSettings) ? (
               <button
                 type="button"
                 className="rounded-xl p-2 lg:hidden"
@@ -236,10 +274,12 @@ export function AppShell() {
               <option value="fr">FR</option>
               <option value="en">EN</option>
             </select>
+            {hasPermission('notifications.view') ? (
             <button onClick={() => navigate('/notifications')} className={cn('relative rounded-xl p-2', isHome ? 'hover:bg-white/10' : 'hover:bg-surface')}>
               <Bell size={18} />
               {unread > 0 ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger" /> : null}
             </button>
+            ) : null}
             <div className="relative">
               <button
                 type="button"
@@ -293,13 +333,14 @@ export function AppShell() {
             </div>
           </div>
         </header>
+        {isSettings ? <SettingsMobileTabs items={moduleItems} /> : null}
 
         <main className={cn('flex-1', isHome ? 'px-0 py-0' : 'px-4 py-5 lg:px-8 lg:py-8')}>
           <Outlet />
         </main>
       </div>
 
-      {!isHome ? (
+      {!isHome && !isSettings ? (
       <nav className="fixed inset-x-0 bottom-0 z-30 flex bg-lhms px-1.5 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden">
         {bottomItems.map((item) => {
           const Icon = item.icon
@@ -363,7 +404,7 @@ export function AppShell() {
                     )}
                   >
                     <Icon size={18} />
-                    {t(item.labelKey)}
+                    {navItemLabel(item, t)}
                   </NavLink>
                 )
               }) : (

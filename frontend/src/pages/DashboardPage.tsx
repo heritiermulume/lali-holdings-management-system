@@ -11,13 +11,16 @@ import {
   Users,
   Wheat,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { Modal } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
+import { useSystemModules } from '../context/ModulesContext'
+import { canAccessModule, DASHBOARD_PERMS, SETTINGS_PERMS } from '../lib/access'
 import { cn } from '../lib/cn'
 import { greetingKey } from '../lib/format'
-import api from '../lib/api'
+import { moduleRegistry } from '../modules/registry'
 import type { SystemModule } from '../types'
 
 const moduleLooks = {
@@ -33,6 +36,7 @@ type DockApp = {
   key: string
   icon: typeof Settings
   perm?: string
+  anyPerm?: string[]
   tint: string
 }
 
@@ -40,30 +44,27 @@ const dockApps: DockApp[] = [
   { to: '/users', key: 'users', icon: Users, perm: 'users.view', tint: 'bg-[linear-gradient(145deg,#818cf8,#3730a3)]' },
   { to: '/notifications', key: 'notifications', icon: Bell, perm: 'notifications.view', tint: 'bg-[linear-gradient(145deg,#fb7185,#be123c)]' },
   { to: '/audit', key: 'audit', icon: ScrollText, perm: 'audit.view', tint: 'bg-[linear-gradient(145deg,#94a3b8,#334155)]' },
-  { to: '/settings', key: 'settings', icon: Settings, perm: 'settings.manage', tint: 'bg-[linear-gradient(145deg,#cbd5e1,#475569)]' },
+  { to: '/settings', key: 'settings', icon: Settings, anyPerm: SETTINGS_PERMS, tint: 'bg-[linear-gradient(145deg,#cbd5e1,#475569)]' },
 ]
 
 function AppIcon({
-  to,
   label,
   icon: Icon,
   tint,
-  disabled,
   badge,
+  onClick,
 }: {
-  to: string
   label: string
   icon: typeof Crown
   tint: string
-  disabled?: boolean
   badge?: string
+  onClick: () => void
 }) {
-  const content = (
-    <span className="group flex w-[92px] flex-col items-center gap-2.5 sm:w-[104px]">
+  return (
+    <button type="button" onClick={onClick} className="group flex w-[92px] flex-col items-center gap-2.5 sm:w-[104px]">
       <span className={cn(
-        'relative grid h-[68px] w-[68px] place-items-center rounded-[22px] text-white shadow-[0_12px_24px_rgba(0,0,0,0.28)] transition duration-200 sm:h-[76px] sm:w-[76px] sm:rounded-[24px]',
+        'relative grid h-[68px] w-[68px] place-items-center rounded-[22px] text-white shadow-[0_12px_24px_rgba(0,0,0,0.28)] transition duration-200 group-hover:-translate-y-1 group-hover:scale-110 group-hover:shadow-[0_18px_32px_rgba(0,0,0,0.35)] sm:h-[76px] sm:w-[76px] sm:rounded-[24px]',
         tint,
-        disabled ? 'opacity-45 grayscale' : 'group-hover:-translate-y-1 group-hover:scale-110 group-hover:shadow-[0_18px_32px_rgba(0,0,0,0.35)]',
       )}>
         <Icon size={32} strokeWidth={1.7} />
         {badge ? (
@@ -75,25 +76,17 @@ function AppIcon({
       <span className="line-clamp-2 text-center text-[12px] font-medium leading-tight text-white/90 drop-shadow-sm sm:text-[13px]">
         {label}
       </span>
-    </span>
+    </button>
   )
-
-  if (disabled) {
-    return <div className="cursor-default">{content}</div>
-  }
-
-  return <Link to={to}>{content}</Link>
 }
 
 export function DashboardPage() {
   const { t, i18n } = useTranslation()
-  const { user, hasPermission } = useAuth()
-  const [modules, setModules] = useState<SystemModule[]>([])
+  const { user, hasPermission, hasAnyPermission } = useAuth()
+  const { modules } = useSystemModules()
+  const navigate = useNavigate()
   const [query, setQuery] = useState('')
-
-  useEffect(() => {
-    api.get('/modules').then((res) => setModules(res.data.data)).catch(() => undefined)
-  }, [])
+  const [denied, setDenied] = useState('')
 
   const filteredModules = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -103,7 +96,33 @@ export function DashboardPage() {
     })
   }, [modules, query, i18n.language])
 
-  const dock = dockApps.filter((app) => !app.perm || hasPermission(app.perm) || app.to === '/settings')
+  const showDashboard = hasAnyPermission(DASHBOARD_PERMS)
+  const dashboardLabel = t('nav.dashboard')
+  const dashboardMatches = !query.trim()
+    || dashboardLabel.toLowerCase().includes(query.trim().toLowerCase())
+    || 'dashboard'.includes(query.trim().toLowerCase())
+    || 'tableau'.includes(query.trim().toLowerCase())
+
+  const dock = dockApps.filter((app) => (
+    app.anyPerm?.length ? hasAnyPermission(app.anyPerm) : Boolean(!app.perm || hasPermission(app.perm))
+  ))
+
+  const openModule = (module: SystemModule) => {
+    if (!canAccessModule(user, module.slug)) {
+      setDenied(t('modules.noAccess'))
+      return
+    }
+    const ready = module.slug === 'kams' && module.status === 'active'
+    if (!ready) {
+      setDenied(t('modules.in_development'))
+      return
+    }
+    const first = moduleRegistry.kams.items.find((item) => {
+      if (item.anyPerm?.length) return item.anyPerm.some((perm) => hasPermission(perm))
+      return !item.perm || hasPermission(item.perm)
+    })
+    navigate(first?.to || '/modules/kams')
+  }
 
   return (
     <div className="relative flex min-h-[calc(100dvh-64px)] flex-col overflow-hidden">
@@ -132,12 +151,12 @@ export function DashboardPage() {
 
         <div className="mt-10 flex flex-1 items-start justify-center">
           <div className="grid grid-cols-3 justify-items-center gap-x-4 gap-y-8 sm:grid-cols-4 sm:gap-x-8 sm:gap-y-10 md:grid-cols-5 lg:grid-cols-6">
-            {(!query.trim() || t('nav.dashboard').toLowerCase().includes(query.trim().toLowerCase()) || 'dashboard'.includes(query.trim().toLowerCase()) || 'tableau'.includes(query.trim().toLowerCase())) ? (
+            {showDashboard && dashboardMatches ? (
               <AppIcon
-                to="/modules/dashboard"
-                label={t('nav.dashboard')}
+                label={dashboardLabel}
                 icon={LayoutDashboard}
                 tint="bg-[linear-gradient(145deg,#4ade80,#094924)]"
+                onClick={() => navigate('/modules/dashboard')}
               />
             ) : null}
             {filteredModules.map((module) => {
@@ -147,12 +166,11 @@ export function DashboardPage() {
               return (
                 <AppIcon
                   key={module.id}
-                  to={ready ? '/modules/kams' : '/modules'}
                   label={title}
                   icon={look.icon}
                   tint={look.tint}
-                  disabled={!ready}
-                  badge={ready ? undefined : t(`modules.${module.status}`)}
+                  badge={ready ? undefined : t('modules.in_development')}
+                  onClick={() => openModule(module)}
                 />
               )
             })}
@@ -187,6 +205,10 @@ export function DashboardPage() {
           </div>
         ) : null}
       </div>
+
+      <Modal open={Boolean(denied)} title={t('nav.modules')} onClose={() => setDenied('')}>
+        <p className="text-sm text-muted">{denied}</p>
+      </Modal>
     </div>
   )
 }

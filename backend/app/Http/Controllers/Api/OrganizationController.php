@@ -3,16 +3,21 @@
 namespace App\Http\Controllers\Api;
 
 use App\Core\Support\AuditLogger;
-use App\Http\Controllers\Controller;
+use App\Core\Support\CurrencySync;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Models\Activity;
 use App\Models\City;
+use App\Models\Commune;
 use App\Models\Company;
 use App\Models\Country;
 use App\Models\Department;
+use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Province;
+use App\Support\CountryTaxCatalog;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -24,7 +29,7 @@ class OrganizationController extends Controller
     {
         return $this->ok(
             Country::query()
-                ->with(['provinces.cities', 'cities', 'companies.offices.departments'])
+                ->with(['provinces.cities.communes.neighborhoods', 'cities.communes.neighborhoods', 'companies.offices.departments'])
                 ->orderBy('name')
                 ->get()
         );
@@ -37,33 +42,58 @@ class OrganizationController extends Controller
 
     public function storeCountry(Request $request): JsonResponse
     {
-        return $this->storeModel(Country::class, $request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string'],
             'name_fr' => ['required', 'string'],
             'iso_code' => ['required', 'string', 'max:8', 'unique:countries,iso_code'],
             'phone_code' => ['nullable', 'string', 'max:8'],
             'currency_code' => ['nullable', 'string', 'max:8'],
             'currency_symbol' => ['nullable', 'string', 'max:8'],
+            'tax_name' => ['nullable', 'string', 'max:64'],
+            'tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'is_active' => ['boolean'],
-        ]));
+        ]);
+        $defaults = CountryTaxCatalog::for($data['iso_code']);
+        $data['tax_name'] = $data['tax_name'] ?? $defaults['tax_name'];
+        $data['tax_rate'] = $data['tax_rate'] ?? $defaults['tax_rate'];
+        $response = $this->storeModel(Country::class, $data);
+        CurrencySync::ensureFromCountries();
+
+        return $response;
     }
 
     public function updateCountry(Request $request, Country $country): JsonResponse
     {
-        return $this->updateModel($country, $request->validate([
+        $data = $request->validate([
             'name' => ['sometimes', 'string'],
             'name_fr' => ['sometimes', 'string'],
             'iso_code' => ['sometimes', 'string', 'max:8', 'unique:countries,iso_code,'.$country->id],
             'phone_code' => ['nullable', 'string'],
             'currency_code' => ['nullable', 'string'],
             'currency_symbol' => ['nullable', 'string'],
+            'tax_name' => ['nullable', 'string', 'max:64'],
+            'tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'is_active' => ['boolean'],
-        ]));
+        ]);
+        if (! empty($data['currency_code']) && empty($data['currency_symbol'])) {
+            $data['currency_symbol'] = \App\Support\CurrencyCatalog::find($data['currency_code'])['symbol'];
+        }
+        $response = $this->updateModel($country, $data);
+        CurrencySync::ensureFromCountries();
+
+        return $response;
     }
 
     public function destroyCountry(Country $country): JsonResponse
     {
-        return $this->destroyModel($country);
+        $response = $this->destroyModel($country, ['provinces', 'cities', 'companies', 'offices']);
+        CurrencySync::ensureFromCountries();
+
+        return $response;
     }
 
     public function provinces(Request $request): JsonResponse
@@ -95,12 +125,14 @@ class OrganizationController extends Controller
 
     public function destroyProvince(Province $province): JsonResponse
     {
-        return $this->destroyModel($province);
+        return $this->destroyModel($province, ['cities', 'offices']);
     }
 
     public function cities(Request $request): JsonResponse
     {
-        return $this->list(City::query()->with(['country', 'province'])->when($request->country_id, fn ($q) => $q->where('country_id', $request->country_id)), $request);
+        return $this->list(City::query()->with(['country', 'province'])
+            ->when($request->country_id, fn ($q) => $q->where('country_id', $request->country_id))
+            ->when($request->province_id, fn ($q) => $q->where('province_id', $request->province_id)), $request);
     }
 
     public function storeCity(Request $request): JsonResponse
@@ -127,13 +159,81 @@ class OrganizationController extends Controller
 
     public function destroyCity(City $city): JsonResponse
     {
-        return $this->destroyModel($city);
+        return $this->destroyModel($city, ['communes', 'companies', 'offices']);
+    }
+
+    public function communes(Request $request): JsonResponse
+    {
+        return $this->list(Commune::query()->with(['city.province', 'city.country'])
+            ->when($request->city_id, fn ($q) => $q->where('city_id', $request->city_id)), $request);
+    }
+
+    public function storeCommune(Request $request): JsonResponse
+    {
+        return $this->storeModel(Commune::class, $request->validate([
+            'city_id' => ['required', 'exists:cities,id'],
+            'name' => ['required', 'string'],
+            'name_fr' => ['required', 'string'],
+            'is_active' => ['boolean'],
+        ]));
+    }
+
+    public function updateCommune(Request $request, Commune $commune): JsonResponse
+    {
+        return $this->updateModel($commune, $request->validate([
+            'city_id' => ['sometimes', 'exists:cities,id'],
+            'name' => ['sometimes', 'string'],
+            'name_fr' => ['sometimes', 'string'],
+            'is_active' => ['boolean'],
+        ]));
+    }
+
+    public function destroyCommune(Commune $commune): JsonResponse
+    {
+        return $this->destroyModel($commune, ['neighborhoods', 'offices']);
+    }
+
+    public function neighborhoods(Request $request): JsonResponse
+    {
+        return $this->list(Neighborhood::query()->with(['commune.city'])
+            ->when($request->commune_id, fn ($q) => $q->where('commune_id', $request->commune_id)), $request);
+    }
+
+    public function storeNeighborhood(Request $request): JsonResponse
+    {
+        return $this->storeModel(Neighborhood::class, $request->validate([
+            'commune_id' => ['required', 'exists:communes,id'],
+            'name' => ['required', 'string'],
+            'name_fr' => ['required', 'string'],
+            'is_active' => ['boolean'],
+        ]));
+    }
+
+    public function updateNeighborhood(Request $request, Neighborhood $neighborhood): JsonResponse
+    {
+        return $this->updateModel($neighborhood, $request->validate([
+            'commune_id' => ['sometimes', 'exists:communes,id'],
+            'name' => ['sometimes', 'string'],
+            'name_fr' => ['sometimes', 'string'],
+            'is_active' => ['boolean'],
+        ]));
+    }
+
+    public function destroyNeighborhood(Neighborhood $neighborhood): JsonResponse
+    {
+        return $this->destroyModel($neighborhood, ['offices']);
     }
 
     public function companies(Request $request): JsonResponse
     {
         $user = $request->user();
-        $query = Company::query()->with(['country', 'city'])->withCount(['offices', 'departments']);
+        $query = Company::query()
+            ->with($this->companyRelations())
+            ->withCount(['offices', 'departments']);
+
+        if ($request->boolean('business')) {
+            $query->whereNotNull('system_module_id');
+        }
 
         if (! $user->isGroupAdmin()) {
             $query->whereIn('id', $user->accessibleCompanyIds() ?: [0]);
@@ -147,6 +247,7 @@ class OrganizationController extends Controller
         return $this->storeModel(Company::class, $request->validate([
             'country_id' => ['required', 'exists:countries,id'],
             'city_id' => ['nullable', 'exists:cities,id'],
+            'system_module_id' => ['nullable', 'exists:system_modules,id', 'unique:companies,system_module_id'],
             'name' => ['required', 'string'],
             'legal_name' => ['nullable', 'string'],
             'code' => ['required', 'string', 'unique:companies,code'],
@@ -162,7 +263,7 @@ class OrganizationController extends Controller
 
     public function showCompany(Company $company): JsonResponse
     {
-        return $this->ok($company->load(['country', 'city', 'offices.city', 'departments', 'activities', 'modules']));
+        return $this->ok($company->load([...$this->companyRelations(), 'departments', 'activities', 'modules']));
     }
 
     public function updateCompany(Request $request, Company $company): JsonResponse
@@ -170,6 +271,7 @@ class OrganizationController extends Controller
         return $this->updateModel($company, $request->validate([
             'country_id' => ['sometimes', 'exists:countries,id'],
             'city_id' => ['nullable', 'exists:cities,id'],
+            'system_module_id' => ['nullable', 'exists:system_modules,id', 'unique:companies,system_module_id,'.$company->id],
             'name' => ['sometimes', 'string'],
             'legal_name' => ['nullable', 'string'],
             'code' => ['sometimes', 'string', 'unique:companies,code,'.$company->id],
@@ -190,35 +292,21 @@ class OrganizationController extends Controller
 
     public function offices(Request $request): JsonResponse
     {
-        return $this->list(Office::query()->with(['company', 'city'])->when($request->company_id, fn ($q) => $q->where('company_id', $request->company_id)), $request);
+        return $this->list(Office::query()->with($this->officeRelations())
+            ->when($request->company_id, fn ($q) => $q->where('company_id', $request->company_id)), $request);
     }
 
     public function storeOffice(Request $request): JsonResponse
     {
-        return $this->storeModel(Office::class, $request->validate([
-            'company_id' => ['required', 'exists:companies,id'],
-            'city_id' => ['nullable', 'exists:cities,id'],
-            'name' => ['required', 'string'],
-            'code' => ['required', 'string'],
-            'type' => ['required', 'in:headquarters,office,agency,branch'],
-            'address' => ['nullable', 'string'],
-            'phone' => ['nullable', 'string'],
-            'is_active' => ['boolean'],
-        ]));
+        $office = Office::query()->create($this->validatedOffice($request));
+        AuditLogger::record('create', $office, [], $office->toArray());
+
+        return $this->created($office->fresh($this->officeRelations()));
     }
 
     public function updateOffice(Request $request, Office $office): JsonResponse
     {
-        return $this->updateModel($office, $request->validate([
-            'company_id' => ['sometimes', 'exists:companies,id'],
-            'city_id' => ['nullable', 'exists:cities,id'],
-            'name' => ['sometimes', 'string'],
-            'code' => ['sometimes', 'string'],
-            'type' => ['sometimes', 'in:headquarters,office,agency,branch'],
-            'address' => ['nullable', 'string'],
-            'phone' => ['nullable', 'string'],
-            'is_active' => ['boolean'],
-        ]));
+        return $this->updateModel($office, $this->validatedOffice($request, $office));
     }
 
     public function destroyOffice(Office $office): JsonResponse
@@ -255,7 +343,7 @@ class OrganizationController extends Controller
 
     public function destroyDepartment(Department $department): JsonResponse
     {
-        return $this->destroyModel($department);
+        return $this->destroyModel($department, ['users']);
     }
 
     public function activities(Request $request): JsonResponse
@@ -294,7 +382,7 @@ class OrganizationController extends Controller
             $query->where('name', 'like', "%{$search}%");
         }
 
-        return $this->paginated($query->latest()->paginate($request->integer('per_page', 20)));
+        return $this->paginated($query->latest()->paginate($request->integer('per_page', 50)));
     }
 
     private function storeModel(string $class, array $data): JsonResponse
@@ -314,11 +402,65 @@ class OrganizationController extends Controller
         return $this->ok($model->fresh());
     }
 
-    private function destroyModel(Model $model): JsonResponse
+    /**
+     * @param  array<int, string>  $relations
+     */
+    private function destroyModel(Model $model, array $relations = []): JsonResponse
     {
-        $model->delete();
+        foreach ($relations as $relation) {
+            if (method_exists($model, $relation) && $model->{$relation}()->exists()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'This record is still in use and cannot be deleted.',
+                ], 409);
+            }
+        }
+
+        try {
+            $model->delete();
+        } catch (QueryException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This record is still in use and cannot be deleted.',
+            ], 409);
+        }
+
         AuditLogger::record('delete', $model);
 
         return $this->ok(null, __('Deleted.'));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function companyRelations(): array
+    {
+        return ['country', 'city', 'module', 'offices.country', 'offices.province', 'offices.city', 'offices.commune', 'offices.neighborhood'];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function officeRelations(): array
+    {
+        return ['company.module', 'country', 'province', 'city', 'commune', 'neighborhood'];
+    }
+
+    private function validatedOffice(Request $request, ?Office $office = null): array
+    {
+        return $request->validate([
+            'company_id' => [$office ? 'sometimes' : 'required', 'exists:companies,id'],
+            'country_id' => ['nullable', 'exists:countries,id'],
+            'province_id' => ['nullable', 'exists:provinces,id'],
+            'city_id' => ['nullable', 'exists:cities,id'],
+            'commune_id' => ['nullable', 'exists:communes,id'],
+            'neighborhood_id' => ['nullable', 'exists:neighborhoods,id'],
+            'name' => [$office ? 'sometimes' : 'required', 'string'],
+            'code' => [$office ? 'sometimes' : 'required', 'string'],
+            'type' => [$office ? 'sometimes' : 'required', 'in:headquarters,office,agency,branch'],
+            'address' => ['nullable', 'string'],
+            'phone' => ['nullable', 'string'],
+            'is_active' => ['boolean'],
+        ]);
     }
 }

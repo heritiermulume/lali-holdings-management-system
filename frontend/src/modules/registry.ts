@@ -4,26 +4,43 @@ import {
   Building2,
   Crown,
   Globe2,
+  Landmark,
   LayoutDashboard,
   ListChecks,
   Megaphone,
   Package,
   ScrollText,
   Settings,
+  Shield,
   ShoppingBag,
+  SlidersHorizontal,
   Truck,
   Tv,
+  UserCog,
   Users,
   Wheat,
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import type { SystemModule } from '../types'
 
 export type ModuleNavItem = {
   to: string
   labelKey: string
   descriptionKey: string
+  label?: string
+  description?: string
   icon: LucideIcon
   end?: boolean
   perm?: string
+  anyPerm?: string[]
+}
+
+export function navItemLabel(item: ModuleNavItem, t: TFunction) {
+  return item.label ?? t(item.labelKey)
+}
+
+export function navItemDescription(item: ModuleNavItem, t: TFunction) {
+  return item.description ?? t(item.descriptionKey)
 }
 
 export type ModuleDefinition = {
@@ -41,8 +58,8 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     titleKey: 'groupDash.title',
     icon: LayoutDashboard,
     items: [
-      { to: '/modules/dashboard', labelKey: 'groupDash.overview', descriptionKey: 'groupDash.overviewHint', icon: LayoutDashboard, end: true },
-      { to: '/modules/dashboard/actions', labelKey: 'groupDash.actions', descriptionKey: 'groupDash.actionsHint', icon: ListChecks },
+      { to: '/modules/dashboard', labelKey: 'groupDash.overview', descriptionKey: 'groupDash.overviewHint', icon: LayoutDashboard, end: true, anyPerm: ['dashboard.group', 'dashboard.company'] },
+      { to: '/modules/dashboard/actions', labelKey: 'groupDash.actions', descriptionKey: 'groupDash.actionsHint', icon: ListChecks, anyPerm: ['dashboard.group', 'dashboard.company'] },
     ],
   },
   kams: {
@@ -51,11 +68,12 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     titleKey: 'kams.title',
     icon: Crown,
     items: [
-      { to: '/modules/kams', labelKey: 'nav.dashboard', descriptionKey: 'kams.dashboardHint', icon: LayoutDashboard, end: true },
-      { to: '/modules/kams/clients', labelKey: 'kams.clients', descriptionKey: 'kams.clientsHint', icon: Users },
-      { to: '/modules/kams/products', labelKey: 'kams.products', descriptionKey: 'kams.productsHint', icon: Package },
-      { to: '/modules/kams/orders', labelKey: 'kams.orders', descriptionKey: 'kams.ordersHint', icon: ShoppingBag },
-      { to: '/modules/kams/campaigns', labelKey: 'kams.campaigns', descriptionKey: 'kams.campaignsHint', icon: Megaphone },
+      { to: '/modules/kams', labelKey: 'nav.dashboard', descriptionKey: 'kams.dashboardHint', icon: LayoutDashboard, end: true, perm: 'kams.dashboard.view' },
+      { to: '/modules/kams/members', labelKey: 'kams.members', descriptionKey: 'kams.membersHint', icon: Users, perm: 'kams.members.view', anyPerm: ['kams.members.view', 'kams.recruitment.view'] },
+      { to: '/modules/kams/clients', labelKey: 'kams.clients', descriptionKey: 'kams.clientsHint', icon: Users, perm: 'kams.clients.view' },
+      { to: '/modules/kams/products', labelKey: 'kams.products', descriptionKey: 'kams.productsHint', icon: Package, perm: 'kams.products.view' },
+      { to: '/modules/kams/orders', labelKey: 'kams.orders', descriptionKey: 'kams.ordersHint', icon: ShoppingBag, perm: 'kams.orders.view' },
+      { to: '/modules/kams/campaigns', labelKey: 'kams.campaigns', descriptionKey: 'kams.campaignsHint', icon: Megaphone, perm: 'kams.campaigns.view' },
     ],
   },
   users: {
@@ -91,10 +109,31 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     titleKey: 'nav.settings',
     icon: Settings,
     items: [
-      { to: '/organization', labelKey: 'nav.organization', descriptionKey: 'settings.organizationHint', icon: Globe2, end: true, perm: 'organization.view' },
-      { to: '/companies', labelKey: 'nav.companies', descriptionKey: 'settings.companiesHint', icon: Building2, perm: 'companies.view' },
+      { to: '/settings', labelKey: 'settings.general', descriptionKey: 'settings.generalHint', icon: SlidersHorizontal, end: true, perm: 'settings.manage' },
+      { to: '/settings/organization', labelKey: 'nav.organization', descriptionKey: 'settings.organizationHint', icon: Globe2, perm: 'organization.view' },
+      { to: '/settings/companies', labelKey: 'nav.companies', descriptionKey: 'settings.companiesHint', icon: Building2, perm: 'companies.view' },
+      { to: '/settings/roles', labelKey: 'nav.roles', descriptionKey: 'settings.rolesNavHint', icon: UserCog, perm: 'roles.manage' },
+      { to: '/settings/finance', labelKey: 'settings.finance', descriptionKey: 'settings.financeHint', icon: Landmark, perm: 'settings.manage' },
+      { to: '/settings/notifications', labelKey: 'settings.notifications', descriptionKey: 'settings.notificationsHint', icon: Bell, perm: 'settings.manage' },
+      { to: '/settings/security', labelKey: 'settings.security', descriptionKey: 'settings.securityHint', icon: Shield, perm: 'settings.manage' },
     ],
   },
+}
+
+export function settingsNavItems(modules: SystemModule[], locale: string): ModuleNavItem[] {
+  const langFr = locale.startsWith('fr')
+  return [
+    ...moduleRegistry.settings.items,
+    ...modules.map((module) => ({
+      to: `/settings/modules/${module.slug}`,
+      labelKey: 'settings.module',
+      descriptionKey: 'settings.moduleHint',
+      label: langFr ? module.name_fr : module.name,
+      description: (langFr ? module.description_fr : module.description) || undefined,
+      icon: businessModuleIcon(module.slug),
+      perm: 'settings.manage',
+    })),
+  ]
 }
 
 const platformPrefixes: Array<[string, string]> = [
@@ -111,6 +150,11 @@ export function moduleFromPath(pathname: string): ModuleDefinition | null {
   if (match) return moduleRegistry[match[1]] ?? null
   const found = platformPrefixes.find(([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`))
   return found ? moduleRegistry[found[1]] ?? null : null
+}
+
+export function settingsModuleSlug(pathname: string): string | null {
+  const match = pathname.match(/^\/settings\/modules\/([^/]+)$/)
+  return match?.[1] ?? null
 }
 
 const businessIcons: Record<string, LucideIcon> = {
@@ -132,10 +176,14 @@ export function dashboardBusinessSlug(pathname: string): string | null {
   return match[1]
 }
 
-export function activeModuleItem(pathname: string, module: ModuleDefinition): ModuleNavItem | null {
-  const exact = module.items.find((item) => item.end && pathname === item.to)
+export function activeNavItem(pathname: string, items: ModuleNavItem[]): ModuleNavItem | null {
+  const exact = items.find((item) => item.end && pathname === item.to)
   if (exact) return exact
-  return [...module.items]
+  return [...items]
     .filter((item) => !item.end && (pathname === item.to || pathname.startsWith(`${item.to}/`)))
     .sort((a, b) => b.to.length - a.to.length)[0] ?? null
+}
+
+export function activeModuleItem(pathname: string, module: ModuleDefinition): ModuleNavItem | null {
+  return activeNavItem(pathname, module.items)
 }

@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Core\Support\ModuleManager;
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Models\AppNotification;
 use App\Models\AuditLog;
 use App\Models\City;
@@ -82,8 +82,32 @@ class DashboardController extends Controller
                 ->limit(8)
                 ->get(),
             'performance' => $performance,
+            'presence' => $this->presence(),
             'trend' => $this->trend($finances['revenue'] ?? 0),
         ]);
+    }
+
+    private function presence(): array
+    {
+        return Country::query()
+            ->where('is_active', true)
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->withCount(['companies', 'offices'])
+            ->orderBy('name')
+            ->get()
+            ->map(fn (Country $country) => [
+                'id' => $country->id,
+                'name' => $country->name,
+                'name_fr' => $country->name_fr,
+                'iso_code' => $country->iso_code,
+                'latitude' => $country->latitude,
+                'longitude' => $country->longitude,
+                'companies_count' => $country->companies_count,
+                'offices_count' => $country->offices_count,
+            ])
+            ->values()
+            ->all();
     }
 
     private function trend(float $revenue): array

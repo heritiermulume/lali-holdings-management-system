@@ -9,6 +9,7 @@ use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsOrder;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Services\RecruitmentMetrics;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -16,7 +17,7 @@ class KamsDashboardController extends Controller
 {
     use RespondsWithJson;
 
-    public function __invoke(Request $request, KamsModule $module): JsonResponse
+    public function __invoke(Request $request, KamsModule $module, RecruitmentMetrics $metrics): JsonResponse
     {
         $companyId = $this->companyId($request);
 
@@ -34,6 +35,7 @@ class KamsDashboardController extends Controller
                 ->orderByDesc('stock')
                 ->limit(5)
                 ->get(),
+            ...$metrics->summarize($companyId),
         ]);
     }
 

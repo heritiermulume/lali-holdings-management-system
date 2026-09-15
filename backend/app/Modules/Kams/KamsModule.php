@@ -28,8 +28,8 @@ class KamsModule implements BusinessModule, FinancialContributor
     public function description(): array
     {
         return [
-            'en' => 'Commercial operations, clients, collections and sales for King Attitude.',
-            'fr' => 'Opérations commerciales, clients, collections et ventes pour King Attitude.',
+            'en' => 'Commercial operations, clients, collections and sales for King Attitude Traders.',
+            'fr' => 'Opérations commerciales, clients, collections et ventes pour King Attitude Traders.',
         ];
     }
 
@@ -40,7 +40,7 @@ class KamsModule implements BusinessModule, FinancialContributor
 
     public function permissions(): array
     {
-        return PermissionCatalog::forModule('kams');
+        return PermissionCatalog::forKams();
     }
 
     public function isAvailable(): bool

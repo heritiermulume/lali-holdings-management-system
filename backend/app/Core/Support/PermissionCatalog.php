@@ -11,7 +11,10 @@ class PermissionCatalog
         'delete',
         'approve',
         'export',
+        'import',
         'print',
+        'preview',
+        'activate',
         'manage',
     ];
 
@@ -73,5 +76,35 @@ class PermissionCatalog
         }
 
         return array_merge($base, $extra);
+    }
+
+    /**
+     * @return list<array{slug: string, group: string, name: string}>
+     */
+    public static function forKams(): array
+    {
+        $areas = [
+            'dashboard' => ['view'],
+            'members' => ['view', 'create', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate'],
+            'recruitment' => ['view', 'create', 'update', 'delete', 'approve'],
+            'clients' => ['view', 'create', 'update', 'delete'],
+            'products' => ['view', 'create', 'update', 'delete'],
+            'orders' => ['view', 'create', 'update', 'export', 'print'],
+            'campaigns' => ['view', 'create', 'update', 'delete'],
+        ];
+
+        $permissions = [];
+
+        foreach ($areas as $area => $actions) {
+            foreach ($actions as $action) {
+                $permissions[] = [
+                    'slug' => "kams.{$area}.{$action}",
+                    'group' => "kams.{$area}",
+                    'name' => ucfirst($action).' kams '.$area,
+                ];
+            }
+        }
+
+        return $permissions;
     }
 }

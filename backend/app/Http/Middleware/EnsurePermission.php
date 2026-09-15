@@ -8,11 +8,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EnsurePermission
 {
-    public function handle(Request $request, Closure $next, string $permission): Response
+    public function handle(Request $request, Closure $next, string ...$permissions): Response
     {
         $user = $request->user();
+        $allowed = $user && collect($permissions)->contains(fn (string $permission) => $user->hasPermission($permission));
 
-        if (! $user || ! $user->hasPermission($permission)) {
+        if (! $allowed) {
             return response()->json([
                 'success' => false,
                 'message' => __('You are not authorized to perform this action.'),

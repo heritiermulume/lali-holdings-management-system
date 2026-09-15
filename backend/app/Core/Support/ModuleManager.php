@@ -4,6 +4,8 @@ namespace App\Core\Support;
 
 use App\Core\Contracts\BusinessModule;
 use App\Core\Contracts\FinancialContributor;
+use App\Core\Support\CurrencyConverter;
+use App\Models\Company;
 use App\Models\SystemModule;
 
 class ModuleManager
@@ -54,14 +56,24 @@ class ModuleManager
             'payables' => 0.0,
         ];
 
-        foreach ($this->financialContributors() as $contributor) {
-            if ($companyIds === null) {
-                $this->merge($totals, $contributor->financialSummary(null));
-                continue;
-            }
+        $ids = $companyIds === null
+            ? Company::query()->pluck('id')->all()
+            : array_values(array_unique(array_map('intval', $companyIds)));
 
-            foreach ($companyIds as $companyId) {
-                $this->merge($totals, $contributor->financialSummary((int) $companyId));
+        if ($ids === []) {
+            return $totals;
+        }
+
+        $fx = app(CurrencyConverter::class);
+        $default = $fx->defaultCode();
+        $companies = Company::query()->whereIn('id', $ids)->get()->keyBy('id');
+        $contributors = $this->financialContributors();
+
+        foreach ($ids as $companyId) {
+            $from = strtoupper((string) ($companies[$companyId]->currency_code ?? $default));
+            foreach ($contributors as $contributor) {
+                $summary = $fx->convertBag($contributor->financialSummary($companyId), $from, $default);
+                $this->merge($totals, $summary);
             }
         }
 

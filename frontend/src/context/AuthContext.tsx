@@ -10,10 +10,26 @@ type AuthContextValue = {
   logout: () => Promise<void>
   refresh: () => Promise<void>
   hasPermission: (slug: string) => boolean
+  hasAnyPermission: (slugs: string[]) => boolean
   setLocale: (locale: string) => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+
+async function groupDefaultLocale() {
+  try {
+    const { data } = await api.get('/public/bootstrap')
+    return data.data?.default_locale === 'en' ? 'en' : 'fr'
+  } catch {
+    return 'fr'
+  }
+}
+
+async function applyLocale(i18n: { changeLanguage: (lng: string) => Promise<unknown> }, locale: string) {
+  const next = locale.startsWith('en') ? 'en' : 'fr'
+  localStorage.setItem('lhms_locale', next)
+  await i18n.changeLanguage(next)
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { i18n } = useTranslation()
@@ -29,8 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data } = await api.get('/auth/me')
     setUser(data.data)
     if (data.data?.locale) {
-      localStorage.setItem('lhms_locale', data.data.locale)
-      await i18n.changeLanguage(data.data.locale)
+      await applyLocale(i18n, data.data.locale)
     }
   }
 
@@ -48,10 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await api.post('/auth/login', { email, password })
       localStorage.setItem('lhms_token', data.data.token)
       setUser(data.data.user)
-      if (data.data.user?.locale) {
-        localStorage.setItem('lhms_locale', data.data.user.locale)
-        await i18n.changeLanguage(data.data.user.locale)
-      }
+      await applyLocale(i18n, data.data.user?.locale || 'fr')
     },
     logout: async () => {
       try {
@@ -59,16 +71,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } finally {
         localStorage.removeItem('lhms_token')
         setUser(null)
+        await applyLocale(i18n, await groupDefaultLocale())
       }
     },
     refresh,
-    hasPermission: (slug) => Boolean(user?.is_super_admin || user?.permissions?.includes(slug)),
+    hasPermission: (slug) => Boolean(user?.is_super_admin || user?.is_group_admin || user?.permissions?.includes(slug)),
+    hasAnyPermission: (slugs) => Boolean(
+      user?.is_super_admin
+      || user?.is_group_admin
+      || slugs.some((slug) => user?.permissions?.includes(slug)),
+    ),
     setLocale: (locale) => {
-      localStorage.setItem('lhms_locale', locale)
-      void i18n.changeLanguage(locale)
-      if (user) {
-        void api.put('/auth/profile', { locale })
-      }
+      void (async () => {
+        await applyLocale(i18n, locale)
+        if (user) {
+          await api.put('/auth/profile', { locale })
+          setUser((current) => current ? { ...current, locale } : current)
+        }
+      })()
     },
   }), [user, loading, i18n])
 

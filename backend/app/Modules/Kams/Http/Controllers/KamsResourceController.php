@@ -3,8 +3,10 @@
 namespace App\Modules\Kams\Http\Controllers;
 
 use App\Core\Support\AuditLogger;
+use App\Core\Support\TaxSettings;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Models\Company;
 use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsOrder;
@@ -121,17 +123,18 @@ class KamsResourceController extends Controller
 
         $this->assertCompany($request, (int) $data['company_id']);
 
-        $subtotal = collect($data['items'])->sum(fn ($item) => $item['quantity'] * $item['unit_price']);
-        $tax = round($subtotal * 0.16, 2);
+        $company = Company::query()->with('country')->find($data['company_id']);
+        $subtotalItems = collect($data['items'])->sum(fn ($item) => $item['quantity'] * $item['unit_price']);
+        $taxed = TaxSettings::apply((float) $subtotalItems, $company?->country);
 
         $order = KamsOrder::query()->create([
             'company_id' => $data['company_id'],
             'client_id' => $data['client_id'],
             'reference' => 'KA-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
             'status' => $data['status'] ?? 'confirmed',
-            'subtotal' => $subtotal,
-            'tax' => $tax,
-            'total' => $subtotal + $tax,
+            'subtotal' => $taxed['subtotal'],
+            'tax' => $taxed['tax'],
+            'total' => $taxed['total'],
             'ordered_at' => $data['ordered_at'],
             'notes' => $data['notes'] ?? null,
         ]);

@@ -1,25 +1,49 @@
+import { Ban, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal } from '../components/ui'
+import { WorldCountryCombobox } from '../components/WorldCountryCombobox'
+import { useAuth } from '../context/AuthContext'
+import type { WorldCountry } from '../data/worldCountries'
+import { cn } from '../lib/cn'
 import api from '../lib/api'
 
-type Row = Record<string, unknown> & { id: number; name: string; is_active?: boolean }
+type Row = Record<string, unknown> & { id: number; name: string; is_active?: boolean; iso_code?: string; latitude?: number | null; longitude?: number | null }
 
-const tabs = ['countries', 'provinces', 'cities', 'offices', 'departments'] as const
+const tabs = ['countries', 'provinces', 'cities', 'communes', 'neighborhoods', 'departments'] as const
+
+function isActive(row: Row) {
+  return row.is_active !== false
+}
 
 export function OrganizationPage() {
   const { t } = useTranslation()
+  const { hasPermission } = useAuth()
   const [tab, setTab] = useState<(typeof tabs)[number]>('countries')
   const [rows, setRows] = useState<Row[]>([])
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<Record<string, string>>({})
+  const [pickedCountry, setPickedCountry] = useState<WorldCountry | null>(null)
   const [countries, setCountries] = useState<Row[]>([])
+  const [cities, setCities] = useState<Row[]>([])
+  const [communes, setCommunes] = useState<Row[]>([])
   const [companies, setCompanies] = useState<Row[]>([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [deleting, setDeleting] = useState<Row | null>(null)
+  const [toggling, setToggling] = useState<Row | null>(null)
+  const [actionError, setActionError] = useState('')
+
+  const canCreate = hasPermission('organization.create')
+  const canUpdate = hasPermission('organization.update')
+  const canDelete = hasPermission('organization.delete')
 
   const load = () => {
-    api.get(`/${tab}`).then((res) => setRows(res.data.data))
-    api.get('/countries').then((res) => setCountries(res.data.data))
-    api.get('/companies').then((res) => setCompanies(res.data.data))
+    api.get(`/${tab}`, { params: { per_page: 50 } }).then((res) => setRows(res.data.data))
+    api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data))
+    api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data))
+    api.get('/communes', { params: { per_page: 50 } }).then((res) => setCommunes(res.data.data))
+    api.get('/companies', { params: { per_page: 50 } }).then((res) => setCompanies(res.data.data))
   }
 
   useEffect(() => {
@@ -27,20 +51,109 @@ export function OrganizationPage() {
   }, [tab])
 
   const submit = async () => {
-    const payload: Record<string, unknown> = { ...form, is_active: true }
-    if (form.country_id) payload.country_id = Number(form.country_id)
-    if (form.company_id) payload.company_id = Number(form.company_id)
-    await api.post(`/${tab}`, payload)
-    setOpen(false)
-    setForm({})
-    load()
+    setError('')
+    setSaving(true)
+    try {
+      const payload: Record<string, unknown> = { is_active: true }
+      if (tab === 'countries') {
+        if (!pickedCountry) {
+          setError(t('org.pickCountry'))
+          return
+        }
+        payload.name = pickedCountry.name
+        payload.name_fr = pickedCountry.nameFr
+        payload.iso_code = pickedCountry.iso
+        payload.phone_code = pickedCountry.phone ? pickedCountry.phone.slice(0, 8) : null
+        payload.currency_code = pickedCountry.currency
+        payload.currency_symbol = pickedCountry.symbol
+        payload.latitude = pickedCountry.lat
+        payload.longitude = pickedCountry.lng
+      } else {
+        Object.assign(payload, form)
+        if (form.country_id) payload.country_id = Number(form.country_id)
+        if (form.city_id) payload.city_id = Number(form.city_id)
+        if (form.commune_id) payload.commune_id = Number(form.commune_id)
+        if (form.company_id) payload.company_id = Number(form.company_id)
+        if (!form.name_fr) payload.name_fr = form.name
+      }
+      await api.post(`/${tab}`, payload)
+      setOpen(false)
+      setForm({})
+      setPickedCountry(null)
+      load()
+    } catch {
+      setError(t('org.saveError'))
+    } finally {
+      setSaving(false)
+    }
   }
+
+  const confirmToggle = async () => {
+    if (!toggling) return
+    setSaving(true)
+    setActionError('')
+    try {
+      await api.put(`/${tab}/${toggling.id}`, { is_active: !isActive(toggling) })
+      setToggling(null)
+      load()
+    } catch {
+      setActionError(t('org.actionError'))
+      setToggling(null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleting) return
+    setSaving(true)
+    setActionError('')
+    try {
+      await api.delete(`/${tab}/${deleting.id}`)
+      setDeleting(null)
+      load()
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } }).response?.status
+      setActionError(status === 409 ? t('org.deleteInUse') : t('org.actionError'))
+      setDeleting(null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const needsNameFr = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'
+  const needsCode = tab === 'provinces' || tab === 'departments'
+
+  const actions = (row: Row) => (
+    <div className="flex flex-wrap items-center gap-1">
+      {canUpdate ? (
+        <button
+          type="button"
+          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-surface"
+          onClick={() => { setActionError(''); setToggling(row) }}
+        >
+          <Ban size={14} /> {isActive(row) ? t('org.deactivateOffice') : t('org.activateOffice')}
+        </button>
+      ) : null}
+      {canDelete ? (
+        <button
+          type="button"
+          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-surface"
+          onClick={() => { setActionError(''); setDeleting(row) }}
+        >
+          <Trash2 size={14} /> {t('common.delete')}
+        </button>
+      ) : null}
+    </div>
+  )
 
   return (
     <div>
-      <div className="mb-4 flex justify-end">
-        <Button onClick={() => setOpen(true)}>{t('org.add')}</Button>
-      </div>
+      {canCreate ? (
+        <div className="mb-4 flex justify-end">
+          <Button onClick={() => { setOpen(true); setError(''); setPickedCountry(null); setForm({}) }}>{t('org.add')}</Button>
+        </div>
+      ) : null}
       <div className="mb-4 flex gap-2 overflow-x-auto">
         {tabs.map((item) => (
           <button
@@ -52,6 +165,7 @@ export function OrganizationPage() {
           </button>
         ))}
       </div>
+      {actionError ? <p className="mb-3 text-sm text-danger">{actionError}</p> : null}
       <Card className="overflow-hidden">
         <div className="hidden md:block">
           <table className="w-full text-sm">
@@ -59,15 +173,29 @@ export function OrganizationPage() {
               <tr>
                 <th className="px-5 py-3">{t('org.name')}</th>
                 <th className="px-5 py-3">{t('org.code')}</th>
+                {tab === 'countries' ? <th className="px-5 py-3">{t('org.coordinates')}</th> : null}
                 <th className="px-5 py-3">{t('org.status')}</th>
+                {(canUpdate || canDelete) ? <th className="px-5 py-3">{t('common.actions')}</th> : null}
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id} className="border-t border-line">
+                <tr key={row.id} className={cn('border-t border-line', !isActive(row) && 'opacity-60')}>
                   <td className="px-5 py-3 font-semibold">{row.name}</td>
                   <td className="px-5 py-3">{String(row.code || row.iso_code || '—')}</td>
-                  <td className="px-5 py-3"><Badge>{row.is_active === false ? '—' : t('org.active')}</Badge></td>
+                  {tab === 'countries' ? (
+                    <td className="px-5 py-3 text-muted">
+                      {row.latitude != null && row.longitude != null
+                        ? `${Number(row.latitude).toFixed(2)}, ${Number(row.longitude).toFixed(2)}`
+                        : '—'}
+                    </td>
+                  ) : null}
+                  <td className="px-5 py-3">
+                    <Badge tone={isActive(row) ? 'green' : 'amber'}>
+                      {isActive(row) ? t('org.active') : t('org.inactive')}
+                    </Badge>
+                  </td>
+                  {(canUpdate || canDelete) ? <td className="px-5 py-3">{actions(row)}</td> : null}
                 </tr>
               ))}
             </tbody>
@@ -75,9 +203,15 @@ export function OrganizationPage() {
         </div>
         <div className="space-y-3 p-4 md:hidden">
           {rows.map((row) => (
-            <div key={row.id} className="rounded-xl border border-line p-4">
+            <div key={row.id} className={cn('rounded-xl border border-line p-4', !isActive(row) && 'opacity-60')}>
               <div className="font-semibold">{row.name}</div>
               <div className="mt-1 text-sm text-muted">{String(row.code || row.iso_code || '')}</div>
+              <div className="mt-2">
+                <Badge tone={isActive(row) ? 'green' : 'amber'}>
+                  {isActive(row) ? t('org.active') : t('org.inactive')}
+                </Badge>
+              </div>
+              <div className="mt-2">{actions(row)}</div>
             </div>
           ))}
         </div>
@@ -85,16 +219,39 @@ export function OrganizationPage() {
 
       <Modal open={open} title={`${t('org.add')} ${t(`org.${tab}`)}`} onClose={() => setOpen(false)}>
         <div className="space-y-3">
-          <Field label={t('org.name')} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          {tab === 'countries' || tab === 'provinces' || tab === 'cities' ? (
-            <Field label={t('org.nameFr')} value={form.name_fr || ''} onChange={(e) => setForm({ ...form, name_fr: e.target.value })} />
-          ) : null}
           {tab === 'countries' ? (
-            <Field label="ISO" value={form.iso_code || ''} onChange={(e) => setForm({ ...form, iso_code: e.target.value })} />
+            <>
+              <WorldCountryCombobox
+                value={pickedCountry}
+                excludeIso={countries.map((country) => String(country.iso_code || ''))}
+                onSelect={setPickedCountry}
+              />
+              {pickedCountry ? (
+                <div className="rounded-2xl bg-surface px-4 py-3 text-sm">
+                  <div className="font-semibold">{pickedCountry.nameFr}</div>
+                  <div className="mt-1 text-muted">
+                    {pickedCountry.iso}
+                    {pickedCountry.phone ? ` · ${pickedCountry.phone}` : ''}
+                    {` · ${pickedCountry.currency}`}
+                  </div>
+                  {pickedCountry.lat != null && pickedCountry.lng != null ? (
+                    <div className="mt-1 text-muted">{t('org.coordinates')}: {pickedCountry.lat.toFixed(4)}, {pickedCountry.lng.toFixed(4)}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : (
-            <Field label={t('org.code')} value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+            <>
+              <Field label={t('org.name')} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              {needsNameFr ? (
+                <Field label={t('org.nameFr')} value={form.name_fr || ''} onChange={(e) => setForm({ ...form, name_fr: e.target.value })} />
+              ) : null}
+              {needsCode ? (
+                <Field label={t('org.code')} value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+              ) : null}
+            </>
           )}
-          {tab !== 'countries' && tab !== 'offices' && tab !== 'departments' ? (
+          {tab === 'provinces' || tab === 'cities' ? (
             <label className="block text-sm font-medium">
               {t('org.countries')}
               <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.country_id || ''} onChange={(e) => setForm({ ...form, country_id: e.target.value })}>
@@ -103,7 +260,25 @@ export function OrganizationPage() {
               </select>
             </label>
           ) : null}
-          {tab === 'offices' || tab === 'departments' ? (
+          {tab === 'communes' ? (
+            <label className="block text-sm font-medium">
+              {t('org.cities')}
+              <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.city_id || ''} onChange={(e) => setForm({ ...form, city_id: e.target.value })}>
+                <option value="">—</option>
+                {cities.map((city) => <option key={city.id} value={city.id}>{city.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {tab === 'neighborhoods' ? (
+            <label className="block text-sm font-medium">
+              {t('org.communes')}
+              <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.commune_id || ''} onChange={(e) => setForm({ ...form, commune_id: e.target.value })}>
+                <option value="">—</option>
+                {communes.map((commune) => <option key={commune.id} value={commune.id}>{commune.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {tab === 'departments' ? (
             <label className="block text-sm font-medium">
               {t('org.companies')}
               <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.company_id || ''} onChange={(e) => setForm({ ...form, company_id: e.target.value })}>
@@ -112,18 +287,40 @@ export function OrganizationPage() {
               </select>
             </label>
           ) : null}
-          {tab === 'offices' ? (
-            <label className="block text-sm font-medium">
-              Type
-              <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.type || 'office'} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-                <option value="headquarters">HQ</option>
-                <option value="office">Office</option>
-                <option value="agency">Agency</option>
-                <option value="branch">Branch</option>
-              </select>
-            </label>
-          ) : null}
-          <Button className="w-full" onClick={() => void submit()}>{t('common.save')}</Button>
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
+          <Button className="w-full" disabled={saving} onClick={() => void submit()}>{saving ? t('common.loading') : t('common.save')}</Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(toggling)}
+        title={toggling && isActive(toggling) ? t('org.deactivateOffice') : t('org.activateOffice')}
+        onClose={() => setToggling(null)}
+      >
+        <p className="text-sm text-muted">
+          {t(toggling && isActive(toggling) ? 'org.deactivateConfirm' : 'org.activateConfirm', { name: toggling?.name ?? '' })}
+        </p>
+        <div className="mt-5 flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => setToggling(null)}>{t('common.cancel')}</Button>
+          <Button className="flex-1" disabled={saving} onClick={() => void confirmToggle()}>
+            {saving ? t('common.loading') : (toggling && isActive(toggling) ? t('org.deactivateOffice') : t('org.activateOffice'))}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(deleting)}
+        title={t('common.delete')}
+        onClose={() => setDeleting(null)}
+      >
+        <p className="text-sm text-muted">
+          {t('org.deleteConfirm', { name: deleting?.name ?? '' })}
+        </p>
+        <div className="mt-5 flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
+          <Button variant="danger" className="flex-1" disabled={saving} onClick={() => void confirmDelete()}>
+            {saving ? t('common.loading') : t('common.delete')}
+          </Button>
         </div>
       </Modal>
     </div>

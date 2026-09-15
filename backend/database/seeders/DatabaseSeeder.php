@@ -3,12 +3,15 @@
 namespace Database\Seeders;
 
 use App\Core\Support\PermissionCatalog;
+use App\Core\Support\RoleCatalog;
 use App\Models\Activity;
 use App\Models\AppNotification;
 use App\Models\City;
+use App\Models\Commune;
 use App\Models\Company;
 use App\Models\Country;
 use App\Models\Department;
+use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Permission;
 use App\Models\Province;
@@ -21,7 +24,10 @@ use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsOrder;
 use App\Modules\Kams\Models\KamsOrderItem;
+use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Services\MemberMigrationService;
+use App\Modules\Kams\Support\PersonName;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
@@ -31,17 +37,20 @@ class DatabaseSeeder extends Seeder
     {
         $this->seedPermissionsAndRoles();
         $geography = $this->seedGeography();
-        $companies = $this->seedCompanies($geography);
-        $this->seedModules($companies);
+        $modules = $this->seedModules();
+        $companies = $this->seedCompanies($geography, $modules);
+        $this->linkModuleRoleOffices();
         $admin = $this->seedUsers($companies);
         $this->seedSettings();
         $this->seedKams($companies['king']);
+        $this->seedKamsRecruitment($companies['king']);
         $this->seedInbox($admin, $companies['king']);
     }
 
     private function seedPermissionsAndRoles(): void
     {
         $permissions = collect(PermissionCatalog::core())
+            ->concat(PermissionCatalog::forKams())
             ->concat(PermissionCatalog::forModule('kams'))
             ->concat(PermissionCatalog::forModule('heavy-equipment'))
             ->concat(PermissionCatalog::forModule('real-estate'))
@@ -57,34 +66,7 @@ class DatabaseSeeder extends Seeder
             return [$permission['slug'] => $model->id];
         });
 
-        $roles = [
-            ['name' => 'Super Administrator', 'slug' => 'super_administrator', 'level' => 100, 'all' => true],
-            ['name' => 'Group Administrator', 'slug' => 'group_administrator', 'level' => 90, 'except' => []],
-            ['name' => 'Country Manager', 'slug' => 'country_manager', 'level' => 80, 'permissions' => [
-                'dashboard.group', 'dashboard.company', 'organization.view', 'companies.view', 'users.view',
-                'finance.view', 'reports.view', 'reports.export', 'modules.view', 'notifications.view',
-            ]],
-            ['name' => 'Company Administrator', 'slug' => 'company_administrator', 'level' => 70, 'permissions' => [
-                'dashboard.company', 'organization.view', 'companies.view', 'companies.update', 'users.view',
-                'users.create', 'users.update', 'finance.view', 'reports.view', 'modules.view', 'kams.view',
-                'kams.create', 'kams.update', 'kams.approve', 'notifications.view',
-            ]],
-            ['name' => 'City Manager', 'slug' => 'city_manager', 'level' => 60, 'permissions' => [
-                'dashboard.company', 'organization.view', 'companies.view', 'users.view', 'reports.view', 'notifications.view',
-            ]],
-            ['name' => 'Office Manager', 'slug' => 'office_manager', 'level' => 50, 'permissions' => [
-                'dashboard.company', 'organization.view', 'users.view', 'kams.view', 'kams.create', 'notifications.view',
-            ]],
-            ['name' => 'Department Manager', 'slug' => 'department_manager', 'level' => 40, 'permissions' => [
-                'dashboard.company', 'users.view', 'kams.view', 'notifications.view',
-            ]],
-            ['name' => 'Employee / Staff', 'slug' => 'employee', 'level' => 20, 'permissions' => [
-                'dashboard.company', 'kams.view', 'notifications.view',
-            ]],
-            ['name' => 'Viewer', 'slug' => 'viewer', 'level' => 10, 'permissions' => [
-                'dashboard.company', 'organization.view', 'reports.view', 'notifications.view',
-            ]],
-        ];
+        $roles = RoleCatalog::all();
 
         foreach ($roles as $roleData) {
             $role = Role::query()->updateOrCreate(
@@ -93,24 +75,34 @@ class DatabaseSeeder extends Seeder
                     'name' => $roleData['name'],
                     'description' => $roleData['name'],
                     'level' => $roleData['level'],
+                    'module_slug' => $roleData['module_slug'],
                     'is_system' => true,
                 ]
             );
 
-            if (! empty($roleData['all'])) {
+            if ($roleData['full_access']) {
                 $role->permissions()->sync($permissionIds->values());
-                continue;
             }
-
-            if (array_key_exists('except', $roleData)) {
-                $role->permissions()->sync($permissionIds->values());
-                continue;
-            }
-
-            $role->permissions()->sync(
-                collect($roleData['permissions'])->map(fn ($slug) => $permissionIds[$slug] ?? null)->filter()
-            );
         }
+    }
+
+    private function linkModuleRoleOffices(): void
+    {
+        $kamsOfficeIds = Office::query()
+            ->whereHas('company.module', fn ($module) => $module->where('slug', 'kams'))
+            ->pluck('id');
+
+        if ($kamsOfficeIds->isEmpty()) {
+            return;
+        }
+
+        Role::query()
+            ->where('module_slug', 'kams')
+            ->whereNotIn('slug', RoleCatalog::fullAccessSlugs())
+            ->get()
+            ->each(function (Role $role) use ($kamsOfficeIds) {
+                $role->offices()->syncWithoutDetaching($kamsOfficeIds);
+            });
     }
 
     private function seedGeography(): array
@@ -121,6 +113,10 @@ class DatabaseSeeder extends Seeder
             'phone_code' => '+243',
             'currency_code' => 'USD',
             'currency_symbol' => '$',
+            'tax_name' => 'TVA',
+            'tax_rate' => 16,
+            'latitude' => 0,
+            'longitude' => 25,
         ]);
 
         $tz = Country::query()->updateOrCreate(['iso_code' => 'TZ'], [
@@ -129,6 +125,10 @@ class DatabaseSeeder extends Seeder
             'phone_code' => '+255',
             'currency_code' => 'TZS',
             'currency_symbol' => 'TSh',
+            'tax_name' => 'VAT',
+            'tax_rate' => 18,
+            'latitude' => -6.3690,
+            'longitude' => 34.8888,
         ]);
 
         $kinshasaProvince = Province::query()->updateOrCreate(['country_id' => $drc->id, 'code' => 'KN'], [
@@ -157,14 +157,68 @@ class DatabaseSeeder extends Seeder
             'province_id' => $zanzibar->id,
         ]);
 
-        return compact('drc', 'tz', 'kinshasa', 'goma', 'zanzibarCity');
+        $gombe = Commune::query()->updateOrCreate(['city_id' => $kinshasa->id, 'name' => 'Gombe'], [
+            'name_fr' => 'Gombe',
+        ]);
+        $karisimbi = Commune::query()->updateOrCreate(['city_id' => $goma->id, 'name' => 'Karisimbi'], [
+            'name_fr' => 'Karisimbi',
+        ]);
+        $gomaCommune = Commune::query()->updateOrCreate(['city_id' => $goma->id, 'name' => 'Goma'], [
+            'name_fr' => 'Goma',
+        ]);
+        $miembeni = Commune::query()->updateOrCreate(['city_id' => $zanzibarCity->id, 'name' => 'Miembeni'], [
+            'name_fr' => 'Miembeni',
+        ]);
+
+        $batetela = Neighborhood::query()->updateOrCreate(['commune_id' => $gombe->id, 'name' => 'Batetela'], [
+            'name_fr' => 'Batetela',
+        ]);
+        $himbi = Neighborhood::query()->updateOrCreate(['commune_id' => $karisimbi->id, 'name' => 'Himbi'], [
+            'name_fr' => 'Himbi',
+        ]);
+        $keshero = Neighborhood::query()->updateOrCreate(['commune_id' => $gomaCommune->id, 'name' => 'Keshero'], [
+            'name_fr' => 'Keshero',
+        ]);
+        $miembeniQuarter = Neighborhood::query()->updateOrCreate(['commune_id' => $miembeni->id, 'name' => 'Miembeni'], [
+            'name_fr' => 'Miembeni',
+        ]);
+
+        return compact(
+            'drc', 'tz', 'kinshasaProvince', 'northKivu', 'zanzibar',
+            'kinshasa', 'goma', 'zanzibarCity',
+            'gombe', 'karisimbi', 'gomaCommune', 'miembeni',
+            'batetela', 'himbi', 'keshero', 'miembeniQuarter'
+        );
     }
 
-    private function seedCompanies(array $geo): array
+    private function seedModules(): array
+    {
+        $definitions = [
+            ['slug' => 'kams', 'name' => 'King Attitude Management System', 'name_fr' => 'King Attitude Management System', 'status' => 'active', 'sort_order' => 1, 'icon' => 'crown'],
+            ['slug' => 'heavy-equipment', 'name' => 'LALI Heavy Equipment', 'name_fr' => 'LALI Heavy Equipment', 'status' => 'in_development', 'sort_order' => 2, 'icon' => 'truck'],
+            ['slug' => 'real-estate', 'name' => 'LALI Apartments / Real Estate', 'name_fr' => 'LALI Apartments / Immobilier', 'status' => 'coming_soon', 'sort_order' => 3, 'icon' => 'building'],
+            ['slug' => 'rice-mills', 'name' => 'LALI Miembeni Rice Mills', 'name_fr' => 'LALI Miembeni Rice Mills', 'status' => 'coming_soon', 'sort_order' => 4, 'icon' => 'wheat'],
+            ['slug' => 'lali-tv', 'name' => 'LALI TV', 'name_fr' => 'LALI TV', 'status' => 'inactive', 'sort_order' => 5, 'icon' => 'tv'],
+        ];
+
+        $modules = [];
+        foreach ($definitions as $module) {
+            $modules[$module['slug']] = SystemModule::query()->updateOrCreate(['slug' => $module['slug']], $module + [
+                'description' => $module['name'],
+                'description_fr' => $module['name_fr'],
+                'version' => $module['slug'] === 'kams' ? '1.0.0' : '0.1.0',
+            ]);
+        }
+
+        return $modules;
+    }
+
+    private function seedCompanies(array $geo, array $modules): array
     {
         $holdings = Company::query()->updateOrCreate(['code' => 'LALI'], [
             'country_id' => $geo['drc']->id,
             'city_id' => $geo['kinshasa']->id,
+            'system_module_id' => null,
             'name' => 'LALI Holdings',
             'legal_name' => 'LALI Holdings Group',
             'email' => 'contact@laliholdings.com',
@@ -177,8 +231,9 @@ class DatabaseSeeder extends Seeder
         $king = Company::query()->updateOrCreate(['code' => 'KAMS'], [
             'country_id' => $geo['drc']->id,
             'city_id' => $geo['goma']->id,
-            'name' => 'King Attitude',
-            'legal_name' => 'King Attitude SARL',
+            'system_module_id' => $modules['kams']->id,
+            'name' => 'King Attitude Traders',
+            'legal_name' => 'King Attitude Traders SARL',
             'email' => 'hello@kingattitude.com',
             'phone' => '+243 900 000 001',
             'address' => 'Goma, Nord-Kivu',
@@ -186,9 +241,36 @@ class DatabaseSeeder extends Seeder
             'description' => 'Fashion and lifestyle brand of LALI Holdings',
         ]);
 
+        $heavy = Company::query()->updateOrCreate(['code' => 'LHE'], [
+            'country_id' => $geo['drc']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'system_module_id' => $modules['heavy-equipment']->id,
+            'name' => 'LALI Heavy Equipment',
+            'legal_name' => 'LALI Heavy Equipment SARL',
+            'email' => 'equipment@laliholdings.com',
+            'phone' => '+243 800 000 010',
+            'address' => 'Kinshasa, RDC',
+            'currency_code' => 'USD',
+            'description' => 'Heavy equipment rental and operations',
+        ]);
+
+        $estate = Company::query()->updateOrCreate(['code' => 'LRE'], [
+            'country_id' => $geo['drc']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'system_module_id' => $modules['real-estate']->id,
+            'name' => 'LALI Apartments',
+            'legal_name' => 'LALI Real Estate SARL',
+            'email' => 'immobilier@laliholdings.com',
+            'phone' => '+243 800 000 011',
+            'address' => 'Kinshasa, RDC',
+            'currency_code' => 'USD',
+            'description' => 'Real estate and apartment management',
+        ]);
+
         $rice = Company::query()->updateOrCreate(['code' => 'LMRM'], [
             'country_id' => $geo['tz']->id,
             'city_id' => $geo['zanzibarCity']->id,
+            'system_module_id' => $modules['rice-mills']->id,
             'name' => 'LALI Miembeni Rice Mills',
             'legal_name' => 'LALI Miembeni Rice Mills Ltd',
             'email' => 'rice@laliholdings.com',
@@ -198,25 +280,106 @@ class DatabaseSeeder extends Seeder
             'description' => 'Rice milling and distribution',
         ]);
 
-        $hq = Office::query()->updateOrCreate(['company_id' => $holdings->id, 'code' => 'HQ'], [
+        $tv = Company::query()->updateOrCreate(['code' => 'LTV'], [
+            'country_id' => $geo['drc']->id,
             'city_id' => $geo['kinshasa']->id,
+            'system_module_id' => $modules['lali-tv']->id,
+            'name' => 'LALI TV',
+            'legal_name' => 'LALI TV SARL',
+            'email' => 'tv@laliholdings.com',
+            'phone' => '+243 800 000 012',
+            'address' => 'Kinshasa, RDC',
+            'currency_code' => 'USD',
+            'description' => 'Media and broadcasting',
+        ]);
+
+        $businessCompanies = [$king, $heavy, $estate, $rice, $tv];
+        foreach ($businessCompanies as $company) {
+            if ($company->system_module_id) {
+                $company->modules()->syncWithoutDetaching([
+                    $company->system_module_id => ['is_enabled' => true],
+                ]);
+                $holdings->modules()->syncWithoutDetaching([
+                    $company->system_module_id => ['is_enabled' => true],
+                ]);
+            }
+        }
+
+        $hq = Office::query()->updateOrCreate(['company_id' => $holdings->id, 'code' => 'HQ'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['kinshasaProvince']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'commune_id' => $geo['gombe']->id,
+            'neighborhood_id' => $geo['batetela']->id,
             'name' => 'Group Headquarters',
             'type' => 'headquarters',
-            'address' => 'Kinshasa',
+            'address' => 'Gombe, Kinshasa',
         ]);
 
         $gomaOffice = Office::query()->updateOrCreate(['company_id' => $king->id, 'code' => 'GMA'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['northKivu']->id,
             'city_id' => $geo['goma']->id,
-            'name' => 'Goma Flagship',
+            'commune_id' => $geo['karisimbi']->id,
+            'neighborhood_id' => $geo['himbi']->id,
+            'name' => 'KAMS Goma',
             'type' => 'headquarters',
-            'address' => 'Goma',
+            'address' => 'Himbi, Goma',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $king->id, 'code' => 'KIN'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['kinshasaProvince']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'commune_id' => $geo['gombe']->id,
+            'neighborhood_id' => $geo['batetela']->id,
+            'name' => 'KAMS Kinshasa',
+            'type' => 'branch',
+            'address' => 'Gombe, Kinshasa',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $heavy->id, 'code' => 'HQ'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['kinshasaProvince']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'commune_id' => $geo['gombe']->id,
+            'neighborhood_id' => $geo['batetela']->id,
+            'name' => 'Heavy Equipment HQ',
+            'type' => 'headquarters',
+            'address' => 'Gombe, Kinshasa',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $estate->id, 'code' => 'HQ'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['kinshasaProvince']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'commune_id' => $geo['gombe']->id,
+            'neighborhood_id' => $geo['batetela']->id,
+            'name' => 'Apartments HQ',
+            'type' => 'headquarters',
+            'address' => 'Gombe, Kinshasa',
         ]);
 
         Office::query()->updateOrCreate(['company_id' => $rice->id, 'code' => 'MMB'], [
+            'country_id' => $geo['tz']->id,
+            'province_id' => $geo['zanzibar']->id,
             'city_id' => $geo['zanzibarCity']->id,
+            'commune_id' => $geo['miembeni']->id,
+            'neighborhood_id' => $geo['miembeniQuarter']->id,
             'name' => 'Miembeni Mill',
             'type' => 'headquarters',
-            'address' => 'Miembeni',
+            'address' => 'Miembeni, Zanzibar',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $tv->id, 'code' => 'HQ'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['kinshasaProvince']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'commune_id' => $geo['gombe']->id,
+            'neighborhood_id' => $geo['batetela']->id,
+            'name' => 'LALI TV Studio',
+            'type' => 'headquarters',
+            'address' => 'Gombe, Kinshasa',
         ]);
 
         Department::query()->updateOrCreate(['company_id' => $holdings->id, 'code' => 'FIN'], [
@@ -231,33 +394,7 @@ class DatabaseSeeder extends Seeder
         Activity::query()->updateOrCreate(['company_id' => $king->id, 'name' => 'Retail fashion']);
         Activity::query()->updateOrCreate(['company_id' => $rice->id, 'name' => 'Rice milling']);
 
-        return compact('holdings', 'king', 'rice', 'hq', 'gomaOffice');
-    }
-
-    private function seedModules(array $companies): void
-    {
-        $modules = [
-            ['slug' => 'kams', 'name' => 'King Attitude Management System', 'name_fr' => 'King Attitude Management System', 'status' => 'active', 'sort_order' => 1, 'icon' => 'crown'],
-            ['slug' => 'heavy-equipment', 'name' => 'LALI Heavy Equipment', 'name_fr' => 'LALI Heavy Equipment', 'status' => 'in_development', 'sort_order' => 2, 'icon' => 'truck'],
-            ['slug' => 'real-estate', 'name' => 'LALI Apartments / Real Estate', 'name_fr' => 'LALI Apartments / Immobilier', 'status' => 'coming_soon', 'sort_order' => 3, 'icon' => 'building'],
-            ['slug' => 'rice-mills', 'name' => 'LALI Miembeni Rice Mills', 'name_fr' => 'LALI Miembeni Rice Mills', 'status' => 'coming_soon', 'sort_order' => 4, 'icon' => 'wheat'],
-            ['slug' => 'lali-tv', 'name' => 'LALI TV', 'name_fr' => 'LALI TV', 'status' => 'inactive', 'sort_order' => 5, 'icon' => 'tv'],
-        ];
-
-        foreach ($modules as $module) {
-            $record = SystemModule::query()->updateOrCreate(['slug' => $module['slug']], $module + [
-                'description' => $module['name'],
-                'description_fr' => $module['name_fr'],
-                'version' => $module['slug'] === 'kams' ? '1.0.0' : '0.1.0',
-            ]);
-
-            $companies['king']->modules()->syncWithoutDetaching([
-                $record->id => ['is_enabled' => $module['slug'] === 'kams'],
-            ]);
-            $companies['holdings']->modules()->syncWithoutDetaching([
-                $record->id => ['is_enabled' => true],
-            ]);
-        }
+        return compact('holdings', 'king', 'heavy', 'estate', 'rice', 'tv', 'hq', 'gomaOffice');
     }
 
     private function seedUsers(array $companies): User
@@ -274,7 +411,8 @@ class DatabaseSeeder extends Seeder
             'password' => Hash::make('Password123!'),
             'email_verified_at' => now(),
         ]);
-        $admin->roles()->sync([Role::query()->where('slug', 'super_administrator')->value('id')]);
+        $admin->roles()->detach();
+        $admin->roles()->attach(Role::query()->where('slug', 'super_administrator')->value('id'), ['company_id' => null]);
         $admin->scopes()->updateOrCreate(['scope_type' => 'group'], ['scope_id' => null]);
 
         $companyAdmin = User::query()->updateOrCreate(['email' => 'kevin.m@example.com'], [
@@ -288,9 +426,18 @@ class DatabaseSeeder extends Seeder
             'password' => Hash::make('Password123!'),
             'email_verified_at' => now(),
         ]);
-        $companyAdmin->roles()->sync([Role::query()->where('slug', 'company_administrator')->value('id')]);
+        $companyAdmin->roles()->detach();
+        $companyAdmin->roles()->attach(Role::query()->where('slug', 'manager')->value('id'), ['company_id' => $companies['king']->id]);
         $companyAdmin->scopes()->updateOrCreate(
             ['scope_type' => 'company', 'scope_id' => $companies['king']->id],
+            []
+        );
+        $companyAdmin->scopes()->updateOrCreate(
+            ['scope_type' => 'module', 'scope_id' => $companies['king']->system_module_id],
+            []
+        );
+        $companyAdmin->scopes()->updateOrCreate(
+            ['scope_type' => 'office', 'scope_id' => $companies['gomaOffice']->id],
             []
         );
 
@@ -301,11 +448,48 @@ class DatabaseSeeder extends Seeder
     {
         $settings = [
             ['group' => 'general', 'key' => 'group_name', 'value' => 'LALI Holdings'],
+            ['group' => 'general', 'key' => 'legal_name', 'value' => 'LALI Holdings SAS'],
+            ['group' => 'general', 'key' => 'support_email', 'value' => 'samuel.w@example.com'],
             ['group' => 'general', 'key' => 'default_locale', 'value' => 'fr'],
             ['group' => 'general', 'key' => 'default_timezone', 'value' => 'Africa/Kinshasa'],
+            ['group' => 'general', 'key' => 'date_format', 'value' => 'DD/MM/YYYY'],
+            ['group' => 'general', 'key' => 'week_start', 'value' => '1'],
             ['group' => 'finance', 'key' => 'reporting_currency', 'value' => 'USD'],
+            ['group' => 'finance', 'key' => 'decimal_places', 'value' => '2', 'type' => 'number'],
+            ['group' => 'finance', 'key' => 'fiscal_year_start_month', 'value' => '1', 'type' => 'number'],
+            ['group' => 'finance', 'key' => 'tax_inclusive_prices', 'value' => '0', 'type' => 'boolean'],
+            ['group' => 'finance', 'key' => 'fx_spread_percent', 'value' => '1.5', 'type' => 'number'],
+            ['group' => 'finance', 'key' => 'multi_currency', 'value' => '1', 'type' => 'boolean'],
             ['group' => 'notifications', 'key' => 'email_enabled', 'value' => '0', 'type' => 'boolean'],
             ['group' => 'notifications', 'key' => 'sms_enabled', 'value' => '0', 'type' => 'boolean'],
+            ['group' => 'notifications', 'key' => 'inapp_enabled', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'notifications', 'key' => 'digest_hour', 'value' => '8', 'type' => 'number'],
+            ['group' => 'security', 'key' => 'password_min_length', 'value' => '10', 'type' => 'number'],
+            ['group' => 'security', 'key' => 'password_require_mixed', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'security', 'key' => 'session_lifetime_minutes', 'value' => '120', 'type' => 'number'],
+            ['group' => 'security', 'key' => 'force_password_reset_days', 'value' => '90', 'type' => 'number'],
+            ['group' => 'security', 'key' => 'audit_retention_days', 'value' => '365', 'type' => 'number'],
+            ['group' => 'kams', 'key' => 'order_prefix', 'value' => 'KA'],
+            ['group' => 'kams', 'key' => 'invoice_prefix', 'value' => 'KAF'],
+            ['group' => 'kams', 'key' => 'default_tax_rate', 'value' => '16', 'type' => 'number'],
+            ['group' => 'kams', 'key' => 'stock_alert_threshold', 'value' => '5', 'type' => 'number'],
+            ['group' => 'kams', 'key' => 'default_payment_terms_days', 'value' => '30', 'type' => 'number'],
+            ['group' => 'kams', 'key' => 'allow_backorders', 'value' => '0', 'type' => 'boolean'],
+            ['group' => 'kams', 'key' => 'low_stock_notify', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'kams', 'key' => 'interview_hours', 'value' => '12:00-16:00'],
+            ['group' => 'kams', 'key' => 'observation_hours', 'value' => '07:30-17:30'],
+            ['group' => 'heavy-equipment', 'key' => 'default_rental_days', 'value' => '7', 'type' => 'number'],
+            ['group' => 'heavy-equipment', 'key' => 'maintenance_interval_hours', 'value' => '250', 'type' => 'number'],
+            ['group' => 'heavy-equipment', 'key' => 'require_operator_license', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'real-estate', 'key' => 'default_lease_months', 'value' => '12', 'type' => 'number'],
+            ['group' => 'real-estate', 'key' => 'occupancy_alert_percent', 'value' => '80', 'type' => 'number'],
+            ['group' => 'real-estate', 'key' => 'late_rent_grace_days', 'value' => '5', 'type' => 'number'],
+            ['group' => 'rice-mills', 'key' => 'standard_bag_kg', 'value' => '50', 'type' => 'number'],
+            ['group' => 'rice-mills', 'key' => 'moisture_max_percent', 'value' => '14', 'type' => 'number'],
+            ['group' => 'rice-mills', 'key' => 'mill_shift_hours', 'value' => '8', 'type' => 'number'],
+            ['group' => 'lali-tv', 'key' => 'default_broadcast_tz', 'value' => 'Africa/Kinshasa'],
+            ['group' => 'lali-tv', 'key' => 'max_upload_mb', 'value' => '512', 'type' => 'number'],
+            ['group' => 'lali-tv', 'key' => 'content_review_required', 'value' => '1', 'type' => 'boolean'],
         ];
 
         foreach ($settings as $setting) {
@@ -380,6 +564,46 @@ class DatabaseSeeder extends Seeder
                 'description' => 'Launch campaign for the new collection.',
             ]
         );
+    }
+
+    private function seedKamsRecruitment(Company $company): void
+    {
+        $office = Office::query()->where('company_id', $company->id)->where('code', 'GMA')->first();
+
+        if (! KamsCandidate::query()->where('company_id', $company->id)->exists()) {
+            KamsCandidate::query()->create([
+                'company_id' => $company->id,
+                'office_id' => $office?->id,
+                'candidate_id' => 'KA-C-'.now()->year.'-000001',
+                ...PersonName::fromParts('Amina', 'Bahati'),
+                'phone' => '+243 970 111 222',
+                'address' => 'Himbi, Goma',
+                'guardian_name' => 'Joseph Bahati',
+                'guardian_phone' => '+243 970 111 223',
+                'source' => 'qr_code',
+                'status' => 'under_review',
+                'applied_at' => now()->subDays(3),
+            ]);
+        }
+
+        if (! \App\Modules\Kams\Models\KamsMember::query()->where('company_id', $company->id)->where('origin', 'migrated')->exists()) {
+            app(MemberMigrationService::class)->import((int) $company->id, (int) User::query()->value('id'), 'excel', 'ATL existing register', [
+                [
+                    'member_code' => 'ATL-2019-0142',
+                    'full_name' => 'Jean-Luc Mwamba',
+                    'phone' => '+243 810 200 300',
+                    'address' => 'Karisimbi, Goma',
+                    'trainer_name' => 'Patrick K.',
+                    'manager_name' => 'Sarah M.',
+                    'office_code' => 'GMA',
+                    'joined_on' => '2019-04-12',
+                    'rank' => 'Distributor',
+                    'status' => 'active',
+                    'consignment_balance' => 420,
+                    'distributor_savings' => 85,
+                ],
+            ]);
+        }
     }
 
     private function seedInbox(User $admin, Company $company): void

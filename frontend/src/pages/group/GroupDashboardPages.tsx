@@ -4,8 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge, Card, Empty } from '../../components/ui'
+import { PresenceMap, type PresenceCountry } from '../../components/PresenceMap'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
+import { canAccessModule } from '../../lib/access'
 import { greetingKey, money } from '../../lib/format'
 import api from '../../lib/api'
 import { KamsDashboard } from '../kams/KamsPages'
@@ -20,6 +22,7 @@ type DashboardData = {
   tasks: Array<{ id: number; title: string; priority: string; due_date?: string | null; status: string }>
   activity: Array<{ id: number; action: string; auditable_type: string; created_at: string; user?: { name: string } }>
   performance: Array<{ id: number; name: string; code: string; offices_count: number; revenue: number; profit: number }>
+  presence?: PresenceCountry[]
   trend: Array<{ month: string; revenue: number; expenses: number }>
 }
 
@@ -36,7 +39,7 @@ function useGroupDashboard() {
 
   useEffect(() => {
     api.get('/dashboard').then((res) => setData(res.data.data)).catch(() => undefined)
-    if (hasPermission('kams.view')) {
+    if (hasPermission('kams.dashboard.view')) {
       api.get('/modules/kams/dashboard').then((res) => setKams(res.data.data)).catch(() => undefined)
     }
   }, [hasPermission])
@@ -100,6 +103,11 @@ export function GroupOverviewPage() {
           )
         })}
       </div>
+
+      <Card className="p-5">
+        <div className="mb-4 font-semibold">{t('dashboard.map')}</div>
+        <PresenceMap countries={data.presence ?? []} />
+      </Card>
 
       {data.finances ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -270,15 +278,16 @@ const moduleKpis: Record<string, string[]> = {
 export function GroupModuleDashboardPage() {
   const { t, i18n } = useTranslation()
   const { slug } = useParams()
-  const { hasPermission } = useAuth()
+  const { user, hasPermission } = useAuth()
   const { modules } = useSystemModules()
   const module = modules.find((entry) => entry.slug === slug)
 
   if (!slug) return <Empty>{t('common.empty')}</Empty>
   if (!module) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!canAccessModule(user, slug)) return <Empty>{t('modules.noAccess')}</Empty>
 
   if (slug === 'kams') {
-    if (!hasPermission('kams.view')) {
+    if (!hasPermission('kams.dashboard.view')) {
       return <Empty>{t('groupDash.noAccess')}</Empty>
     }
 

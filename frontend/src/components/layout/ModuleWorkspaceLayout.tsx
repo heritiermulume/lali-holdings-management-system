@@ -2,32 +2,49 @@ import { useTranslation } from 'react-i18next'
 import { Outlet, useLocation } from 'react-router-dom'
 import { PageHeader } from '../ui'
 import { useSystemModules } from '../../context/ModulesContext'
-import { activeModuleItem, dashboardBusinessSlug, moduleFromPath } from '../../modules/registry'
+import {
+  activeNavItem,
+  dashboardBusinessSlug,
+  moduleFromPath,
+  navItemDescription,
+  navItemLabel,
+  settingsModuleSlug,
+  settingsNavItems,
+} from '../../modules/registry'
 
 export function ModuleWorkspaceLayout() {
   const { t, i18n } = useTranslation()
   const { pathname } = useLocation()
   const { modules } = useSystemModules()
   const module = moduleFromPath(pathname)
-  const item = module ? activeModuleItem(pathname, module) : null
+  const navItems = module?.slug === 'settings' ? settingsNavItems(modules, i18n.language) : (module?.items ?? [])
+  const item = activeNavItem(pathname, navItems)
   const businessSlug = dashboardBusinessSlug(pathname)
-  const business = businessSlug ? modules.find((entry) => entry.slug === businessSlug) : null
+  const settingsSlug = settingsModuleSlug(pathname)
+  const business = businessSlug
+    ? modules.find((entry) => entry.slug === businessSlug)
+    : settingsSlug
+      ? modules.find((entry) => entry.slug === settingsSlug)
+      : null
   const title = business
     ? (i18n.language.startsWith('fr') ? business.name_fr : business.name)
     : item
-      ? t(item.labelKey)
+      ? navItemLabel(item, t)
       : module
         ? t(module.titleKey)
         : ''
   const subtitle = business
-    ? (i18n.language.startsWith('fr') ? business.description_fr : business.description) || t('groupDash.moduleHint')
+    ? (i18n.language.startsWith('fr') ? business.description_fr : business.description) || (settingsSlug ? t('settings.moduleHint') : t('groupDash.moduleHint'))
     : item
-      ? t(item.descriptionKey)
+      ? navItemDescription(item, t)
       : undefined
+  const isSettings = module?.slug === 'settings'
 
   return (
     <div>
-      <PageHeader title={title} subtitle={subtitle || undefined} titleClassName="text-lhms" />
+      <div className={isSettings ? 'hidden lg:block' : undefined}>
+        <PageHeader title={title} subtitle={subtitle || undefined} titleClassName="text-lhms" />
+      </div>
       <Outlet />
     </div>
   )

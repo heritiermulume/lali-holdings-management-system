@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Core\Support\AuditLogger;
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
+use App\Http\Controllers\Controller;
 use App\Models\Setting;
+use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -13,9 +14,21 @@ class SettingController extends Controller
 {
     use RespondsWithJson;
 
+    public function bootstrap(): JsonResponse
+    {
+        SettingsCatalog::ensure();
+
+        return $this->ok([
+            'default_locale' => SettingsCatalog::defaultLocale(),
+            'group_name' => Setting::value('general', 'group_name', 'LALI Holdings'),
+        ]);
+    }
+
     public function index(): JsonResponse
     {
-        return $this->ok(Setting::query()->get()->groupBy('group'));
+        SettingsCatalog::ensure();
+
+        return $this->ok(Setting::query()->orderBy('group')->orderBy('key')->get()->groupBy('group'));
     }
 
     public function update(Request $request): JsonResponse
@@ -35,8 +48,9 @@ class SettingController extends Controller
             );
         }
 
+        SettingsCatalog::ensure();
         AuditLogger::record('update', null, [], $data);
 
-        return $this->ok(Setting::query()->get()->groupBy('group'), __('Settings saved.'));
+        return $this->ok(Setting::query()->orderBy('group')->orderBy('key')->get()->groupBy('group'), __('Settings saved.'));
     }
 }

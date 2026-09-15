@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
-    'country_id', 'city_id', 'name', 'legal_name', 'code', 'email', 'phone',
+    'country_id', 'city_id', 'system_module_id', 'name', 'legal_name', 'code', 'email', 'phone',
     'address', 'tax_id', 'currency_code', 'logo_path', 'description', 'is_active',
 ])]
 class Company extends Model
@@ -30,6 +30,11 @@ class Company extends Model
     public function city(): BelongsTo
     {
         return $this->belongsTo(City::class);
+    }
+
+    public function module(): BelongsTo
+    {
+        return $this->belongsTo(SystemModule::class, 'system_module_id');
     }
 
     public function offices(): HasMany

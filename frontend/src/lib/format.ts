@@ -1,13 +1,50 @@
-export function money(value?: number | null, currency = 'USD') {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value ?? 0)
+export function money(value?: number | null, currency = 'USD', digits = 2) {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(value ?? 0)
+  } catch {
+    return `${(value ?? 0).toFixed(digits)} ${currency}`
+  }
 }
 
 export function compact(value?: number | null) {
   return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value ?? 0)
+}
+
+export function roleLabel(
+  t: (key: string, options?: { defaultValue?: string }) => string,
+  role?: { slug?: string | null; name?: string | null } | null,
+  gender?: string | null,
+) {
+  if (!role) return '—'
+  if (role.slug && (gender === 'female' || gender === 'male')) {
+    const gendered = t(`users.roleNames.${role.slug}_${gender}`, { defaultValue: '' })
+    if (gendered) return gendered
+  }
+  if (role.slug) return t(`users.roleNames.${role.slug}`, { defaultValue: role.name || role.slug })
+  return role.name || '—'
+}
+
+export function permissionLabel(
+  t: (key: string, options?: { defaultValue?: string }) => string,
+  permission?: { slug?: string | null; name?: string | null } | null,
+) {
+  if (!permission?.slug) return permission?.name || '—'
+  const specific = t(`settings.permissions.${permission.slug}`, { defaultValue: '' })
+  if (specific) return specific
+  const parts = permission.slug.split('.')
+  const action = parts.at(-1)
+  const group = parts.slice(0, -1).join('.')
+  if (action && group) {
+    const actionLabel = t(`settings.permissionActions.${action}`, { defaultValue: '' })
+    const groupLabel = t(`settings.permissionGroups.${group}`, { defaultValue: group })
+    if (actionLabel) return `${actionLabel} — ${groupLabel}`
+  }
+  return permission.name || permission.slug
 }
 
 export function initials(name?: string) {

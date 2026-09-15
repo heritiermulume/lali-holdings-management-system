@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
     'slug', 'name', 'name_fr', 'description', 'description_fr',
@@ -18,6 +19,11 @@ class SystemModule extends Model
             'is_core' => 'boolean',
             'sort_order' => 'integer',
         ];
+    }
+
+    public function company(): HasOne
+    {
+        return $this->hasOne(Company::class, 'system_module_id');
     }
 
     public function companies(): BelongsToMany

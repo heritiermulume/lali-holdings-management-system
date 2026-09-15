@@ -1,0 +1,211 @@
+<?php
+
+namespace App\Modules\Kams\Services;
+
+use App\Core\Support\RoleCatalog;
+use App\Models\Company;
+use App\Models\Role;
+use App\Models\Setting;
+use App\Models\User;
+use App\Modules\Kams\Models\KamsMember;
+use App\Support\SettingsCatalog;
+use Illuminate\Support\Str;
+
+class AgentAccountService
+{
+    /**
+     * @return array{email: string, password: string, is_active: bool}
+     */
+    public function provision(KamsMember $member): array
+    {
+        $member->refresh();
+
+        if ($member->user_id) {
+            $user = $member->user()->firstOrFail();
+            $this->syncUser($member, $user);
+
+            return $this->credentials($member->fresh('user'));
+        }
+
+        $password = $this->generatePassword();
+        $email = $this->loginEmail($member);
+
+        $user = User::query()->create([
+            'first_name' => $member->first_name ?: Str::of($member->full_name)->before(' ')->toString() ?: $member->full_name,
+            'last_name' => $member->last_name ?: Str::of($member->full_name)->after(' ')->toString() ?: $member->member_code,
+            'email' => $email,
+            'phone' => $member->phone,
+            'avatar_path' => $member->photo_path,
+            'locale' => SettingsCatalog::defaultLocale(),
+            'timezone' => (string) Setting::value('general', 'default_timezone', 'Africa/Kinshasa'),
+            'is_active' => false,
+            'primary_company_id' => $member->company_id,
+            'primary_office_id' => $member->office_id,
+            'password' => $password,
+        ]);
+
+        $this->syncRoles($member, $user);
+        $this->syncScopes($member, $user);
+
+        $member->forceFill([
+            'user_id' => $user->id,
+            'login_password' => $password,
+        ])->save();
+
+        return $this->credentials($member->fresh('user'), false);
+    }
+
+    /**
+     * @return array{email: string, password: ?string, is_active: bool}
+     */
+    public function setActive(KamsMember $member, bool $active): array
+    {
+        $this->provision($member);
+        $member->refresh();
+        $user = $member->user()->firstOrFail();
+        $user->forceFill(['is_active' => $active])->save();
+
+        if (! $active) {
+            $user->tokens()->delete();
+        }
+
+        return $this->credentials($member->fresh('user'), $active);
+    }
+
+    public function syncFromMember(KamsMember $member): void
+    {
+        if (! $member->user_id) {
+            return;
+        }
+
+        $user = $member->user()->first();
+        if (! $user) {
+            return;
+        }
+
+        $this->syncUser($member, $user);
+    }
+
+    public function deactivate(KamsMember $member): void
+    {
+        if (! $member->user_id) {
+            return;
+        }
+
+        $user = $member->user()->first();
+        if (! $user) {
+            return;
+        }
+
+        $user->forceFill(['is_active' => false])->save();
+        $user->tokens()->delete();
+    }
+
+    /**
+     * @return array{email: string, password: ?string, is_active: bool}
+     */
+    public function credentials(KamsMember $member, ?bool $isActive = null): array
+    {
+        $user = $member->relationLoaded('user') ? $member->user : $member->user()->first();
+
+        return [
+            'email' => $user?->email ?? $member->email,
+            'password' => $member->login_password,
+            'is_active' => $isActive ?? (bool) $user?->is_active,
+        ];
+    }
+
+    private function syncUser(KamsMember $member, User $user): void
+    {
+        $email = $user->email;
+        $preferred = $this->preferredEmail($member);
+        if ($preferred && $preferred !== $user->email && ! $this->emailTaken($preferred, $user->id)) {
+            $email = $preferred;
+        }
+
+        $user->forceFill([
+            'first_name' => $member->first_name ?: $user->first_name,
+            'last_name' => $member->last_name ?: $user->last_name,
+            'email' => $email,
+            'phone' => $member->phone ?: $user->phone,
+            'primary_company_id' => $member->company_id,
+            'primary_office_id' => $member->office_id,
+        ])->save();
+
+        $this->syncRoles($member, $user);
+        $this->syncScopes($member, $user);
+    }
+
+    private function syncRoles(KamsMember $member, User $user): void
+    {
+        $role = $member->role_id ? Role::query()->find($member->role_id) : null;
+        $blocked = RoleCatalog::fullAccessSlugs();
+
+        if (! $role || in_array($role->slug, $blocked, true)) {
+            $roleId = Role::query()->where('slug', 'distributor')->value('id');
+        } else {
+            $roleId = $role->id;
+        }
+
+        if ($roleId) {
+            $user->assignCompanyRole((int) $roleId, (int) $member->company_id);
+        }
+    }
+
+    private function syncScopes(KamsMember $member, User $user): void
+    {
+        $user->scopes()->delete();
+
+        if ($member->company_id) {
+            $user->scopes()->create(['scope_type' => 'company', 'scope_id' => $member->company_id]);
+            $moduleId = Company::query()->whereKey($member->company_id)->value('system_module_id');
+            if ($moduleId) {
+                $user->scopes()->create(['scope_type' => 'module', 'scope_id' => $moduleId]);
+            }
+        }
+
+        if ($member->office_id) {
+            $user->scopes()->create(['scope_type' => 'office', 'scope_id' => $member->office_id]);
+        }
+    }
+
+    private function loginEmail(KamsMember $member): string
+    {
+        $preferred = $this->preferredEmail($member);
+        if ($preferred && ! $this->emailTaken($preferred)) {
+            return $preferred;
+        }
+
+        $base = strtolower((string) preg_replace('/[^a-z0-9]+/i', '.', $member->member_code));
+        $base = trim($base, '.') ?: 'agent.'.$member->id;
+        $email = $base.'@kams.lali';
+        $suffix = 1;
+
+        while ($this->emailTaken($email)) {
+            $email = $base.$suffix.'@kams.lali';
+            $suffix++;
+        }
+
+        return $email;
+    }
+
+    private function preferredEmail(KamsMember $member): ?string
+    {
+        $email = strtolower(trim((string) $member->email));
+
+        return $email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
+    }
+
+    private function emailTaken(string $email, ?int $ignoreUserId = null): bool
+    {
+        return User::query()
+            ->where('email', $email)
+            ->when($ignoreUserId, fn ($q) => $q->where('id', '!=', $ignoreUserId))
+            ->exists();
+    }
+
+    private function generatePassword(): string
+    {
+        return 'Ka-'.Str::upper(Str::random(4)).random_int(10, 99).'!';
+    }
+}

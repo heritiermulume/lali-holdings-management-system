@@ -1,10 +1,31 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
+import { Navigate } from 'react-router-dom'
+import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { useAuth } from '../../context/AuthContext'
 import { money } from '../../lib/format'
+import { moduleRegistry } from '../../modules/registry'
 import api from '../../lib/api'
 
 type Company = { id: number; name: string }
+
+export function KamsEntry() {
+  const { t } = useTranslation()
+  const { hasPermission } = useAuth()
+
+  if (hasPermission('kams.dashboard.view')) {
+    return <KamsDashboard />
+  }
+
+  const next = moduleRegistry.kams.items.find((item) => {
+    if (item.to === '/modules/kams') return false
+    if (item.anyPerm?.length) return item.anyPerm.some((perm) => hasPermission(perm))
+    return Boolean(item.perm && hasPermission(item.perm))
+  })
+
+  if (next) return <Navigate to={next.to} replace />
+  return <Empty>{t('common.noAccess')}</Empty>
+}
 
 export function KamsDashboard() {
   const { t } = useTranslation()
@@ -12,6 +33,8 @@ export function KamsDashboard() {
     stats: Record<string, number>
     finance: Record<string, number>
     recent_orders: Array<{ id: number; reference: string; total: number; status: string; client?: { name: string } }>
+    recruitment?: Record<string, number>
+    migration?: Record<string, number>
   } | null>(null)
 
   useEffect(() => {
@@ -38,6 +61,33 @@ export function KamsDashboard() {
           </Card>
         ))}
       </div>
+      {data.recruitment ? (
+        <Card className="p-5">
+          <div className="mb-3 font-semibold">{t('kams.newRecruitment')}</div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {['applications', 'interviews', 'observations', 'approved', 'rejected', 'on_hold'].map((key) => (
+              <div key={key} className="rounded-xl bg-surface p-4">
+                <div className="text-sm text-muted">{t(`kams.${key === 'on_hold' ? 'onHold' : key}`)}</div>
+                <div className="mt-2 text-2xl font-extrabold">{data.recruitment?.[key]}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+      {data.migration ? (
+        <Card className="p-5">
+          <div className="mb-1 font-semibold">{t('kams.existingMigration')}</div>
+          <p className="mb-3 text-sm text-muted">{t('kams.migrationNotRecruitment')}</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {['imported', 'pending_verification', 'verified', 'active', 'issues'].map((key) => (
+              <div key={key} className="rounded-xl bg-surface p-4">
+                <div className="text-sm text-muted">{t(`kams.${key === 'pending_verification' ? 'pendingVerification' : key === 'active' ? 'activeMembers' : key}`)}</div>
+                <div className="mt-2 text-2xl font-extrabold">{data.migration?.[key]}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
       <Card className="p-5">
         <div className="mb-3 font-semibold">{t('kams.orders')}</div>
         <div className="space-y-3">
@@ -62,16 +112,20 @@ export function KamsDashboard() {
 function ResourcePage({
   endpoint,
   createLabel,
+  permPrefix,
   fields,
   render,
 }: {
   endpoint: string
   title?: string
   createLabel: string
+  permPrefix: string
   fields: Array<{ name: string; label: string; type?: string }>
   render: (row: Record<string, unknown>) => ReactNode
 }) {
   const { t } = useTranslation()
+  const { hasPermission } = useAuth()
+  const canCreate = hasPermission(`${permPrefix}.create`)
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [open, setOpen] = useState(false)
@@ -103,14 +157,17 @@ function ResourcePage({
 
   return (
     <div>
-      <div className="mb-4 flex justify-end">
-        <Button onClick={() => setOpen(true)}>{createLabel}</Button>
-      </div>
+      {canCreate ? (
+        <div className="mb-4 flex justify-end">
+          <Button onClick={() => setOpen(true)}>{createLabel}</Button>
+        </div>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2">
         {rows.map((row) => (
           <Card key={String(row.id)} className="p-5">{render(row)}</Card>
         ))}
       </div>
+      {canCreate ? (
       <Modal open={open} title={createLabel} onClose={() => setOpen(false)}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           <Select label={t('users.company')} value={form.company_id || ''} onChange={(e) => setForm({ ...form, company_id: e.target.value })}>
@@ -123,6 +180,7 @@ function ResourcePage({
           <Button type="submit" className="w-full">{t('common.save')}</Button>
         </form>
       </Modal>
+      ) : null}
     </div>
   )
 }
@@ -134,6 +192,7 @@ export function KamsClients() {
       endpoint="/modules/kams/clients"
       title={t('kams.clients')}
       createLabel={t('kams.newClient')}
+      permPrefix="kams.clients"
       fields={[
         { name: 'name', label: t('org.name') },
         { name: 'email', label: 'Email', type: 'email' },
@@ -159,6 +218,7 @@ export function KamsProducts() {
       endpoint="/modules/kams/products"
       title={t('kams.products')}
       createLabel={t('kams.newProduct')}
+      permPrefix="kams.products"
       fields={[
         { name: 'name', label: t('org.name') },
         { name: 'sku', label: 'SKU' },
@@ -212,6 +272,7 @@ export function KamsCampaigns() {
       endpoint="/modules/kams/campaigns"
       title={t('kams.campaigns')}
       createLabel={t('kams.newCampaign')}
+      permPrefix="kams.campaigns"
       fields={[
         { name: 'name', label: t('org.name') },
         { name: 'channel', label: 'Channel' },

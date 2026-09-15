@@ -17,5 +17,9 @@ class KamsServiceProvider extends ServiceProvider
         Route::middleware(['api', 'auth:sanctum'])
             ->prefix('api/v1/modules/kams')
             ->group(__DIR__.'/routes.php');
+
+        Route::middleware(['api'])
+            ->prefix('api/v1/public/kams')
+            ->post('apply', [Http\Controllers\KamsRecruitmentController::class, 'publicApply']);
     }
 }

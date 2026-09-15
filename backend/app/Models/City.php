@@ -30,6 +30,11 @@ class City extends Model
         return $this->hasMany(Company::class);
     }
 
+    public function communes(): HasMany
+    {
+        return $this->hasMany(Commune::class);
+    }
+
     public function offices(): HasMany
     {
         return $this->hasMany(Office::class);

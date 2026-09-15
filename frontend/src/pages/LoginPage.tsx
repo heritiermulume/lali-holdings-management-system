@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { Button, Field } from '../components/ui'
+import api from '../lib/api'
 
 export function LoginPage() {
   const { t, i18n } = useTranslation()
@@ -12,6 +13,13 @@ export function LoginPage() {
   const [password, setPassword] = useState('Password123!')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    api.get('/public/bootstrap').then((res) => {
+      const locale = res.data.data?.default_locale === 'en' ? 'en' : 'fr'
+      void i18n.changeLanguage(locale)
+    }).catch(() => undefined)
+  }, [i18n])
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
@@ -60,7 +68,7 @@ export function LoginPage() {
           </Button>
           <div className="flex items-center justify-between text-sm text-muted">
             <span>{t('auth.hint')}</span>
-            <button type="button" onClick={() => void i18n.changeLanguage(i18n.language === 'fr' ? 'en' : 'fr')}>
+            <button type="button" onClick={() => void i18n.changeLanguage(i18n.language.startsWith('fr') ? 'en' : 'fr')}>
               {i18n.language === 'fr' ? 'EN' : 'FR'}
             </button>
           </div>

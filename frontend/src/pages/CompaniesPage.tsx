@@ -1,70 +1,417 @@
-import { useEffect, useState } from 'react'
+import { Ban, MapPin, Pencil, Plus, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge, Button, Card, Field, Modal } from '../components/ui'
+import { Badge, Button, Card, Empty, Field, Modal, Select } from '../components/ui'
+import { useAuth } from '../context/AuthContext'
+import { cn } from '../lib/cn'
 import api from '../lib/api'
+import { businessModuleIcon } from '../modules/registry'
+
+type Geo = { id: number; name: string; name_fr?: string }
+
+type Office = {
+  id: number
+  name: string
+  code: string
+  type: string
+  address?: string | null
+  phone?: string | null
+  is_active: boolean
+  country?: Geo | null
+  province?: Geo | null
+  city?: Geo | null
+  commune?: Geo | null
+  neighborhood?: Geo | null
+}
 
 type Company = {
   id: number
   name: string
+  legal_name?: string | null
   code: string
-  email?: string
-  country?: { name: string }
-  city?: { name: string }
-  offices_count?: number
+  email?: string | null
   is_active: boolean
+  offices_count?: number
+  module?: { id: number; slug: string; name: string; name_fr: string; status: string; sort_order?: number } | null
+  offices?: Office[]
+}
+
+const emptyOfficeForm = {
+  name: '',
+  code: '',
+  type: 'office',
+  address: '',
+  phone: '',
+  country_id: '',
+  province_id: '',
+  city_id: '',
+  commune_id: '',
+  neighborhood_id: '',
+}
+
+function geoName(item: Geo | null | undefined, locale: string) {
+  if (!item) return ''
+  return locale.startsWith('fr') ? (item.name_fr || item.name) : item.name
+}
+
+function geoId(item: Geo | null | undefined) {
+  return item?.id ? String(item.id) : ''
+}
+
+function officeLocation(office: Office, locale: string) {
+  return [office.neighborhood, office.commune, office.city, office.province, office.country]
+    .map((item) => geoName(item, locale))
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function idOrNull(value: string) {
+  return value ? Number(value) : null
 }
 
 export function CompaniesPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const { hasPermission } = useAuth()
+  const canCreate = hasPermission('organization.create')
+  const canUpdate = hasPermission('organization.update')
+  const canDelete = hasPermission('organization.delete')
+  const locale = i18n.language
   const [rows, setRows] = useState<Company[]>([])
-  const [countries, setCountries] = useState<Array<{ id: number; name: string }>>([])
+  const [countries, setCountries] = useState<Geo[]>([])
+  const [provinces, setProvinces] = useState<Geo[]>([])
+  const [cities, setCities] = useState<Geo[]>([])
+  const [communes, setCommunes] = useState<Geo[]>([])
+  const [neighborhoods, setNeighborhoods] = useState<Geo[]>([])
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: '', code: '', country_id: '', email: '' })
+  const [company, setCompany] = useState<Company | null>(null)
+  const [editing, setEditing] = useState<Office | null>(null)
+  const [deleting, setDeleting] = useState<{ company: Company; office: Office } | null>(null)
+  const [toggling, setToggling] = useState<{ company: Company; office: Office } | null>(null)
+  const [form, setForm] = useState(emptyOfficeForm)
+  const [saving, setSaving] = useState(false)
 
   const load = () => {
-    api.get('/companies').then((res) => setRows(res.data.data))
-    api.get('/countries').then((res) => setCountries(res.data.data))
+    api.get('/companies', { params: { business: 1, per_page: 50 } }).then((res) => setRows(res.data.data ?? []))
   }
 
   useEffect(() => { load() }, [])
 
+  useEffect(() => {
+    api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data ?? []))
+  }, [])
+
+  useEffect(() => {
+    if (!form.country_id) {
+      setProvinces([])
+      return
+    }
+    api.get('/provinces', { params: { country_id: form.country_id, per_page: 50 } })
+      .then((res) => setProvinces(res.data.data ?? []))
+  }, [form.country_id])
+
+  useEffect(() => {
+    if (!form.country_id) {
+      setCities([])
+      return
+    }
+    api.get('/cities', { params: { country_id: form.country_id, province_id: form.province_id || undefined, per_page: 50 } })
+      .then((res) => setCities(res.data.data ?? []))
+  }, [form.country_id, form.province_id])
+
+  useEffect(() => {
+    if (!form.city_id) {
+      setCommunes([])
+      return
+    }
+    api.get('/communes', { params: { city_id: form.city_id, per_page: 50 } })
+      .then((res) => setCommunes(res.data.data ?? []))
+  }, [form.city_id])
+
+  useEffect(() => {
+    if (!form.commune_id) {
+      setNeighborhoods([])
+      return
+    }
+    api.get('/neighborhoods', { params: { commune_id: form.commune_id, per_page: 50 } })
+      .then((res) => setNeighborhoods(res.data.data ?? []))
+  }, [form.commune_id])
+
+  const openCreate = (row: Company) => {
+    setCompany(row)
+    setEditing(null)
+    setForm(emptyOfficeForm)
+    setOpen(true)
+  }
+
+  const openEdit = (row: Company, office: Office) => {
+    setCompany(row)
+    setEditing(office)
+    setForm({
+      name: office.name,
+      code: office.code,
+      type: office.type,
+      address: office.address ?? '',
+      phone: office.phone ?? '',
+      country_id: geoId(office.country),
+      province_id: geoId(office.province),
+      city_id: geoId(office.city),
+      commune_id: geoId(office.commune),
+      neighborhood_id: geoId(office.neighborhood),
+    })
+    setOpen(true)
+  }
+
+  const officePayload = () => ({
+    name: form.name,
+    code: form.code,
+    type: form.type,
+    address: form.address || null,
+    phone: form.phone || null,
+    country_id: idOrNull(form.country_id),
+    province_id: idOrNull(form.province_id),
+    city_id: idOrNull(form.city_id),
+    commune_id: idOrNull(form.commune_id),
+    neighborhood_id: idOrNull(form.neighborhood_id),
+  })
+
+  const saveOffice = async () => {
+    if (!company) return
+    setSaving(true)
+    try {
+      if (editing) {
+        await api.put(`/offices/${editing.id}`, officePayload())
+      } else {
+        await api.post('/offices', { ...officePayload(), company_id: company.id })
+      }
+      setOpen(false)
+      load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmToggle = async () => {
+    if (!toggling) return
+    setSaving(true)
+    try {
+      await api.put(`/offices/${toggling.office.id}`, { is_active: !toggling.office.is_active })
+      setToggling(null)
+      load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleting) return
+    setSaving(true)
+    try {
+      await api.delete(`/offices/${deleting.office.id}`)
+      setDeleting(null)
+      load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const ordered = useMemo(
+    () => [...rows].sort((a, b) => (a.module?.sort_order ?? 99) - (b.module?.sort_order ?? 99)),
+    [rows],
+  )
+
   return (
-    <div>
-      <div className="mb-4 flex justify-end">
-        <Button onClick={() => setOpen(true)}>{t('org.add')}</Button>
-      </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {rows.map((company) => (
-          <Card key={company.id} className="p-5">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-xs font-semibold tracking-widest text-muted">{company.code}</div>
-                <h2 className="mt-1 text-xl font-bold">{company.name}</h2>
-                <p className="mt-1 text-sm text-muted">{company.city?.name || company.country?.name}</p>
+    <div className="space-y-4">
+      <p className="text-sm text-muted">{t('org.companiesIntro')}</p>
+      {ordered.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
+      {ordered.map((row) => {
+        const Icon = businessModuleIcon(row.module?.slug ?? row.code.toLowerCase())
+        const moduleName = locale.startsWith('fr') ? (row.module?.name_fr || row.name) : (row.module?.name || row.name)
+        return (
+          <Card key={row.id} className="p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-lhms text-white">
+                  <Icon size={20} />
+                </span>
+                <div>
+                  <div className="text-xs font-semibold tracking-widest text-muted">{row.code}</div>
+                  <h2 className="mt-1 text-xl font-bold">{row.name}</h2>
+                  <p className="mt-1 text-sm text-muted">{moduleName}</p>
+                </div>
               </div>
-              <Badge>{company.is_active ? t('org.active') : '—'}</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge>{row.is_active ? t('org.active') : t('org.inactive')}</Badge>
+                {row.module ? <Badge tone="slate">{t(`modules.${row.module.status}`)}</Badge> : null}
+                {canCreate ? (
+                  <Button variant="secondary" onClick={() => openCreate(row)}>
+                    <Plus size={16} /> {t('org.addOffice')}
+                  </Button>
+                ) : null}
+              </div>
             </div>
-            <div className="mt-4 text-sm text-muted">{company.offices_count || 0} {t('org.offices')}</div>
+            <div className="mt-5 space-y-2">
+              {(row.offices ?? []).length === 0 ? (
+                <p className="text-sm text-muted">{t('org.noOffices')}</p>
+              ) : (
+                (row.offices ?? []).map((office) => (
+                  <div
+                    key={office.id}
+                    className={cn(
+                      'flex flex-col gap-3 rounded-2xl border border-line bg-surface/60 px-4 py-3 sm:flex-row sm:items-start',
+                      !office.is_active && 'opacity-60',
+                    )}
+                  >
+                    <MapPin className={cn('mt-0.5 shrink-0', office.is_active ? 'text-lhms' : 'text-muted')} size={16} />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold">
+                        {office.name} <span className="text-xs font-medium text-muted">{office.code}</span>
+                      </div>
+                      <div className="mt-0.5 text-sm text-muted">{officeLocation(office, locale) || office.address || '—'}</div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={office.is_active ? 'slate' : 'amber'}>
+                        {office.is_active ? t(`org.officeTypes.${office.type}`) : t('org.inactive')}
+                      </Badge>
+                      {canUpdate ? (
+                      <button
+                        type="button"
+                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
+                        onClick={() => openEdit(row, office)}
+                      >
+                        <Pencil size={14} /> {t('common.edit')}
+                      </button>
+                      ) : null}
+                      {canUpdate ? (
+                      <button
+                        type="button"
+                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
+                        onClick={() => setToggling({ company: row, office })}
+                      >
+                        <Ban size={14} /> {office.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
+                      </button>
+                      ) : null}
+                      {canDelete ? (
+                      <button
+                        type="button"
+                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-white"
+                        onClick={() => setDeleting({ company: row, office })}
+                      >
+                        <Trash2 size={14} /> {t('common.delete')}
+                      </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </Card>
-        ))}
-      </div>
-      <Modal open={open} title={t('org.add')} onClose={() => setOpen(false)}>
+        )
+      })}
+
+      <Modal
+        open={open}
+        title={`${editing ? t('org.editOffice') : t('org.addOffice')} — ${company?.name ?? ''}`}
+        onClose={() => setOpen(false)}
+      >
         <div className="space-y-3">
           <Field label={t('org.name')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <Field label={t('org.code')} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-          <Field label="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          <label className="block text-sm font-medium">
-            {t('org.countries')}
-            <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.country_id} onChange={(e) => setForm({ ...form, country_id: e.target.value })}>
-              <option value="">—</option>
-              {countries.map((country) => <option key={country.id} value={country.id}>{country.name}</option>)}
-            </select>
-          </label>
-          <Button className="w-full" onClick={async () => {
-            await api.post('/companies', { ...form, country_id: Number(form.country_id) })
-            setOpen(false)
-            load()
-          }}>{t('common.save')}</Button>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('org.code')} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+            <Select label={t('org.officeType')} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              <option value="headquarters">{t('org.officeTypes.headquarters')}</option>
+              <option value="office">{t('org.officeTypes.office')}</option>
+              <option value="agency">{t('org.officeTypes.agency')}</option>
+              <option value="branch">{t('org.officeTypes.branch')}</option>
+            </Select>
+          </div>
+          <Select label={t('org.countries')} value={form.country_id} onChange={(e) => setForm({
+            ...form,
+            country_id: e.target.value,
+            province_id: '',
+            city_id: '',
+            commune_id: '',
+            neighborhood_id: '',
+          })}>
+            <option value="">—</option>
+            {countries.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
+          </Select>
+          <Select label={t('org.provinces')} value={form.province_id} disabled={!form.country_id} onChange={(e) => setForm({
+            ...form,
+            province_id: e.target.value,
+            city_id: '',
+            commune_id: '',
+            neighborhood_id: '',
+          })}>
+            <option value="">—</option>
+            {provinces.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
+          </Select>
+          <Select label={t('org.cities')} value={form.city_id} disabled={!form.country_id} onChange={(e) => setForm({
+            ...form,
+            city_id: e.target.value,
+            commune_id: '',
+            neighborhood_id: '',
+          })}>
+            <option value="">—</option>
+            {cities.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
+          </Select>
+          <Select label={t('org.communes')} value={form.commune_id} disabled={!form.city_id} onChange={(e) => setForm({
+            ...form,
+            commune_id: e.target.value,
+            neighborhood_id: '',
+          })}>
+            <option value="">—</option>
+            {communes.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
+          </Select>
+          <Select label={t('org.neighborhoods')} value={form.neighborhood_id} disabled={!form.commune_id} onChange={(e) => setForm({
+            ...form,
+            neighborhood_id: e.target.value,
+          })}>
+            <option value="">—</option>
+            {neighborhoods.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
+          </Select>
+          <Field label={t('org.address')} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+          <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          <Button className="w-full" disabled={saving || !form.name || !form.code} onClick={() => void saveOffice()}>
+            {saving ? t('common.loading') : t('common.save')}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(toggling)}
+        title={toggling?.office.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
+        onClose={() => setToggling(null)}
+      >
+        <p className="text-sm text-muted">
+          {t(toggling?.office.is_active ? 'org.deactivateConfirm' : 'org.activateConfirm', { name: toggling?.office.name ?? '' })}
+        </p>
+        {toggling ? (
+          <p className="mt-2 font-semibold">{toggling.office.name} · {toggling.company.name}</p>
+        ) : null}
+        <div className="mt-5 flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => setToggling(null)}>{t('common.cancel')}</Button>
+          <Button className="flex-1" disabled={saving} onClick={() => void confirmToggle()}>
+            {saving ? t('common.loading') : (toggling?.office.is_active ? t('org.deactivateOffice') : t('org.activateOffice'))}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(deleting)}
+        title={t('org.deleteOffice')}
+        onClose={() => setDeleting(null)}
+      >
+        <p className="text-sm text-muted">
+          {t('org.deleteOfficeConfirm')}
+        </p>
+        {deleting ? (
+          <p className="mt-2 font-semibold">{deleting.office.name} · {deleting.company.name}</p>
+        ) : null}
+        <div className="mt-5 flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
+          <Button variant="danger" className="flex-1" disabled={saving} onClick={() => void confirmDelete()}>
+            {saving ? t('common.loading') : t('common.delete')}
+          </Button>
         </div>
       </Modal>
     </div>

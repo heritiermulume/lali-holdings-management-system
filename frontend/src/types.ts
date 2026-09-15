@@ -3,6 +3,7 @@ export type Role = {
   name: string
   slug: string
   level: number
+  module_slug?: string | null
 }
 
 export type User = {
@@ -21,6 +22,13 @@ export type User = {
   is_super_admin: boolean
   is_group_admin: boolean
   accessible_company_ids: number[]
+  accessible_office_ids?: number[]
+  accessible_module_slugs?: string[]
+  assignments?: Array<{
+    company_id: number | null
+    role: Role
+    office_ids: number[]
+  }>
   primary_company?: { id: number; name: string } | null
   primary_office?: { id: number; name: string } | null
   last_login_at?: string | null
