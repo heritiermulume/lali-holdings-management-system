@@ -21,12 +21,18 @@ use App\Models\SystemModule;
 use App\Models\Task;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsCampaign;
+use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsClient;
+use App\Modules\Kams\Models\KamsDepot;
+use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsOrder;
 use App\Modules\Kams\Models\KamsOrderItem;
-use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Models\KamsStockAssignment;
+use App\Modules\Kams\Models\KamsStockBalance;
+use App\Modules\Kams\Models\KamsStockTransfer;
 use App\Modules\Kams\Services\MemberMigrationService;
+use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Support\PersonName;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -42,8 +48,9 @@ class DatabaseSeeder extends Seeder
         $this->linkModuleRoleOffices();
         $admin = $this->seedUsers($companies);
         $this->seedSettings();
-        $this->seedKams($companies['king']);
+        $this->seedKams($companies['king'], $companies['gomaOffice']);
         $this->seedKamsRecruitment($companies['king']);
+        $this->seedKamsStock($companies['king']);
         $this->seedInbox($admin, $companies['king']);
     }
 
@@ -500,7 +507,7 @@ class DatabaseSeeder extends Seeder
         }
     }
 
-    private function seedKams(Company $company): void
+    private function seedKams(Company $company, Office $office): void
     {
         $clients = collect([
             ['name' => 'Boutique Horizon', 'email' => 'horizon@client.cd', 'city' => 'Goma', 'segment' => 'wholesale'],
@@ -508,14 +515,25 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Urban Attitude', 'email' => 'urban@client.cd', 'city' => 'Kinshasa', 'segment' => 'retail'],
         ])->map(fn ($client) => KamsClient::query()->updateOrCreate(
             ['company_id' => $company->id, 'email' => $client['email']],
-            $client + ['status' => 'active']
+            $client + ['status' => 'active', 'office_id' => $office->id]
         ));
 
+        KamsDepot::query()->updateOrCreate(
+            ['company_id' => $company->id, 'code' => 'DEP-GMA'],
+            [
+                'office_id' => $office->id,
+                'name' => 'Dépôt Goma',
+                'status' => 'active',
+                'notes' => 'Entrepôt principal King Attitude Traders.',
+            ]
+        );
+
         $products = collect([
-            ['sku' => 'KA-TEE-01', 'name' => 'King Attitude Tee', 'category' => 'Apparel', 'collection' => 'Core', 'price' => 35, 'stock' => 180],
-            ['sku' => 'KA-HD-02', 'name' => 'Crown Hoodie', 'category' => 'Apparel', 'collection' => 'Essentials', 'price' => 72, 'stock' => 90],
-            ['sku' => 'KA-CAP-03', 'name' => 'Signature Cap', 'category' => 'Accessories', 'collection' => 'Core', 'price' => 28, 'stock' => 140],
-            ['sku' => 'KA-BAG-04', 'name' => 'Attitude Tote', 'category' => 'Accessories', 'collection' => 'Limited', 'price' => 46, 'stock' => 60],
+            ['sku' => 'KA-TEE-01', 'name' => 'King Attitude Tee', 'category' => 'Apparel', 'collection' => 'Core', 'price' => 35, 'field_price' => 35, 'manager_price' => 28, 'company_price' => 21, 'cost' => 21, 'stock' => 180],
+            ['sku' => 'KA-HD-02', 'name' => 'Crown Hoodie', 'category' => 'Apparel', 'collection' => 'Essentials', 'price' => 72, 'field_price' => 72, 'manager_price' => 58, 'company_price' => 43, 'cost' => 43, 'stock' => 90],
+            ['sku' => 'KA-CAP-03', 'name' => 'Signature Cap', 'category' => 'Accessories', 'collection' => 'Core', 'price' => 28, 'field_price' => 28, 'manager_price' => 22, 'company_price' => 17, 'cost' => 17, 'stock' => 140],
+            ['sku' => 'KA-BAG-04', 'name' => 'Attitude Tote', 'category' => 'Accessories', 'collection' => 'Limited', 'price' => 46, 'field_price' => 46, 'manager_price' => 37, 'company_price' => 28, 'cost' => 28, 'stock' => 60],
+            ['sku' => 'KA-DI-05', 'name' => 'DI', 'category' => 'Core', 'collection' => 'Daily', 'price' => 7500, 'field_price' => 7500, 'manager_price' => 6000, 'company_price' => 4500, 'cost' => 4500, 'stock' => 0],
         ])->map(fn ($product) => KamsProduct::query()->updateOrCreate(
             ['company_id' => $company->id, 'sku' => $product['sku']],
             $product + ['status' => 'active']
@@ -586,7 +604,7 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        if (! \App\Modules\Kams\Models\KamsMember::query()->where('company_id', $company->id)->where('origin', 'migrated')->exists()) {
+        if (! KamsMember::query()->where('company_id', $company->id)->where('origin', 'migrated')->exists()) {
             app(MemberMigrationService::class)->import((int) $company->id, (int) User::query()->value('id'), 'excel', 'ATL existing register', [
                 [
                     'member_code' => 'ATL-2019-0142',
@@ -603,6 +621,125 @@ class DatabaseSeeder extends Seeder
                     'distributor_savings' => 85,
                 ],
             ]);
+        }
+
+        $goma = Office::query()->where('company_id', $company->id)->where('code', 'GMA')->first();
+        $manager = KamsMember::query()->updateOrCreate(
+            ['company_id' => $company->id, 'member_code' => 'ATL-MGR-0001'],
+            [
+                ...PersonName::fromParts('Sarah', 'Mukendi'),
+                'office_id' => $goma?->id,
+                'phone' => '+243 810 200 301',
+                'rank' => 'Manager',
+                'status' => 'active',
+                'origin' => 'migrated',
+                'joined_on' => '2018-01-10',
+            ]
+        );
+        KamsMember::query()
+            ->where('company_id', $company->id)
+            ->where('member_code', 'ATL-2019-0142')
+            ->update(['manager_member_id' => $manager->id, 'manager_name' => $manager->full_name]);
+    }
+
+    private function seedKamsStock(Company $company): void
+    {
+        $inventory = app(StockInventory::class);
+        $inventory->ensureOfficeDepots($company->id);
+
+        $northKivu = Province::query()->where('code', 'NK')->first();
+        $kinshasa = Province::query()->where('code', 'KN')->first();
+        $gomaOffice = Office::query()->where('company_id', $company->id)->where('code', 'GMA')->first();
+        $kinOffice = Office::query()->where('company_id', $company->id)->where('code', 'KIN')->first();
+
+        $northWarehouse = KamsDepot::query()->updateOrCreate(
+            ['company_id' => $company->id, 'code' => 'ENT-NKV'],
+            [
+                'name' => 'Entrepôt Nord-Kivu',
+                'kind' => 'warehouse',
+                'office_id' => null,
+                'province_id' => $northKivu?->id,
+                'status' => 'active',
+            ]
+        );
+        KamsDepot::query()->updateOrCreate(
+            ['company_id' => $company->id, 'code' => 'ENT-KIN'],
+            [
+                'name' => 'Entrepôt Kinshasa',
+                'kind' => 'warehouse',
+                'office_id' => null,
+                'province_id' => $kinshasa?->id,
+                'status' => 'active',
+            ]
+        );
+
+        $legacy = KamsDepot::query()->where('company_id', $company->id)->where('code', 'ENT-MAIN')->first();
+        if ($legacy && $legacy->id !== $northWarehouse->id) {
+            $legacy->load('balances.product');
+            foreach ($legacy->balances as $balance) {
+                $target = KamsStockBalance::query()->firstOrCreate(
+                    ['depot_id' => $northWarehouse->id, 'product_id' => $balance->product_id, 'condition' => $balance->condition ?: 'available'],
+                    ['company_id' => $company->id, 'quantity' => 0]
+                );
+                $target->quantity = (int) $target->quantity + (int) $balance->quantity;
+                $target->save();
+                $balance->delete();
+            }
+            $legacy->delete();
+        }
+
+        $product = KamsProduct::query()->where('company_id', $company->id)->where('sku', 'KA-TEE-01')->first();
+        $hoodie = KamsProduct::query()->where('company_id', $company->id)->where('sku', 'KA-HD-02')->first();
+        $gomaDepot = $gomaOffice ? $inventory->officeDepot($gomaOffice) : null;
+        $kinDepot = $kinOffice ? $inventory->officeDepot($kinOffice) : null;
+
+        $adminId = User::query()->orderBy('id')->value('id');
+        if (! KamsStockTransfer::query()->where('company_id', $company->id)->exists() && $product && $gomaDepot && $inventory->quantityAt($northWarehouse, $product) >= 60) {
+            $gomaTransfer = $inventory->transfer($northWarehouse, $gomaDepot, [
+                ['product_id' => $product->id, 'quantity' => 40],
+                ...($hoodie && $inventory->quantityAt($northWarehouse, $hoodie) >= 20 ? [['product_id' => $hoodie->id, 'quantity' => 20]] : []),
+            ], $adminId, 'Réapprovisionnement bureau Goma');
+            if ($adminId) {
+                $inventory->receiveTransfer($gomaTransfer, (int) $adminId);
+            }
+            if ($kinDepot && $inventory->quantityAt($northWarehouse, $product) >= 20) {
+                $kinTransfer = $inventory->transfer($northWarehouse, $kinDepot, [
+                    ['product_id' => $product->id, 'quantity' => 20],
+                ], $adminId, 'Réapprovisionnement bureau Kinshasa');
+                if ($adminId) {
+                    $inventory->receiveTransfer($kinTransfer, (int) $adminId);
+                }
+            }
+        }
+
+        $agent = KamsMember::query()->where('company_id', $company->id)->where('status', 'active')->first();
+        $client = KamsClient::query()->where('company_id', $company->id)->first();
+        if ($agent && $product && $gomaDepot && $inventory->quantityAt($gomaDepot, $product) >= 10
+            && ! KamsStockAssignment::query()->where('company_id', $company->id)->exists()) {
+            $inventory->assign($agent, [['product_id' => $product->id, 'quantity' => 10]], $adminId, 'Stock confié — tournée Himbi');
+            $sale = $inventory->sell(
+                $agent,
+                [['product_id' => $product->id, 'quantity' => 4, 'unit_price' => (float) $product->price]],
+                $client?->id,
+                $client?->name,
+                (float) $product->price * 4,
+                $adminId,
+                'Vente Client X'
+            );
+            $return = $inventory->createReturn(
+                'customer',
+                [['product_id' => $product->id, 'quantity' => 1]],
+                $agent,
+                $sale,
+                null,
+                null,
+                'damaged',
+                'Produit endommagé',
+                $adminId,
+            );
+            if ($adminId) {
+                $inventory->acceptReturn($return, (int) $adminId);
+            }
         }
     }
 

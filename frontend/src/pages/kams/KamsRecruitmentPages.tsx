@@ -1,6 +1,6 @@
 import { Camera, Check, CheckCircle2, Download, Eye, EyeOff, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
@@ -10,6 +10,7 @@ import { initials, roleLabel } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
+import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
 type LookupCompany = { id: number; name: string; code: string }
@@ -343,29 +344,16 @@ function agentImportRow(row: Member): string[] {
 export function KamsMembersWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
-  const tabs = [
-    { to: '/modules/kams/members', end: true, label: t('kams.recap'), show: hasPermission('kams.members.view') },
-    { to: '/modules/kams/members/recruitment', end: true, label: t('kams.recruitment'), show: hasPermission('kams.recruitment.view') },
-    { to: '/modules/kams/members/agents', end: true, label: t('kams.agents'), show: hasPermission('kams.members.view') },
-  ].filter((tab) => tab.show)
 
   return (
     <div>
-      <nav className="-mx-1 mb-5 flex gap-2 overflow-x-auto px-1 pb-1">
-        {tabs.map((tab) => (
-          <NavLink
-            key={tab.to}
-            to={tab.to}
-            end={tab.end}
-            className={({ isActive }) => cn(
-              'min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap inline-flex items-center',
-              isActive ? 'bg-lhms text-white' : 'bg-white text-muted',
-            )}
-          >
-            {tab.label}
-          </NavLink>
-        ))}
-      </nav>
+      <KamsWorkspaceTabs
+        tabs={[
+          { to: '/modules/kams/members', end: true, label: t('kams.statistics'), show: hasPermission('kams.members.view') },
+          { to: '/modules/kams/members/recruitment', end: true, label: t('kams.recruitment'), show: hasPermission('kams.recruitment.view') },
+          { to: '/modules/kams/members/agents', end: true, label: t('kams.agents'), show: hasPermission('kams.members.view') },
+        ]}
+      />
       <Outlet />
     </div>
   )
@@ -1039,60 +1027,7 @@ export function KamsAgents() {
   )
 }
 
-function MetricGrid({ items }: { items: Array<{ label: string; value: string | number }> }) {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {items.map((item) => (
-        <Card key={item.label} className="p-4">
-          <div className="text-sm text-muted">{item.label}</div>
-          <div className="mt-2 text-2xl font-extrabold">{item.value}</div>
-        </Card>
-      ))}
-    </div>
-  )
-}
-
-export function KamsRecruitmentDashboard() {
-  const { t } = useTranslation()
-  const [data, setData] = useState<{
-    recruitment: Record<string, number>
-    migration: Record<string, number>
-  } | null>(null)
-
-  useEffect(() => {
-    api.get('/modules/kams/recruitment/dashboard').then((res) => setData(res.data.data))
-  }, [])
-
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">{t('kams.newRecruitment')}</h2>
-        <MetricGrid items={[
-          { label: t('kams.applications'), value: data.recruitment.applications },
-          { label: t('kams.interviews'), value: data.recruitment.interviews },
-          { label: t('kams.observations'), value: data.recruitment.observations },
-          { label: t('kams.approved'), value: data.recruitment.approved },
-          { label: t('kams.rejected'), value: data.recruitment.rejected },
-          { label: t('kams.onHold'), value: data.recruitment.on_hold },
-          { label: t('kams.conversion'), value: `${data.recruitment.conversion_rate}%` },
-        ]} />
-      </div>
-      <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">{t('kams.existingMigration')}</h2>
-        <p className="mb-3 text-sm text-muted">{t('kams.migrationNotRecruitment')}</p>
-        <MetricGrid items={[
-          { label: t('kams.imported'), value: data.migration.imported },
-          { label: t('kams.pendingVerification'), value: data.migration.pending_verification },
-          { label: t('kams.verified'), value: data.migration.verified },
-          { label: t('kams.activeMembers'), value: data.migration.active },
-          { label: t('kams.issues'), value: data.migration.issues },
-        ]} />
-      </div>
-    </div>
-  )
-}
+export { KamsRecruitmentDashboard } from './KamsRecapPage'
 
 export function KamsCandidates() {
   const { t } = useTranslation()

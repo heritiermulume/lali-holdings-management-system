@@ -14,7 +14,7 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ProfileModal } from '../ProfileModal'
@@ -55,6 +55,8 @@ export function AppShell() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [unread, setUnread] = useState(0)
+  const sidebarUserRef = useRef<HTMLDivElement>(null)
+  const headerUserRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
   const navigate = useNavigate()
   const currentModule = moduleFromPath(location.pathname)
@@ -70,6 +72,17 @@ export function AppShell() {
     setMoreOpen(false)
     setUserMenuOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    if (!userMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (sidebarUserRef.current?.contains(target) || headerUserRef.current?.contains(target)) return
+      setUserMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [userMenuOpen])
 
   useEffect(() => {
     if (!hasPermission('notifications.view')) {
@@ -129,7 +142,7 @@ export function AppShell() {
       ) : null}
       {!isHome ? (
       <aside className={cn(
-        'fixed inset-y-0 left-0 z-40 flex w-[272px] flex-col overflow-hidden bg-lhms text-white transition-transform lg:sticky lg:top-0 lg:h-dvh lg:self-start lg:translate-x-0',
+        'fixed inset-y-0 left-0 z-40 flex w-[272px] flex-col bg-lhms text-white transition-transform lg:sticky lg:top-0 lg:h-dvh lg:self-start lg:translate-x-0',
         open ? 'translate-x-0' : '-translate-x-full',
       )}>
         <div className="flex h-full min-h-0 flex-col">
@@ -226,11 +239,54 @@ export function AppShell() {
               })
             )}
           </nav>
-          <div className="shrink-0 p-4">
-            <div className="rounded-2xl bg-white/10 p-3">
-              <div className="text-sm font-semibold">{user?.name}</div>
-              <div className="text-xs text-white/70">{roleLabel(t, user?.roles?.[0])}</div>
-            </div>
+          <div ref={sidebarUserRef} className="relative shrink-0 p-4">
+            <button
+              type="button"
+              aria-expanded={userMenuOpen}
+              aria-haspopup="menu"
+              aria-label={user?.name || t('settings.profile')}
+              onClick={() => setUserMenuOpen((visible) => !visible)}
+              className="flex w-full items-center gap-3 rounded-2xl bg-white/10 p-3 text-left hover:bg-white/15"
+            >
+              <span className="grid h-10 w-10 shrink-0 overflow-hidden place-items-center rounded-full bg-white/15 text-sm font-bold text-white ring-1 ring-white/20">
+                <UserAvatar user={user} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold">{user?.name}</span>
+                <span className="block truncate text-xs text-white/70">{roleLabel(t, user?.roles?.[0])}</span>
+              </span>
+            </button>
+            {userMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute inset-x-4 bottom-full z-50 mb-2 overflow-hidden rounded-2xl border border-white/10 bg-white py-1 text-ink shadow-[0_16px_40px_rgba(9,73,36,0.18)]"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-semibold hover:bg-surface"
+                  onClick={() => {
+                    setUserMenuOpen(false)
+                    setProfileOpen(true)
+                  }}
+                >
+                  <UserRound size={16} />
+                  {t('settings.profile')}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-semibold text-danger hover:bg-danger-soft"
+                  onClick={() => {
+                    setUserMenuOpen(false)
+                    void logout()
+                  }}
+                >
+                  <LogOut size={16} />
+                  {t('common.logout')}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </aside>
@@ -280,7 +336,7 @@ export function AppShell() {
               {unread > 0 ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger" /> : null}
             </button>
             ) : null}
-            <div className="relative">
+            <div ref={headerUserRef} className={cn('relative', !isHome && 'lg:hidden')}>
               <button
                 type="button"
                 aria-expanded={userMenuOpen}

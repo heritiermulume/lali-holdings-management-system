@@ -7,11 +7,14 @@ use App\Core\Support\TaxSettings;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
+use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
+use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsOrder;
 use App\Modules\Kams\Models\KamsOrderItem;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Services\StockInventory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -20,17 +23,35 @@ use Illuminate\Support\Str;
 
 class KamsResourceController extends Controller
 {
+    use ResolvesKamsOffices;
     use RespondsWithJson;
+
+    public function clientLookups(Request $request): JsonResponse
+    {
+        $offices = $this->kamsOffices($request)
+            ->with('city:id,name')
+            ->orderBy('name')
+            ->get(['id', 'company_id', 'name', 'code', 'city_id']);
+
+        return $this->ok([
+            'offices' => $offices,
+            'can_choose_office' => $this->canChooseOffice($request, $offices->count()),
+        ]);
+    }
 
     public function clients(Request $request): JsonResponse
     {
-        return $this->paginated($this->scoped(KamsClient::query(), $request)->latest()->paginate($request->integer('per_page', 15)));
+        return $this->paginated(
+            $this->scoped(KamsClient::query()->with(['office:id,name,code,city_id', 'office.city:id,name']), $request)
+                ->latest()
+                ->paginate($request->integer('per_page', 15))
+        );
     }
 
     public function storeClient(Request $request): JsonResponse
     {
-        return $this->store(KamsClient::class, $request->validate([
-            'company_id' => ['required', 'exists:companies,id'],
+        $data = $request->validate([
+            'office_id' => ['nullable', 'exists:offices,id'],
             'name' => ['required', 'string'],
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
@@ -38,12 +59,20 @@ class KamsResourceController extends Controller
             'segment' => ['nullable', 'string'],
             'status' => ['nullable', 'in:active,inactive,prospect'],
             'notes' => ['nullable', 'string'],
-        ]), $request);
+        ]);
+        $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
+        $data['office_id'] = $office->id;
+        $data['company_id'] = $office->company_id;
+
+        return $this->store(KamsClient::class, $data, $request);
     }
 
     public function updateClient(Request $request, KamsClient $client): JsonResponse
     {
-        return $this->update($client, $request->validate([
+        $this->assertCompany($request, (int) $client->company_id);
+
+        $data = $request->validate([
+            'office_id' => ['nullable', 'exists:offices,id'],
             'name' => ['sometimes', 'string'],
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
@@ -51,7 +80,17 @@ class KamsResourceController extends Controller
             'segment' => ['nullable', 'string'],
             'status' => ['nullable', 'in:active,inactive,prospect'],
             'notes' => ['nullable', 'string'],
-        ]), $request);
+        ]);
+
+        if ($this->canChooseOffice($request)) {
+            $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
+            $data['office_id'] = $office->id;
+            $data['company_id'] = $office->company_id;
+        } else {
+            unset($data['office_id']);
+        }
+
+        return $this->update($client, $data, $request);
     }
 
     public function destroyClient(Request $request, KamsClient $client): JsonResponse
@@ -59,24 +98,138 @@ class KamsResourceController extends Controller
         return $this->destroy($client, $request);
     }
 
-    public function products(Request $request): JsonResponse
+    public function depots(Request $request): JsonResponse
     {
-        return $this->paginated($this->scoped(KamsProduct::query(), $request)->latest()->paginate($request->integer('per_page', 15)));
+        return $this->paginated(
+            $this->scoped(
+                KamsDepot::query()->with([
+                    'office:id,name,code,city_id',
+                    'office.city:id,name',
+                    'province:id,name,name_fr',
+                    'balances.product:id,name,sku,price,cost',
+                ]),
+                $request
+            )->latest()->paginate($request->integer('per_page', 50))
+        );
     }
 
-    public function storeProduct(Request $request): JsonResponse
+    public function storeDepot(Request $request): JsonResponse
     {
-        return $this->store(KamsProduct::class, $request->validate([
+        $data = $request->validate([
+            'kind' => ['nullable', 'in:warehouse,depot'],
+            'office_id' => ['nullable', 'exists:offices,id'],
+            'province_id' => ['nullable', 'exists:provinces,id'],
+            'name' => ['required', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
+            'status' => ['nullable', 'in:active,inactive'],
+            'notes' => ['nullable', 'string'],
+        ]);
+        $data['kind'] = $data['kind'] ?? 'depot';
+        $data['status'] = $data['status'] ?? 'active';
+
+        if ($data['kind'] === 'warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+            $companyId = $this->kamsCompanyId($request) ?? $request->user()->primary_company_id;
+            abort_unless($companyId, 422, __('No company is available for this account.'));
+            $data['company_id'] = $companyId;
+            $data['office_id'] = null;
+        } else {
+            $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
+            abort_if(
+                KamsDepot::query()->where('office_id', $office->id)->where('kind', 'depot')->exists(),
+                422,
+                __('This office already has a depot.')
+            );
+            $data['office_id'] = $office->id;
+            $data['company_id'] = $office->company_id;
+            $data['province_id'] = $data['province_id'] ?? $office->province_id;
+        }
+
+        return $this->store(KamsDepot::class, $data, $request);
+    }
+
+    public function updateDepot(Request $request, KamsDepot $depot): JsonResponse
+    {
+        $this->assertCompany($request, (int) $depot->company_id);
+
+        $data = $request->validate([
+            'office_id' => ['nullable', 'exists:offices,id'],
+            'name' => ['sometimes', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
+            'status' => ['nullable', 'in:active,inactive'],
+            'notes' => ['nullable', 'string'],
+        ]);
+
+        if ($this->canChooseOffice($request)) {
+            $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
+            $data['office_id'] = $office->id;
+            $data['company_id'] = $office->company_id;
+        } else {
+            unset($data['office_id']);
+        }
+
+        return $this->update($depot, $data, $request);
+    }
+
+    public function destroyDepot(Request $request, KamsDepot $depot): JsonResponse
+    {
+        return $this->destroy($depot, $request);
+    }
+
+    public function products(Request $request): JsonResponse
+    {
+        return $this->paginated(
+            $this->scoped(KamsProduct::query()->with(['balances.depot:id,name,kind,office_id']), $request)
+                ->latest()
+                ->paginate($request->integer('per_page', 50))
+        );
+    }
+
+    public function storeProduct(Request $request, StockInventory $inventory): JsonResponse
+    {
+        $data = $request->validate([
             'company_id' => ['required', 'exists:companies,id'],
             'sku' => ['nullable', 'string'],
             'name' => ['required', 'string'],
             'category' => ['nullable', 'string'],
             'collection' => ['nullable', 'string'],
             'price' => ['required', 'numeric', 'min:0'],
+            'field_price' => ['nullable', 'numeric', 'min:0'],
+            'manager_price' => ['nullable', 'numeric', 'min:0'],
+            'company_price' => ['nullable', 'numeric', 'min:0'],
+            'cost' => ['nullable', 'numeric', 'min:0'],
             'stock' => ['nullable', 'integer', 'min:0'],
+            'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'warehouse_id' => ['nullable', 'exists:kams_depots,id'],
             'status' => ['nullable', 'in:active,draft,archived'],
             'description' => ['nullable', 'string'],
-        ]), $request);
+        ]);
+        $initial = (int) ($data['stock'] ?? 0);
+        $warehouseId = $data['warehouse_id'] ?? null;
+        unset($data['stock'], $data['warehouse_id']);
+        $data['cost'] = $data['company_price'] ?? $data['cost'] ?? round(((float) $data['price']) * 0.6, 2);
+        $data['field_price'] = $data['field_price'] ?? $data['price'];
+        $data['company_price'] = $data['company_price'] ?? $data['cost'];
+        $data['manager_price'] = $data['manager_price'] ?? round((((float) $data['field_price']) + ((float) $data['company_price'])) / 2, 2);
+        $data['price'] = $data['field_price'];
+        $data['avg_cost'] = $data['cost'];
+        $data['seller_share_percent'] = $data['seller_share_percent'] ?? 50;
+        $data['stock'] = 0;
+        $data['status'] = $data['status'] ?? 'active';
+
+        $this->assertCompany($request, (int) $data['company_id']);
+        $product = KamsProduct::query()->create($data);
+        AuditLogger::record('create', $product, [], $data);
+
+        if ($initial > 0) {
+            $warehouse = $warehouseId
+                ? KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->findOrFail($warehouseId)
+                : KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->first();
+            abort_unless($warehouse, 422, __('Create a regional warehouse before receiving stock.'));
+            $inventory->receive($warehouse, $product, $initial, $request->user()->id);
+        }
+
+        return $this->created($product->fresh('balances.depot'));
     }
 
     public function updateProduct(Request $request, KamsProduct $product): JsonResponse
@@ -87,7 +240,11 @@ class KamsResourceController extends Controller
             'category' => ['nullable', 'string'],
             'collection' => ['nullable', 'string'],
             'price' => ['sometimes', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
+            'field_price' => ['nullable', 'numeric', 'min:0'],
+            'manager_price' => ['nullable', 'numeric', 'min:0'],
+            'company_price' => ['nullable', 'numeric', 'min:0'],
+            'cost' => ['nullable', 'numeric', 'min:0'],
+            'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', 'in:active,draft,archived'],
             'description' => ['nullable', 'string'],
         ]), $request);
@@ -216,15 +373,47 @@ class KamsResourceController extends Controller
             $query->whereIn('company_id', $companyIds ?: [0]);
         }
 
+        $table = $query->getModel()->getTable();
+
+        if ($table === 'kams_clients' && $request->user()->isOfficeScoped()) {
+            $query->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
+        }
+
+        if ($table === 'kams_depots') {
+            if ($request->filled('kind')) {
+                $query->where('kind', $request->string('kind')->toString());
+            } else {
+                $query->where('kind', '!=', 'seller');
+            }
+            if ($request->user()->isOfficeScoped()) {
+                $query->where(function ($q) use ($request) {
+                    $q->where('kind', 'warehouse')
+                        ->orWhereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
+                });
+            }
+        }
+
         if ($search = $request->string('search')->toString()) {
-            $table = $query->getModel()->getTable();
             $query->where(function ($q) use ($search, $table) {
                 if ($table === 'kams_orders') {
                     $q->where('reference', 'like', "%{$search}%");
+                } elseif ($table === 'kams_clients') {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('city', 'like', "%{$search}%")
+                        ->orWhere('segment', 'like', "%{$search}%");
+                } elseif ($table === 'kams_depots') {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('code', 'like', "%{$search}%");
                 } else {
                     $q->where('name', 'like', "%{$search}%");
                 }
             });
+        }
+
+        if (in_array($table, ['kams_clients', 'kams_depots'], true) && $request->filled('status')) {
+            $query->where('status', $request->string('status')->toString());
         }
 
         return $query;
@@ -255,10 +444,5 @@ class KamsResourceController extends Controller
         AuditLogger::record('delete', $model);
 
         return $this->ok(null, __('Deleted.'));
-    }
-
-    private function assertCompany(Request $request, int $companyId): void
-    {
-        abort_unless($request->user()->canAccessCompany($companyId), 403);
     }
 }

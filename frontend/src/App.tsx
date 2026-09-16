@@ -17,8 +17,13 @@ import { UsersPage } from './pages/UsersPage'
 import { GroupSettingsPage, ModuleSettingsPage, SettingsHome } from './pages/settings/SettingsPages'
 import { FinanceSettingsPage } from './pages/settings/FinanceSettingsPage'
 import { RolesSettingsPage } from './pages/settings/RolesSettingsPage'
-import { KamsCampaigns, KamsClients, KamsEntry, KamsOrders, KamsProducts } from './pages/kams/KamsPages'
+import { KamsCampaigns, KamsClients, KamsEntry, KamsOrders } from './pages/kams/KamsPages'
 import { KamsAgents, KamsCandidates, KamsMembersWorkspace, KamsRecruitmentDashboard } from './pages/kams/KamsRecruitmentPages'
+import { KamsDailyMaster, KamsHierarchy, KamsSavings } from './pages/kams/KamsLedgerPages'
+import { KamsAssignments, KamsTransfers } from './pages/kams/KamsStockFlows'
+import { KamsCommissions, KamsReceipts, KamsReturns } from './pages/kams/KamsStockCommerce'
+import { KamsDepots, KamsStockProducts, KamsWarehouses } from './pages/kams/KamsStockLocations'
+import { KamsStockStats, KamsStockWorkspace } from './pages/kams/KamsStockPages'
 
 function Guard({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
@@ -70,8 +75,24 @@ export default function App() {
           <Route path="migration" element={<Navigate to="/modules/kams/members/agents" replace />} />
           <Route path="communications" element={<Navigate to="/modules/kams/members" replace />} />
           <Route path="clients" element={<RequirePermission perm="kams.clients.view"><KamsClients /></RequirePermission>} />
-          <Route path="products" element={<RequirePermission perm="kams.products.view"><KamsProducts /></RequirePermission>} />
-          <Route path="orders" element={<RequirePermission perm="kams.orders.view"><KamsOrders /></RequirePermission>} />
+          <Route path="stock" element={<RequirePermission anyPerm={['kams.products.view', 'kams.orders.view']}><KamsStockWorkspace /></RequirePermission>}>
+            <Route index element={<KamsStockStats />} />
+            <Route path="warehouses" element={<RequirePermission perm="kams.products.view"><KamsWarehouses /></RequirePermission>} />
+            <Route path="depots" element={<RequirePermission perm="kams.products.view"><KamsDepots /></RequirePermission>} />
+            <Route path="products" element={<RequirePermission perm="kams.products.view"><KamsStockProducts /></RequirePermission>} />
+            <Route path="transfers" element={<RequirePermission perm="kams.products.view"><KamsTransfers /></RequirePermission>} />
+            <Route path="receipts" element={<RequirePermission perm="kams.products.view"><KamsReceipts /></RequirePermission>} />
+            <Route path="assignments" element={<RequirePermission perm="kams.products.view"><KamsAssignments /></RequirePermission>} />
+            <Route path="sales" element={<Navigate to="/modules/kams/stock/assignments" replace />} />
+            <Route path="returns" element={<RequirePermission perm="kams.products.view"><KamsReturns /></RequirePermission>} />
+            <Route path="commissions" element={<RequirePermission perm="kams.products.view"><KamsCommissions /></RequirePermission>} />
+            <Route path="savings" element={<RequirePermission perm="kams.products.view"><KamsSavings /></RequirePermission>} />
+            <Route path="daily" element={<RequirePermission perm="kams.products.view"><KamsDailyMaster /></RequirePermission>} />
+            <Route path="hierarchy" element={<RequirePermission anyPerm={['kams.products.view', 'kams.orders.view']}><KamsHierarchy /></RequirePermission>} />
+            <Route path="orders" element={<RequirePermission perm="kams.orders.view"><KamsOrders /></RequirePermission>} />
+          </Route>
+          <Route path="products" element={<Navigate to="/modules/kams/stock/products" replace />} />
+          <Route path="orders" element={<Navigate to="/modules/kams/stock/orders" replace />} />
           <Route path="campaigns" element={<RequirePermission perm="kams.campaigns.view"><KamsCampaigns /></RequirePermission>} />
         </Route>
         <Route element={<ModuleWorkspaceLayout />}>

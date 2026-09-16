@@ -103,7 +103,8 @@ class KamsRecruitmentController extends Controller
             ? (int) $request->company_id
             : ($request->user()->isGroupAdmin() ? null : $request->user()->primary_company_id);
 
-        return $this->ok($this->metrics->summarize(
+        return $this->ok($this->metrics->recap(
+            $request->string('group_by')->toString() ?: 'week',
             $companyId,
             $request->filled('office_id') ? (int) $request->office_id : null,
         ));

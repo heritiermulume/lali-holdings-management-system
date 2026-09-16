@@ -21,7 +21,7 @@ class KamsFinanceService
             ->sum('budget');
         $inventory = (float) KamsProduct::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->selectRaw('COALESCE(SUM(price * stock), 0) as value')
+            ->selectRaw('COALESCE(SUM(company_price * stock), 0) as value')
             ->value('value');
 
         return [

@@ -185,31 +185,7 @@ function ResourcePage({
   )
 }
 
-export function KamsClients() {
-  const { t } = useTranslation()
-  return (
-    <ResourcePage
-      endpoint="/modules/kams/clients"
-      title={t('kams.clients')}
-      createLabel={t('kams.newClient')}
-      permPrefix="kams.clients"
-      fields={[
-        { name: 'name', label: t('org.name') },
-        { name: 'email', label: 'Email', type: 'email' },
-        { name: 'phone', label: 'Phone' },
-        { name: 'city', label: t('org.cities') },
-        { name: 'segment', label: 'Segment' },
-      ]}
-      render={(row) => (
-        <>
-          <div className="font-semibold">{String(row.name)}</div>
-          <div className="text-sm text-muted">{String(row.email || '')} · {String(row.city || '')}</div>
-          <div className="mt-2"><Badge>{String(row.status)}</Badge></div>
-        </>
-      )}
-    />
-  )
-}
+export { KamsClients } from './KamsClientsPage'
 
 export function KamsProducts() {
   const { t } = useTranslation()
