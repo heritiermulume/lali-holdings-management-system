@@ -273,6 +273,135 @@ class StockMetrics
     }
 
     /**
+     * @param  list<int>  $officeIds
+     * @return array<string, mixed>
+     */
+    public function finance(string $groupBy = 'week', ?int $companyId = null, array $officeIds = []): array
+    {
+        $data = $this->recap($groupBy, $companyId);
+        $start = $data['range']['from'];
+        $end = $data['range']['to'];
+
+        $offices = Office::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('id', $officeIds))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        $officeRows = $offices->map(fn (Office $office) => $this->officeFinance($office, $start, $end))->values()->all();
+
+        $companyShare = (float) KamsStockSale::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereHas('member', fn ($m) => $m->whereIn('office_id', $officeIds)))
+            ->whereBetween('sold_at', [$start.' 00:00:00', $end.' 23:59:59'])
+            ->sum('company_total');
+
+        if ($officeIds !== []) {
+            $data['totals']['cash'] = round(array_sum(array_column($officeRows, 'cash')), 2);
+            $data['totals']['profit'] = round(array_sum(array_column($officeRows, 'profit')), 2);
+            $data['totals']['expected'] = round(array_sum(array_column($officeRows, 'expected')), 2);
+            $data['totals']['guy_savings'] = round(array_sum(array_column($officeRows, 'guy_savings')), 2);
+            $data['totals']['manager_savings'] = round(array_sum(array_column($officeRows, 'manager_savings')), 2);
+            $data['totals']['commissions_payable'] = round(array_sum(array_column($officeRows, 'commissions_payable')), 2);
+            $data['totals']['inventory_value'] = round(array_sum(array_column($officeRows, 'inventory_value')), 2);
+            $data['series'] = $this->officeSeries($data['series'], $groupBy, $companyId, $officeIds, $start, $end);
+        }
+
+        $data['totals']['company_share'] = round($companyShare, 2);
+        $data['offices'] = $officeRows;
+
+        return $data;
+    }
+
+    /**
+     * @param  list<int>  $officeIds
+     * @return list<array<string, mixed>>
+     */
+    public function officesForPeriod(?int $companyId, array $officeIds, string $from, string $to): array
+    {
+        $offices = Office::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('id', $officeIds))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        return $offices->map(fn (Office $office) => $this->officeFinance($office, $from, $to))->values()->all();
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $series
+     * @param  list<int>  $officeIds
+     * @return list<array<string, mixed>>
+     */
+    private function officeSeries(array $series, string $groupBy, ?int $companyId, array $officeIds, string $from, string $to): array
+    {
+        $keyed = [];
+        foreach ($series as $row) {
+            $row['cash'] = 0;
+            $row['profit'] = 0;
+            $row['sales'] = 0;
+            $row['loss'] = 0;
+            $keyed[$row['key']] = $row;
+        }
+
+        $sales = KamsStockSale::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->whereHas('member', fn ($m) => $m->whereIn('office_id', $officeIds))
+            ->whereBetween('sold_at', [$from.' 00:00:00', $to.' 23:59:59'])
+            ->get(['sold_at', 'paid_amount', 'margin']);
+
+        foreach ($sales as $row) {
+            $bucket = $this->bucketFor($row->sold_at, $groupBy, $keyed);
+            if ($bucket === null) {
+                continue;
+            }
+            $keyed[$bucket]['cash'] += (float) $row->paid_amount;
+            $keyed[$bucket]['profit'] += (float) $row->margin;
+            $keyed[$bucket]['sales']++;
+        }
+
+        return array_values($keyed);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function officeFinance(Office $office, string $from, string $to): array
+    {
+        $sales = KamsStockSale::query()
+            ->whereHas('member', fn ($m) => $m->where('office_id', $office->id))
+            ->whereBetween('sold_at', [$from.' 00:00:00', $to.' 23:59:59']);
+        $memberIds = KamsMember::query()->where('office_id', $office->id)->pluck('id');
+        $depotIds = KamsDepot::query()->where('office_id', $office->id)->pluck('id');
+        $inventory = $depotIds->isEmpty()
+            ? 0
+            : (float) KamsStockBalance::query()
+                ->whereIn('depot_id', $depotIds)
+                ->where('condition', 'available')
+                ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
+                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
+                ->value('value');
+
+        return [
+            'id' => $office->id,
+            'name' => $office->name,
+            'code' => $office->code,
+            'cash' => round((float) (clone $sales)->sum('paid_amount'), 2),
+            'profit' => round((float) (clone $sales)->sum('margin'), 2),
+            'expected' => round((float) (clone $sales)->sum('subtotal'), 2),
+            'company_share' => round((float) (clone $sales)->sum('company_total'), 2),
+            'sales_count' => (clone $sales)->count(),
+            'agents' => KamsMember::query()->where('office_id', $office->id)->whereIn('status', ['active', 'verified'])->count(),
+            'guy_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'guy')->sum('balance'), 2),
+            'manager_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'manager')->sum('balance'), 2),
+            'commissions_payable' => round((float) KamsSellerCommission::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('status', 'payable')->sum('payable_amount'), 2),
+            'inventory_value' => round($inventory, 2),
+        ];
+    }
+
+    /**
      * @param  Collection<int, KamsStockBalance>  $lowLocations
      * @return list<array{tone: string, key: string, count: int}>
      */

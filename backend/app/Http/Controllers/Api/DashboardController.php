@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Core\Support\ModuleManager;
+use App\Core\Support\ModuleOfficePerformance;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\AppNotification;
@@ -25,7 +26,7 @@ class DashboardController extends Controller
     {
         $user = $request->user();
         $companyIds = $user->accessibleCompanyIds();
-        $canSeeFinance = $user->hasPermission('finance.view') || $user->hasPermission('dashboard.group');
+        $canSeeFinance = $user->hasPermission('finance.view') || $user->hasPermission('administration.view');
 
         $companies = Company::query()->whereIn('id', $companyIds ?: [0]);
         $finances = $canSeeFinance
@@ -85,6 +86,19 @@ class DashboardController extends Controller
             'presence' => $this->presence(),
             'trend' => $this->trend($finances['revenue'] ?? 0),
         ]);
+    }
+
+    public function modulePerformance(Request $request, ModuleOfficePerformance $performance): JsonResponse
+    {
+        $slug = $request->string('module')->toString() ?: null;
+
+        return $this->ok($performance->build(
+            $request->user(),
+            $request->string('group_by')->toString() ?: 'week',
+            $slug,
+            $request->string('from')->toString() ?: null,
+            $request->string('to')->toString() ?: null,
+        ));
     }
 
     private function presence(): array

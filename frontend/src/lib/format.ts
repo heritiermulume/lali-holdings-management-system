@@ -11,6 +11,20 @@ export function money(value?: number | null, currency = 'USD', digits = 2) {
   }
 }
 
+export function dateTime(date?: string | null, at?: string | null) {
+  const day = (date || at || '').slice(0, 10)
+  if (!day) return '—'
+  if (!at) return day
+  const parsed = new Date(at)
+  if (Number.isNaN(parsed.getTime())) return day
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(parsed)
+  return `${day} ${time}`
+}
+
 export function compact(value?: number | null) {
   return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value ?? 0)
 }

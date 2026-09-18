@@ -1,5 +1,6 @@
+import { ArrowLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation } from 'react-router-dom'
 import { PageHeader } from '../ui'
 import { useSystemModules } from '../../context/ModulesContext'
 import {
@@ -17,7 +18,10 @@ export function ModuleWorkspaceLayout() {
   const { pathname } = useLocation()
   const { modules } = useSystemModules()
   const module = moduleFromPath(pathname)
-  const navItems = module?.slug === 'settings' ? settingsNavItems(modules, i18n.language) : (module?.items ?? [])
+  const isAdminSettings = pathname.startsWith('/administration/settings')
+  const navItems = isAdminSettings || module?.slug === 'settings'
+    ? settingsNavItems(modules, i18n.language)
+    : (module?.items ?? [])
   const item = activeNavItem(pathname, navItems)
   const businessSlug = dashboardBusinessSlug(pathname)
   const settingsSlug = settingsModuleSlug(pathname)
@@ -38,13 +42,19 @@ export function ModuleWorkspaceLayout() {
     : item
       ? navItemDescription(item, t)
       : undefined
-  const isSettings = module?.slug === 'settings'
 
   return (
     <div>
-      <div className={isSettings ? 'hidden lg:block' : undefined}>
-        <PageHeader title={title} subtitle={subtitle || undefined} titleClassName="text-lhms" />
-      </div>
+      {businessSlug ? (
+        <Link
+          to="/administration/dashboard"
+          className="mb-3 inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-lhms"
+        >
+          <ArrowLeft size={16} />
+          {t('groupDash.backToOverview')}
+        </Link>
+      ) : null}
+      <PageHeader title={title} subtitle={subtitle || undefined} titleClassName="text-lhms" />
       <Outlet />
     </div>
   )

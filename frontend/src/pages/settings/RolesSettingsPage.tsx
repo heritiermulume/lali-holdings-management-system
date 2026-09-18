@@ -24,8 +24,13 @@ type RoleRow = {
 const BUSINESS_MODULES = ['kams', 'heavy-equipment', 'real-estate', 'rice-mills', 'lali-tv']
 
 const MODULE_AREA_ORDER: Record<string, string[]> = {
-  kams: ['kams.dashboard', 'kams.members', 'kams.recruitment', 'kams.clients', 'kams.products', 'kams.orders', 'kams.campaigns'],
+  kams: ['kams.members', 'kams.recruitment', 'kams.clients', 'kams.products', 'kams.orders', 'kams.finance', 'kams.campaigns'],
 }
+
+const FINANCE_PAGE_ORDER = ['dashboard', 'account', 'company']
+const ADMIN_PAGE_ORDER = ['users', 'audit', 'settings']
+const ADMIN_SETTINGS_ROOTS = ['settings', 'organization', 'companies', 'roles']
+const ADMIN_VIEW_SLUG = 'administration.view'
 
 function isPlatformRole(role: RoleRow) {
   return role.full_access || !role.module_slug || role.module_slug === 'system'
@@ -35,8 +40,58 @@ function permissionAction(slug: string) {
   return slug.split('.').at(-1) || ''
 }
 
+function permissionPrefix(slug: string) {
+  return slug.split('.').slice(0, -1).join('.')
+}
+
+function permissionPage(slug: string) {
+  const parts = slug.split('.')
+  return parts.length >= 4 && parts[1] === 'finance' ? parts[2] : null
+}
+
+function administrationPage(slug: string) {
+  const root = slug.split('.')[0] || ''
+  if (slug === ADMIN_VIEW_SLUG) return 'root'
+  if (root === 'users') return 'users'
+  if (root === 'audit') return 'audit'
+  if (ADMIN_SETTINGS_ROOTS.includes(root)) return 'settings'
+  return 'other'
+}
+
 function isViewPermission(permission: Permission) {
   return permissionAction(permission.slug) === 'view'
+}
+
+function viewFor(group: Permission[], permission: Permission) {
+  return group.find((item) => item.slug === `${permissionPrefix(permission.slug)}.view`) ?? null
+}
+
+function siblingsOf(group: Permission[], permission: Permission) {
+  const prefix = permissionPrefix(permission.slug)
+  return group.filter((item) => permissionPrefix(item.slug) === prefix)
+}
+
+function groupedPages(permissions: Permission[], pageOf: (slug: string) => string, order: string[]) {
+  const pages = new Map<string, Permission[]>()
+  for (const permission of permissions) {
+    const page = pageOf(permission.slug) || 'other'
+    const current = pages.get(page) ?? []
+    current.push(permission)
+    pages.set(page, current)
+  }
+  return [...pages.entries()].sort((a, b) => {
+    const indexA = order.indexOf(a[0])
+    const indexB = order.indexOf(b[0])
+    return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB)
+  })
+}
+
+function financePages(permissions: Permission[]) {
+  return groupedPages(permissions, (slug) => permissionPage(slug) || 'other', FINANCE_PAGE_ORDER)
+}
+
+function administrationPages(permissions: Permission[]) {
+  return groupedPages(permissions, administrationPage, ADMIN_PAGE_ORDER)
 }
 
 function moduleTitle(module: SystemModule | undefined, slug: string, localeFr: boolean, t: (key: string) => string) {
@@ -105,10 +160,13 @@ export function RolesSettingsPage() {
     }
     const hasAreas = Object.keys(permissionGroups).some((group) => group.startsWith(`${moduleSlug}.`))
     const entries = Object.entries(permissionGroups).filter(([group]) => (
-      hasAreas ? group.startsWith(`${moduleSlug}.`) : group === moduleSlug
+      group === 'administration'
+      || (hasAreas ? group.startsWith(`${moduleSlug}.`) && group !== 'kams.dashboard' : group === moduleSlug)
     ))
     const order = MODULE_AREA_ORDER[moduleSlug] ?? []
     entries.sort((a, b) => {
+      if (a[0] === 'administration') return -1
+      if (b[0] === 'administration') return 1
       const indexA = order.indexOf(a[0])
       const indexB = order.indexOf(b[0])
       return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB)
@@ -124,14 +182,23 @@ export function RolesSettingsPage() {
   }, [selected, permissionIds])
 
   const togglePermission = (group: Permission[], permission: Permission) => {
-    const view = group.find(isViewPermission)
-    const groupIds = group.map((item) => item.id)
+    const adminView = group.find((item) => item.slug === ADMIN_VIEW_SLUG)
+    const adminIds = adminView ? group.map((item) => item.id) : []
+    const view = viewFor(group, permission)
+    const siblingIds = siblingsOf(group, permission).map((item) => item.id)
 
     setPermissionIds((current) => {
       const enabled = current.includes(permission.id)
+      if (permission.slug === ADMIN_VIEW_SLUG) {
+        if (enabled) return current.filter((id) => !adminIds.includes(id))
+        return [...current, permission.id]
+      }
+      if (adminView && !current.includes(adminView.id)) {
+        return current
+      }
       if (isViewPermission(permission)) {
         if (enabled) {
-          return current.filter((id) => !groupIds.includes(id))
+          return current.filter((id) => !siblingIds.includes(id))
         }
         return [...current, permission.id]
       }
@@ -156,7 +223,12 @@ export function RolesSettingsPage() {
     setSaving(true)
     try {
       const res = await api.put(`/roles/${selected.id}`, {
-        permission_ids: selected.full_access ? selected.permissions.map((permission) => permission.id) : permissionIds,
+        permission_ids: selected.full_access
+          ? selected.permissions.map((permission) => permission.id)
+          : [...new Set([
+            ...permissionIds,
+            ...selected.permissions.filter((permission) => permission.group === 'kams.dashboard').map((permission) => permission.id),
+          ])],
       })
       const updated = res.data.data as RoleRow
       setRoles((current) => current.map((role) => (role.id === updated.id ? { ...role, ...updated } : role)))
@@ -247,7 +319,7 @@ export function RolesSettingsPage() {
             <h2 className="mt-1 text-base font-bold">{roleLabel(t, selected)}</h2>
             <p className="mt-1 text-sm text-muted">
               {selected.full_access
-                ? t('settings.rolesFullAccessHint')
+                ? t(selected.slug === 'president' ? 'settings.rolesPresidentHint' : 'settings.rolesFullAccessHint')
                 : selected.office_scoped
                   ? t('settings.rolesOfficeScopedHint')
                   : t('settings.rolesModuleHint')}
@@ -260,32 +332,72 @@ export function RolesSettingsPage() {
               <p className="mt-2 text-sm text-muted">{t('settings.rolesPermissionsLocked')}</p>
             ) : (
               <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                {Object.entries(visiblePermissionGroups).map(([group, permissions]) => (
-                  <fieldset key={group} className="rounded-2xl border border-line p-3">
+                {Object.entries(visiblePermissionGroups).map(([group, permissions]) => {
+                  const adminView = permissions.find((item) => item.slug === ADMIN_VIEW_SLUG)
+                  const adminOn = !adminView || permissionIds.includes(adminView.id)
+                  const paged = group === 'administration'
+                    ? administrationPages(permissions.filter((item) => item.slug !== ADMIN_VIEW_SLUG))
+                    : group === 'kams.finance'
+                      ? financePages(permissions)
+                      : [['all', permissions] as const]
+                  const wide = group === 'administration' || group === 'kams.finance'
+                  return (
+                  <fieldset key={group} className={cn('rounded-2xl border border-line p-3', wide && 'sm:col-span-2')}>
                     <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
                       {t(`settings.permissionGroups.${group}`, { defaultValue: group })}
                     </legend>
-                    <div className="space-y-1">
-                      {permissions.map((permission) => {
-                        const view = permissions.find(isViewPermission)
-                        const viewOn = !view || permissionIds.includes(view.id)
-                        const dependent = Boolean(view) && !isViewPermission(permission)
-                        const checked = permissionIds.includes(permission.id) && (!dependent || viewOn)
-                        return (
-                        <label key={permission.id} className={cn('flex min-h-9 items-center gap-2 text-sm', dependent && !viewOn && 'text-muted')}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={dependent && !viewOn}
-                            onChange={() => togglePermission(permissions, permission)}
-                          />
-                          {permissionLabel(t, permission)}
-                        </label>
-                        )
-                      })}
+                    {group === 'administration' && adminView ? (
+                      <label className="mb-3 flex min-h-9 items-center gap-2 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          checked={adminOn}
+                          onChange={() => togglePermission(permissions, adminView)}
+                        />
+                        {permissionLabel(t, adminView)}
+                      </label>
+                    ) : null}
+                    <div className={cn(
+                      group === 'administration' && 'grid gap-4 sm:grid-cols-3',
+                      group === 'kams.finance' && 'grid gap-4 sm:grid-cols-3',
+                      !wide && 'space-y-1',
+                    )}>
+                      {paged.map(([page, items]) => (
+                        <div key={page} className="space-y-1">
+                          {wide && page !== 'other' && page !== 'root' ? (
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-ink/70">
+                              {t(
+                                group === 'administration'
+                                  ? `settings.permissionGroups.administrationPages.${page}`
+                                  : `settings.permissionGroups.kams.financePages.${page}`,
+                                { defaultValue: page },
+                              )}
+                            </div>
+                          ) : null}
+                          {items.map((permission) => {
+                            const view = viewFor(items, permission)
+                            const viewOn = !view || permissionIds.includes(view.id)
+                            const pageDependent = Boolean(view) && !isViewPermission(permission)
+                            const adminDependent = group === 'administration' && permission.slug !== ADMIN_VIEW_SLUG
+                            const gatedOff = (adminDependent && !adminOn) || (pageDependent && !viewOn)
+                            const checked = permissionIds.includes(permission.id) && !gatedOff
+                            return (
+                            <label key={permission.id} className={cn('flex min-h-9 items-center gap-2 text-sm', pageDependent && 'pl-5', gatedOff && 'text-muted')}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={gatedOff}
+                                onChange={() => togglePermission(permissions, permission)}
+                              />
+                              {permissionLabel(t, permission)}
+                            </label>
+                            )
+                          })}
+                        </div>
+                      ))}
                     </div>
                   </fieldset>
-                ))}
+                  )
+                })}
               </div>
             )}
           </Card>

@@ -1,0 +1,344 @@
+import { Building2, Landmark, TrendingDown, TrendingUp, Wallet } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Outlet, Navigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { Card, Empty, Select } from '../../components/ui'
+import { useAuth } from '../../context/AuthContext'
+import api from '../../lib/api'
+import { cn } from '../../lib/cn'
+import { money } from '../../lib/format'
+import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
+
+type Period = 'day' | 'week' | 'month'
+type SeriesPoint = {
+  key: string
+  from: string
+  to: string
+  sales: number
+  cash: number
+  profit: number
+  loss: number
+}
+type FinanceData = {
+  group_by: Period
+  range: { from: string; to: string }
+  totals: {
+    inventory_value: number
+    commissions_payable: number
+    guy_savings?: number
+    manager_savings?: number
+    cash: number
+    profit: number
+    loss: number
+    expected: number
+    company_share?: number
+    sold_units: number
+  }
+  series: SeriesPoint[]
+  offices: OfficeFinance[]
+  can_filter_offices?: boolean
+  office_id?: number | null
+  filter_offices?: Array<{ id: number; name: string; code: string }>
+}
+type OfficeFinance = {
+  id: number
+  name: string
+  code: string
+  cash: number
+  profit: number
+  expected: number
+  company_share: number
+  sales_count: number
+  agents: number
+  guy_savings: number
+  manager_savings: number
+  commissions_payable: number
+  inventory_value: number
+}
+
+function parseDate(value: string) {
+  return new Date(`${value}T12:00:00`)
+}
+
+function formatDay(value: string, locale: string) {
+  return parseDate(value).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
+}
+
+export function KamsFinanceWorkspace() {
+  const { t } = useTranslation()
+  const { hasPermission } = useAuth()
+
+  return (
+    <div>
+      <KamsWorkspaceTabs
+        tabs={[
+          { to: '/modules/kams/finance', end: true, label: t('nav.dashboard'), show: hasPermission('kams.finance.dashboard.view') },
+          { to: '/modules/kams/finance/account', end: true, label: t('kams.myAccount'), show: hasPermission('kams.finance.account.view') },
+          { to: '/modules/kams/finance/company', end: true, label: t('kams.companyAccount'), show: hasPermission('kams.finance.company.view') },
+        ]}
+      />
+      <Outlet />
+    </div>
+  )
+}
+
+export function KamsFinanceIndex() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('kams.finance.dashboard.view')) return <KamsFinanceDashboard />
+  if (hasPermission('kams.finance.account.view')) return <Navigate to="/modules/kams/finance/account" replace />
+  if (hasPermission('kams.finance.company.view')) return <Navigate to="/modules/kams/finance/company" replace />
+  return <Navigate to="/modules/kams" replace />
+}
+
+export function KamsFinanceDashboard() {
+  const { t, i18n } = useTranslation()
+  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const [period, setPeriod] = useState<Period>('week')
+  const [officeId, setOfficeId] = useState('')
+  const [data, setData] = useState<FinanceData | null>(null)
+  const [openOffice, setOpenOffice] = useState<number | null>(null)
+
+  useEffect(() => {
+    let active = true
+    api.get('/modules/kams/finance/dashboard', {
+      params: { group_by: period, office_id: officeId || undefined },
+    }).then((res) => { if (active) setData(res.data.data) })
+    return () => { active = false }
+  }, [period, officeId])
+
+  const chartData = useMemo(() => {
+    if (!data) return []
+    return data.series.map((row) => ({
+      ...row,
+      label: period === 'day'
+        ? formatDay(row.from, locale)
+        : period === 'month'
+          ? parseDate(row.from).toLocaleDateString(locale, { month: 'short', year: 'numeric' })
+          : `${formatDay(row.from, locale)} – ${formatDay(row.to, locale)}`,
+    }))
+  }, [data, locale, period])
+
+  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+
+  const kpis = [
+    { key: 'cashCollected', value: money(data.totals.cash), icon: Wallet },
+    { key: 'profit', value: money(data.totals.profit), icon: TrendingUp },
+    { key: 'loss', value: money(data.totals.loss), icon: TrendingDown },
+    { key: 'commissionsPayable', value: money(data.totals.commissions_payable), icon: Landmark },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold">{t('kams.financeDashboard')}</h2>
+          <p className="mt-1 text-sm text-muted">{t('kams.financeDashboardHint')}</p>
+          <p className="mt-1 text-xs text-muted">
+            {t('kams.periodRange', {
+              from: parseDate(data.range.from).toLocaleDateString(locale),
+              to: parseDate(data.range.to).toLocaleDateString(locale),
+            })}
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:items-end">
+          {data.can_filter_offices ? (
+            <Select
+              className="min-w-[16rem] sm:w-72"
+              label={t('kams.filterOffice')}
+              value={officeId}
+              onChange={(e) => {
+                setOfficeId(e.target.value)
+                setOpenOffice(null)
+              }}
+            >
+              <option value="">{t('kams.allOffices')}</option>
+              {(data.filter_offices || []).map((office) => (
+                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+              ))}
+            </Select>
+          ) : null}
+          <div className="flex rounded-full bg-white p-1">
+            {(['day', 'week', 'month'] as Period[]).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setPeriod(item)}
+                className={cn('min-h-10 rounded-full px-4 text-sm font-semibold', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t(`kams.period.${item}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((item) => {
+          const Icon = item.icon
+          return (
+            <Card key={item.key} className="p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-muted">{t(`kams.${item.key}`)}</span>
+                <span className="grid h-9 w-9 place-items-center rounded-xl bg-lhms-soft text-lhms"><Icon size={16} /></span>
+              </div>
+              <div className="mt-3 text-3xl font-extrabold">{item.value}</div>
+            </Card>
+          )
+        })}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-4">
+          <div className="text-sm text-muted">{t('kams.guySavings')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.guy_savings || 0)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-muted">{t('kams.managerSavings')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.manager_savings || 0)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-muted">{t('kams.inventoryValue')}</div>
+          <div className="mt-2 text-2xl font-extrabold text-lhms">{money(data.totals.inventory_value)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-muted">{t('kams.companyShare')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.company_share || 0)}</div>
+        </Card>
+      </div>
+
+      <Card className="p-5">
+        <div className="mb-4 font-semibold">{t('kams.cashTrend')}</div>
+        <div className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
+              <Tooltip />
+              <Legend />
+              <Area type="monotone" dataKey="cash" name={t('kams.cashCollected')} stroke="#094924" fill="#09492422" />
+              <Area type="monotone" dataKey="sales" name={t('kams.sales')} stroke="#c9a227" fillOpacity={0} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="mb-4 font-semibold">{t('kams.profitLossTrend')}</div>
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="profit" name={t('kams.profit')} fill="#094924" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="loss" name={t('kams.loss')} fill="#c81e1e" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      {(data.offices || []).length > 1 ? (
+        <Card className="p-5">
+          <div className="mb-4 font-semibold">{t('kams.officeComparison')}</div>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.offices}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="cash" name={t('kams.cashCollected')} fill="#094924" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="profit" name={t('kams.profit')} fill="#c9a227" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      ) : null}
+
+      <div>
+        <h3 className="text-base font-bold">{t('kams.officeFinance')}</h3>
+        <p className="mt-1 mb-4 text-sm text-muted">{t('kams.officeFinanceHint')}</p>
+        {(data.offices || []).length === 0 ? <Empty>{t('common.empty')}</Empty> : (
+        <div className="grid gap-3">
+          {(data.offices || []).map((office) => {
+            const open = openOffice === office.id
+            return (
+              <Card key={office.id} className="overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setOpenOffice(open ? null : office.id)}
+                  className="flex w-full items-start justify-between gap-3 p-5 text-left"
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="grid h-10 w-10 place-items-center rounded-xl bg-lhms-soft text-lhms"><Building2 size={18} /></span>
+                    <div>
+                      <div className="font-semibold">{office.name}</div>
+                      <div className="text-sm text-muted">{office.code} · {office.agents} {t('kams.agents').toLowerCase()}</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-extrabold text-lhms">{money(office.cash)}</div>
+                    <div className="text-xs text-muted">{t('kams.cashCollected')}</div>
+                  </div>
+                </button>
+                {open ? (
+                  <div className="grid gap-3 border-t border-line bg-surface px-5 py-4 sm:grid-cols-2 xl:grid-cols-4">
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.profit')}</div>
+                      <div className="mt-1 font-bold">{money(office.profit)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.companyShare')}</div>
+                      <div className="mt-1 font-bold">{money(office.company_share)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.expected')}</div>
+                      <div className="mt-1 font-bold">{money(office.expected)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.sales')}</div>
+                      <div className="mt-1 font-bold">{office.sales_count}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.guySavings')}</div>
+                      <div className="mt-1 font-bold">{money(office.guy_savings)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.managerSavings')}</div>
+                      <div className="mt-1 font-bold">{money(office.manager_savings)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.commissionsPayable')}</div>
+                      <div className="mt-1 font-bold">{money(office.commissions_payable)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.inventoryValue')}</div>
+                      <div className="mt-1 font-bold">{money(office.inventory_value)}</div>
+                    </div>
+                  </div>
+                ) : null}
+              </Card>
+            )
+          })}
+        </div>
+        )}
+      </div>
+    </div>
+  )
+}

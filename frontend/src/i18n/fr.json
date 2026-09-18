@@ -11,6 +11,9 @@
     "password": "Mot de passe",
     "submit": "Accéder à LHMS",
     "hint": "Plateforme ERP multi-pays et multi-sociétés",
+    "featureMulti": "Multi-pays · Multi-sociétés · Multi-modules",
+    "featureSecurity": "Permissions granulaires · Audit · Consolidation groupe",
+    "featureScale": "Architecture ERP conçue pour grandir",
     "error": "Identifiants incorrects ou compte inactif."
   },
   "nav": {
@@ -26,7 +29,8 @@
     "kams": "KAMS",
     "more": "Plus",
     "moreOptions": "Plus d'options",
-    "home": "Accueil"
+    "home": "Accueil",
+    "administration": "Administration"
   },
   "dashboard": {
     "hello": "Bonjour",
@@ -57,6 +61,19 @@
     "alerts": "Alertes",
     "quick": "Accès rapides",
     "trend": "Tendance consolidée",
+    "officePerformance": "Performance des bureaux",
+    "officePerformanceHint": "Chiffre d'affaires et bénéfices de chaque bureau, par module.",
+    "officePerformanceEmpty": "Aucun bureau à afficher pour ce module.",
+    "period": {
+      "day": "Jour",
+      "week": "Semaine",
+      "month": "Mois"
+    },
+    "periodRange": "Du {{from}} au {{to}}",
+    "dateFrom": "Du",
+    "dateTo": "Au",
+    "customPeriod": "Personnaliser",
+    "presetPeriod": "Raccourcis",
     "launcher": "Choisissez un module pour continuer",
     "searchApps": "Rechercher une application"
   },
@@ -72,7 +89,8 @@
     "details": "Détails du module",
     "moduleHint": "Tableau de bord opérationnel du module.",
     "modulePending": "Les indicateurs détaillés seront alimentés dès que le module sera pleinement opérationnel.",
-    "noAccess": "Vous n'avez pas accès à ce tableau de bord."
+    "noAccess": "Vous n'avez pas accès à ce tableau de bord.",
+    "backToOverview": "Retour au tableau de bord"
   },
   "moduleDash": {
     "heavy-equipment": {
@@ -165,6 +183,26 @@
     "subtitle": "Rôles granulaires et périmètres d'accès",
     "create": "Nouvel utilisateur",
     "edit": "Modifier l'utilisateur",
+    "details": "Détails de l'utilisateur",
+    "search": "Rechercher un utilisateur…",
+    "import": "Importer",
+    "importHint": "Importez un fichier Excel/CSV ou collez des lignes. Colonnes : prénom, nom, e-mail, téléphone, rôle transversal, société, rôle, bureaux, actif.",
+    "importFile": "Fichier Excel ou CSV",
+    "importFileHint": "Formats acceptés : .xlsx, .csv, .tsv",
+    "importPaste": "Coller des lignes",
+    "importNeedRows": "Ajoutez un fichier Excel/CSV ou collez des lignes.",
+    "importResult": "Résultat de l'importation",
+    "importedCount": "{{count}} utilisateur(s) importé(s).",
+    "skippedCount": "{{count}} ligne(s) ignorée(s).",
+    "importRowError": "Ligne {{row}} ({{email}}) : {{message}}",
+    "delete": "Supprimer l'utilisateur",
+    "deleteConfirm": "Supprimer « {{name}} » ? Cette action est définitive.",
+    "active": "Actif",
+    "inactive": "Inactif",
+    "allCompanies": "Toutes les sociétés",
+    "allRoles": "Tous les rôles",
+    "lastLogin": "Dernière connexion",
+    "saveError": "Impossible d'enregistrer. Vérifiez les champs.",
     "firstName": "Prénom",
     "lastName": "Nom",
     "role": "Rôle",
@@ -191,18 +229,24 @@
     "photoError": "Impossible d'enregistrer la photo.",
     "removePhoto": "Retirer la photo",
     "roleNames": {
-      "super_administrator": "Super administrateur",
+      "super_administrator": "Super Admin",
       "president": "Président(e)",
       "president_male": "Président",
       "president_female": "Présidente",
       "partner": "Partenaire",
+      "vice_president": "Vice-président(e)",
+      "vice_president_male": "Vice-président",
+      "vice_president_female": "Vice-présidente",
       "divisionnaire": "Divisionnaire",
       "manager": "Manager",
       "secretary": "Secrétaire",
       "assistant_manager": "Assistant(e) Manager",
       "assistant_manager_male": "Assistant Manager",
       "assistant_manager_female": "Assistante Manager",
-      "leader": "Leader",
+      "leader": "Chef",
+      "chef": "Chef",
+      "chef_male": "Chef",
+      "chef_female": "Cheffe",
       "distributor": "Distributeur/Distributrice",
       "distributor_male": "Distributeur",
       "distributor_female": "Distributrice"
@@ -212,6 +256,8 @@
     "search": "Rechercher",
     "save": "Enregistrer",
     "cancel": "Annuler",
+    "approve": "Approuver",
+    "reject": "Rejeter",
     "delete": "Supprimer",
     "edit": "Modifier",
     "view": "Consulter",
@@ -237,7 +283,8 @@
     "copied": "Copié",
     "show": "Afficher",
     "hide": "Masquer",
-    "noAccess": "Vous n'avez pas l'autorisation d'accéder à cette page."
+    "noAccess": "Vous n'avez pas l'autorisation d'accéder à cette page.",
+    "system": "Système"
   },
   "kams": {
     "title": "King Attitude Management System",
@@ -247,7 +294,81 @@
     "productsHint": "Catalogue, stocks et tarifs des produits.",
     "ordersHint": "Suivi des commandes et de leur statut.",
     "stock": "Stock",
-    "stockHint": "Entrepôts, dépôts, stock vendeur, affectations, clôtures de journée, retours et commissions.",
+    "stockHint": "Entrepôts, dépôts, produits, affectations et retours.",
+    "finance": "Finance",
+    "financeHint": "Tableau de bord financier, compte agent et compte entreprise.",
+    "financeDashboard": "Tableau de bord finance",
+    "financeDashboardHint": "Situation globale de KAMS, évolution et détail financier de chaque bureau.",
+    "officeFinance": "Situation des bureaux",
+    "officeFinanceHint": "Ouvrez un bureau pour voir ses encaissements, bénéfices, épargne et commissions.",
+    "officeComparison": "Comparaison des bureaux",
+    "allOffices": "Tous les bureaux",
+    "filterOffice": "Bureau",
+    "account": "Compte",
+    "accountHint": "Compte financier de l'agent : solde, dépôts, retraits et dépenses.",
+    "myAccount": "Mon compte",
+    "myAccountHint": "Votre compte financier personnel : solde, demandes de dépôt et de retrait.",
+    "companyAccount": "Comptes entreprise",
+    "companyAccountHint": "Compte central KAMS et compte de chaque bureau.",
+    "centralAccount": "Compte central KAMS",
+    "officeAccount": "Compte bureau",
+    "scrollCardsLeft": "Cartes précédentes",
+    "scrollCardsRight": "Cartes suivantes",
+    "selectAgent": "Compte de l'agent",
+    "selectMemberAccount": "Compte",
+    "officePoolAccount": "Compte du bureau",
+    "centralPoolAccount": "Compte central",
+    "memberExceedsBalance": "Le montant ne peut pas dépasser le solde du membre ({{balance}}).",
+    "depositByCashier": "Les dépôts sont enregistrés par un agent habilité, comme la secrétaire.",
+    "makeWithdrawal": "Faire un retrait",
+    "noAgentAccount": "Ouverture du compte en cours. Actualisez la page si le compte n'apparaît pas.",
+    "balance": "Solde",
+    "cardHolder": "Titulaire",
+    "debitCard": "Carte KAMS",
+    "deposits": "Dépôts",
+    "withdrawals": "Retraits",
+    "pendingWithdrawals": "Retraits en attente",
+    "pendingDeposits": "Dépôts en attente",
+    "pendingRequests": "Demandes en attente",
+    "expenses": "Dépenses",
+    "transactions": "Transactions",
+    "transactionsFor": "Transactions / {{holder}}",
+    "seeAll": "Tout voir",
+    "seeLess": "Réduire",
+    "showFilters": "Afficher les filtres",
+    "hideFilters": "Masquer les filtres",
+    "type": "Type",
+    "dateFrom": "Du",
+    "dateTo": "Au",
+    "makeDeposit": "Faire un dépôt",
+    "requestDeposit": "Demander un dépôt",
+    "requestWithdrawal": "Demander un retrait",
+    "recordExpense": "Faire une dépense",
+    "amount": "Montant",
+    "motif": "Motif",
+    "requestedBy": "Demandé par",
+    "performedBy": "Effectué par",
+    "transactionDetails": "Détails de la transaction",
+    "recordedAt": "Enregistrée le",
+    "reference": "Référence",
+    "originLabel": "Origine",
+    "pendingActor": "En attente",
+    "sources": {
+      "treasury": "Compte entreprise",
+      "sale": "Vente",
+      "return": "Retour"
+    },
+    "expenseExceedsBalance": "Le montant ne peut pas dépasser le solde du compte ({{balance}}).",
+    "withdrawExceedsBalance": "Le montant ne peut pas dépasser votre solde disponible ({{balance}}).",
+    "approveRequest": "Accepter la demande",
+    "confirmApprove": "Confirmer l'acceptation de cette demande ?",
+    "rejectRequest": "Refuser la demande",
+    "decisionMotif": "Motif de la décision",
+    "decisionMotifRequired": "Le motif est obligatoire pour refuser la demande.",
+    "cashTrend": "Encaissements",
+    "expected": "Attendu",
+    "recentOrders": "Commandes récentes",
+    "openAssignments": "Journées ouvertes",
     "stockOpsHint": "Affectez le stock aux agents. Les ventes s'enregistrent à la clôture de journée — sans mélanger les quantités.",
     "warehouses": "Entrepôts",
     "withAgents": "Chez les vendeurs",
@@ -273,7 +394,13 @@
     "ledger": {
       "opening": "Solde d'ouverture",
       "settlement": "Règlement",
-      "return": "Retour"
+      "return": "Retour",
+      "deposit": "Dépôt",
+      "withdrawal": "Retrait",
+      "withdrawal_request": "Demande de retrait",
+      "deposit_request": "Demande de dépôt",
+      "expense": "Dépense",
+      "transfer": "Transfert"
     },
     "inTransit": "En transit",
     "quarantine": "Quarantaine",
@@ -563,7 +690,22 @@
     "rank": {
       "Distributor": "Distributeur",
       "distributor": "Distributeur",
-      "Distributrice": "Distributrice"
+      "Distributrice": "Distributrice",
+      "Chef": "Chef",
+      "chef": "Chef",
+      "Cheffe": "Cheffe",
+      "Leader": "Chef",
+      "Manager": "Manager",
+      "Secretary": "Secrétaire",
+      "secretary": "Secrétaire",
+      "Assistant Manager": "Assistant Manager",
+      "Divisionnaire": "Divisionnaire",
+      "Vice President": "Vice-président",
+      "vice_president": "Vice-président",
+      "Partner": "Partenaire",
+      "partner": "Partenaire",
+      "President": "Président",
+      "president": "Président"
     },
     "importSource": {
       "registry": "Registre existant",
@@ -609,7 +751,8 @@
       "payable": "Payable",
       "confirmed": "Confirmée",
       "fulfilled": "Livrée",
-      "cancelled": "Annulée"
+      "cancelled": "Annulée",
+      "posted": "Comptabilisé"
     },
     "issue": {
       "duplicate_member_id": "ID membre en double",
@@ -647,6 +790,7 @@
     "rolesNavHint": "Autorisations des rôles du module.",
     "rolesHint": "Cochez les autorisations de ce rôle. Le bureau se définit sur l'utilisateur.",
     "rolesFullAccessHint": "Ce rôle contrôle tous les modules du système. Ses autorisations ne peuvent pas être réduites.",
+    "rolesPresidentHint": "Ce rôle a le même accès total que le Super Admin. Il ne peut pas supprimer le Super Admin.",
     "rolesAllAccess": "Accès total",
     "rolesAllModules": "Tous les modules",
     "rolesPermissions": "Autorisations",
@@ -661,7 +805,13 @@
     "rolesUnknownCity": "Ville non renseignée",
     "rolesNoOffices": "Ce rôle couvre tout le système, sans rattachement à un bureau.",
     "permissionGroups": {
-      "dashboard": "Tableaux de bord",
+      "administration": "Administration",
+      "administrationPages": {
+        "users": "Utilisateurs",
+        "audit": "Journal d'audit",
+        "settings": "Paramètres"
+      },
+      "dashboard": "Administration",
       "users": "Utilisateurs",
       "roles": "Rôles",
       "organization": "Organisation",
@@ -680,6 +830,12 @@
         "clients": "Clients",
         "products": "Produits",
         "orders": "Commandes",
+        "finance": "Finance",
+        "financePages": {
+          "dashboard": "Tableau de bord",
+          "account": "Mon compte",
+          "company": "Comptes entreprise"
+        },
         "campaigns": "Campagnes"
       },
       "heavy-equipment": "Heavy Equipment",
@@ -698,19 +854,25 @@
       "print": "Imprimer",
       "preview": "Prévisualiser",
       "activate": "Activer",
-      "manage": "Gérer"
+      "manage": "Gérer",
+      "deposit": "Dépôt",
+      "withdraw": "Retrait",
+      "expense": "Dépense"
     },
     "permissions": {
-      "dashboard": {
-        "group": "Consulter le tableau de bord du groupe",
-        "company": "Consulter le tableau de bord de la société"
+      "administration": {
+        "view": "Consulter l'administration"
       },
       "users": {
         "view": "Consulter les utilisateurs",
         "create": "Créer des utilisateurs",
         "update": "Modifier les utilisateurs",
         "delete": "Supprimer des utilisateurs",
-        "manage": "Gérer les utilisateurs et les affectations"
+        "manage": "Gérer les utilisateurs et les affectations",
+        "import": "Importer des utilisateurs",
+        "export": "Exporter les utilisateurs",
+        "print": "Imprimer les utilisateurs",
+        "preview": "Prévisualiser les utilisateurs"
       },
       "roles": {
         "view": "Consulter les rôles",
@@ -802,6 +964,29 @@
           "update": "Modifier une commande",
           "export": "Exporter les commandes",
           "print": "Imprimer une commande"
+        },
+        "finance": {
+          "dashboard": {
+            "view": "Consulter le tableau de bord finance",
+            "update": "Filtrer le tableau de bord par bureau"
+          },
+          "account": {
+            "view": "Consulter Mon compte",
+            "deposit": "Demander un dépôt",
+            "withdraw": "Demander un retrait",
+            "update": "Consulter le compte d'un autre agent",
+            "print": "Imprimer les transactions du compte",
+            "preview": "Prévisualiser les transactions du compte"
+          },
+          "company": {
+            "view": "Consulter les comptes entreprise",
+            "deposit": "Faire un dépôt",
+            "withdraw": "Faire un retrait",
+            "expense": "Enregistrer une dépense",
+            "approve": "Approuver ou refuser une demande",
+            "print": "Imprimer les transactions entreprise",
+            "preview": "Prévisualiser les transactions entreprise"
+          }
         },
         "campaigns": {
           "view": "Consulter les campagnes",

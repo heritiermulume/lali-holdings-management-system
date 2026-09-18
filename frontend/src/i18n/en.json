@@ -11,6 +11,9 @@
     "password": "Password",
     "submit": "Enter LHMS",
     "hint": "Multi-country, multi-company ERP platform",
+    "featureMulti": "Multi-country · Multi-company · Multi-module",
+    "featureSecurity": "Granular permissions · Audit · Group consolidation",
+    "featureScale": "ERP architecture designed to grow",
     "error": "Invalid credentials or inactive account."
   },
   "nav": {
@@ -26,7 +29,8 @@
     "kams": "KAMS",
     "more": "More",
     "moreOptions": "More options",
-    "home": "Home"
+    "home": "Home",
+    "administration": "Administration"
   },
   "dashboard": {
     "hello": "Hello",
@@ -57,6 +61,19 @@
     "alerts": "Alerts",
     "quick": "Quick access",
     "trend": "Consolidated trend",
+    "officePerformance": "Office performance",
+    "officePerformanceHint": "Revenue and profit for each office, by module.",
+    "officePerformanceEmpty": "No offices to display for this module.",
+    "period": {
+      "day": "Day",
+      "week": "Week",
+      "month": "Month"
+    },
+    "periodRange": "From {{from}} to {{to}}",
+    "dateFrom": "From",
+    "dateTo": "To",
+    "customPeriod": "Custom",
+    "presetPeriod": "Presets",
     "launcher": "Choose a module to continue",
     "searchApps": "Search apps"
   },
@@ -72,7 +89,8 @@
     "details": "Module details",
     "moduleHint": "Operational dashboard for this module.",
     "modulePending": "Detailed indicators will be populated once the module is fully operational.",
-    "noAccess": "You do not have access to this dashboard."
+    "noAccess": "You do not have access to this dashboard.",
+    "backToOverview": "Back to dashboard"
   },
   "moduleDash": {
     "heavy-equipment": {
@@ -165,6 +183,26 @@
     "subtitle": "Granular roles and access scopes",
     "create": "New user",
     "edit": "Edit user",
+    "details": "User details",
+    "search": "Search a user…",
+    "import": "Import",
+    "importHint": "Import an Excel/CSV file or paste rows. Columns: first name, last name, email, phone, platform role, company, role, offices, active.",
+    "importFile": "Excel or CSV file",
+    "importFileHint": "Accepted formats: .xlsx, .csv, .tsv",
+    "importPaste": "Paste rows",
+    "importNeedRows": "Add an Excel/CSV file or paste rows.",
+    "importResult": "Import result",
+    "importedCount": "{{count}} user(s) imported.",
+    "skippedCount": "{{count}} row(s) skipped.",
+    "importRowError": "Row {{row}} ({{email}}): {{message}}",
+    "delete": "Delete user",
+    "deleteConfirm": "Delete “{{name}}”? This cannot be undone.",
+    "active": "Active",
+    "inactive": "Inactive",
+    "allCompanies": "All companies",
+    "allRoles": "All roles",
+    "lastLogin": "Last login",
+    "saveError": "Unable to save. Please check the fields.",
     "firstName": "First name",
     "lastName": "Last name",
     "role": "Role",
@@ -191,18 +229,24 @@
     "photoError": "Unable to save the photo.",
     "removePhoto": "Remove photo",
     "roleNames": {
-      "super_administrator": "Super Administrator",
+      "super_administrator": "Super Admin",
       "president": "President",
       "president_male": "President",
       "president_female": "President",
       "partner": "Partner",
-      "divisionnaire": "Divisionnaire",
+      "vice_president": "Vice President",
+      "vice_president_male": "Vice President",
+      "vice_president_female": "Vice President",
+      "divisionnaire": "Divisional manager",
       "manager": "Manager",
       "secretary": "Secretary",
       "assistant_manager": "Assistant Manager",
       "assistant_manager_male": "Assistant Manager",
       "assistant_manager_female": "Assistant Manager",
       "leader": "Leader",
+      "chef": "Leader",
+      "chef_male": "Leader",
+      "chef_female": "Leader",
       "distributor": "Distributor",
       "distributor_male": "Distributor",
       "distributor_female": "Distributor"
@@ -212,6 +256,8 @@
     "search": "Search",
     "save": "Save",
     "cancel": "Cancel",
+    "approve": "Approve",
+    "reject": "Reject",
     "delete": "Delete",
     "edit": "Edit",
     "view": "View",
@@ -237,17 +283,92 @@
     "copied": "Copied",
     "show": "Show",
     "hide": "Hide",
-    "noAccess": "You do not have permission to access this page."
+    "noAccess": "You do not have permission to access this page.",
+    "system": "System"
   },
   "kams": {
     "title": "King Attitude Management System",
     "subtitle": "Commercial operations for King Attitude Traders.",
     "dashboardHint": "Overview of sales, finances and recent orders.",
-    "clientsHint": "View and manage King Attitude Traders clients.",
+    "clientsHint": "View and manage King Attitude Traders customers.",
     "productsHint": "Product catalog, stock levels and pricing.",
     "ordersHint": "Track orders and their status.",
     "stock": "Stock",
-    "stockHint": "Warehouses, depots, seller stock, assignments, day close, returns and commissions.",
+    "stockHint": "Warehouses, depots, products, assignments and returns.",
+    "finance": "Finance",
+    "financeHint": "Financial dashboard, agent account and company account.",
+    "financeDashboard": "Finance dashboard",
+    "financeDashboardHint": "KAMS-wide financial position, trend and per-office detail.",
+    "officeFinance": "Office financials",
+    "officeFinanceHint": "Open an office to see its cash, profit, savings and commissions.",
+    "officeComparison": "Office comparison",
+    "allOffices": "All offices",
+    "filterOffice": "Office",
+    "account": "Account",
+    "accountHint": "Agent financial account: balance, deposits, withdrawals and expenses.",
+    "myAccount": "My account",
+    "myAccountHint": "Your personal financial account: balance, deposit and withdrawal requests.",
+    "companyAccount": "Company accounts",
+    "companyAccountHint": "Central KAMS account and each office account.",
+    "centralAccount": "KAMS central account",
+    "officeAccount": "Office account",
+    "scrollCardsLeft": "Previous cards",
+    "scrollCardsRight": "Next cards",
+    "selectAgent": "Agent account",
+    "selectMemberAccount": "Account",
+    "officePoolAccount": "Office account",
+    "centralPoolAccount": "Central account",
+    "memberExceedsBalance": "The amount cannot exceed the member balance ({{balance}}).",
+    "depositByCashier": "Deposits are recorded by an authorized agent, such as the secretary.",
+    "makeWithdrawal": "Make a withdrawal",
+    "noAgentAccount": "Opening the account. Refresh the page if it does not appear.",
+    "balance": "Balance",
+    "cardHolder": "Cardholder",
+    "debitCard": "KAMS card",
+    "deposits": "Deposits",
+    "withdrawals": "Withdrawals",
+    "pendingWithdrawals": "Pending withdrawals",
+    "pendingDeposits": "Pending deposits",
+    "pendingRequests": "Pending requests",
+    "expenses": "Expenses",
+    "transactions": "Transactions",
+    "transactionsFor": "Transactions / {{holder}}",
+    "seeAll": "See all",
+    "seeLess": "Show less",
+    "showFilters": "Show filters",
+    "hideFilters": "Hide filters",
+    "type": "Type",
+    "dateFrom": "From",
+    "dateTo": "To",
+    "makeDeposit": "Make a deposit",
+    "requestDeposit": "Request a deposit",
+    "requestWithdrawal": "Request a withdrawal",
+    "recordExpense": "Make an expense",
+    "amount": "Amount",
+    "motif": "Reason",
+    "requestedBy": "Requested by",
+    "performedBy": "Performed by",
+    "transactionDetails": "Transaction details",
+    "recordedAt": "Recorded on",
+    "reference": "Reference",
+    "originLabel": "Origin",
+    "pendingActor": "Pending",
+    "sources": {
+      "treasury": "Company account",
+      "sale": "Sale",
+      "return": "Return"
+    },
+    "expenseExceedsBalance": "The amount cannot exceed the account balance ({{balance}}).",
+    "withdrawExceedsBalance": "The amount cannot exceed your available balance ({{balance}}).",
+    "approveRequest": "Accept request",
+    "confirmApprove": "Confirm that you want to accept this request?",
+    "rejectRequest": "Reject request",
+    "decisionMotif": "Decision reason",
+    "decisionMotifRequired": "A reason is required to reject the request.",
+    "cashTrend": "Cash collected",
+    "expected": "Expected",
+    "recentOrders": "Recent orders",
+    "openAssignments": "Open days",
     "stockOpsHint": "Assign stock to agents. Sales are recorded when the day is closed — quantities stay separate.",
     "warehouses": "Warehouses",
     "withAgents": "With sellers",
@@ -273,7 +394,13 @@
     "ledger": {
       "opening": "Opening balance",
       "settlement": "Settlement",
-      "return": "Return"
+      "return": "Return",
+      "deposit": "Deposit",
+      "withdrawal": "Withdrawal",
+      "withdrawal_request": "Withdrawal request",
+      "deposit_request": "Deposit request",
+      "expense": "Expense",
+      "transfer": "Transfer"
     },
     "inTransit": "In transit",
     "quarantine": "Quarantine",
@@ -362,15 +489,15 @@
       "investigateLoss": "Investigate losses on {{product}}."
     },
     "campaignsHint": "Marketing campaigns, channels and budgets.",
-    "clients": "Clients",
+    "clients": "Customers",
     "products": "Products",
     "orders": "Orders",
     "campaigns": "Campaigns",
-    "newClient": "New client",
+    "newClient": "New customer",
     "addClient": "Add",
-    "editClient": "Edit client",
-    "deleteClient": "Delete client",
-    "deleteClientConfirm": "Delete client {{name}}? This cannot be undone.",
+    "editClient": "Edit customer",
+    "deleteClient": "Delete customer",
+    "deleteClientConfirm": "Delete customer {{name}}? This cannot be undone.",
     "searchClients": "Search by name, phone, email or city",
     "requiredClientFields": "Name and office are required.",
     "city": "City",
@@ -563,7 +690,22 @@
     "rank": {
       "Distributor": "Distributor",
       "distributor": "Distributor",
-      "Distributrice": "Distributor"
+      "Distributrice": "Distributor",
+      "Chef": "Leader",
+      "chef": "Leader",
+      "Cheffe": "Leader",
+      "Leader": "Leader",
+      "Manager": "Manager",
+      "Secretary": "Secretary",
+      "secretary": "Secretary",
+      "Assistant Manager": "Assistant Manager",
+      "Divisionnaire": "Divisional manager",
+      "Vice President": "Vice President",
+      "vice_president": "Vice President",
+      "Partner": "Partner",
+      "partner": "Partner",
+      "President": "President",
+      "president": "President"
     },
     "importSource": {
       "registry": "Existing register",
@@ -609,7 +751,8 @@
       "payable": "Payable",
       "confirmed": "Confirmed",
       "fulfilled": "Fulfilled",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "posted": "Posted"
     },
     "issue": {
       "duplicate_member_id": "Duplicate member ID",
@@ -647,6 +790,7 @@
     "rolesNavHint": "Module role permissions.",
     "rolesHint": "Choose this role's permissions. The office is set on the user.",
     "rolesFullAccessHint": "This role controls every module in the system. Its permissions cannot be reduced.",
+    "rolesPresidentHint": "This role has the same full access as Super Admin. It cannot delete the Super Admin.",
     "rolesAllAccess": "Full access",
     "rolesAllModules": "All modules",
     "rolesPermissions": "Permissions",
@@ -661,7 +805,13 @@
     "rolesUnknownCity": "City not set",
     "rolesNoOffices": "This role covers the whole system and is not tied to an office.",
     "permissionGroups": {
-      "dashboard": "Dashboards",
+      "administration": "Administration",
+      "administrationPages": {
+        "users": "Users",
+        "audit": "Audit log",
+        "settings": "Settings"
+      },
+      "dashboard": "Administration",
       "users": "Users",
       "roles": "Roles",
       "organization": "Organization",
@@ -677,9 +827,15 @@
         "dashboard": "Dashboard",
         "members": "Members",
         "recruitment": "Recruitment",
-        "clients": "Clients",
+        "clients": "Customers",
         "products": "Products",
         "orders": "Orders",
+        "finance": "Finance",
+        "financePages": {
+          "dashboard": "Dashboard",
+          "account": "My account",
+          "company": "Company accounts"
+        },
         "campaigns": "Campaigns"
       },
       "heavy-equipment": "Heavy Equipment",
@@ -698,19 +854,25 @@
       "print": "Print",
       "preview": "Preview",
       "activate": "Activate",
-      "manage": "Manage"
+      "manage": "Manage",
+      "deposit": "Deposit",
+      "withdraw": "Withdrawal",
+      "expense": "Expense"
     },
     "permissions": {
-      "dashboard": {
-        "group": "View group dashboard",
-        "company": "View company dashboard"
+      "administration": {
+        "view": "View administration"
       },
       "users": {
         "view": "View users",
         "create": "Create users",
         "update": "Update users",
         "delete": "Delete users",
-        "manage": "Manage users and assignments"
+        "manage": "Manage users and assignments",
+        "import": "Import users",
+        "export": "Export users",
+        "print": "Print users",
+        "preview": "Preview users"
       },
       "roles": {
         "view": "View roles",
@@ -785,10 +947,10 @@
           "approve": "Approve a recruitment"
         },
         "clients": {
-          "view": "View clients",
-          "create": "Create a client",
-          "update": "Update a client",
-          "delete": "Delete a client"
+          "view": "View customers",
+          "create": "Create a customer",
+          "update": "Update a customer",
+          "delete": "Delete a customer"
         },
         "products": {
           "view": "View products",
@@ -802,6 +964,29 @@
           "update": "Update an order",
           "export": "Export orders",
           "print": "Print an order"
+        },
+        "finance": {
+          "dashboard": {
+            "view": "View the finance dashboard",
+            "update": "Filter the dashboard by office"
+          },
+          "account": {
+            "view": "View My account",
+            "deposit": "Request a deposit",
+            "withdraw": "Request a withdrawal",
+            "update": "View another agent's account",
+            "print": "Print account transactions",
+            "preview": "Preview account transactions"
+          },
+          "company": {
+            "view": "View company accounts",
+            "deposit": "Make a deposit",
+            "withdraw": "Make a withdrawal",
+            "expense": "Record an expense",
+            "approve": "Approve or reject a request",
+            "print": "Print company transactions",
+            "preview": "Preview company transactions"
+          }
         },
         "campaigns": {
           "view": "View campaigns",

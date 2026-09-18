@@ -21,7 +21,7 @@ trait ResolvesKamsOffices
 
     private function canChooseOffice(Request $request, ?int $officeCount = null): bool
     {
-        if ($request->user()->isSuperAdmin() || $request->user()->isPresident()) {
+        if ($request->user()->isGroupAdmin()) {
             return true;
         }
 

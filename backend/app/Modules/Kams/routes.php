@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\EnsurePermission;
 use App\Modules\Kams\Http\Controllers\KamsDashboardController;
+use App\Modules\Kams\Http\Controllers\KamsFinanceController;
 use App\Modules\Kams\Http\Controllers\KamsRecruitmentController;
 use App\Modules\Kams\Http\Controllers\KamsResourceController;
 use App\Modules\Kams\Http\Controllers\KamsStockController;
@@ -16,7 +17,7 @@ Route::put('clients/{client}', [KamsResourceController::class, 'updateClient'])-
 Route::delete('clients/{client}', [KamsResourceController::class, 'destroyClient'])->middleware(EnsurePermission::class.':kams.clients.delete');
 
 Route::get('stock/lookups', [KamsStockController::class, 'lookups'])->middleware(EnsurePermission::class.':kams.products.view,kams.orders.view');
-Route::get('stock/dashboard', [KamsStockController::class, 'dashboard'])->middleware(EnsurePermission::class.':kams.products.view,kams.orders.view');
+Route::get('stock/dashboard', [KamsStockController::class, 'dashboard'])->middleware(EnsurePermission::class.':kams.products.view,kams.orders.view,kams.finance.dashboard.view');
 Route::get('stock/receipts', [KamsStockController::class, 'receipts'])->middleware(EnsurePermission::class.':kams.products.view');
 Route::post('stock/receipts', [KamsStockController::class, 'receive'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::post('stock/receipts/{receipt}/validate', [KamsStockController::class, 'validateReceipt'])->middleware(EnsurePermission::class.':kams.products.update');
@@ -36,8 +37,20 @@ Route::get('stock/commissions', [KamsStockController::class, 'commissions'])->mi
 Route::post('stock/commissions/{commission}/pay', [KamsStockController::class, 'payCommission'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::get('stock/hierarchy', [KamsStockController::class, 'hierarchy'])->middleware(EnsurePermission::class.':kams.products.view,kams.orders.view');
 Route::get('stock/savings', [KamsStockController::class, 'savings'])->middleware(EnsurePermission::class.':kams.products.view');
-Route::get('stock/daily-settlements', [KamsStockController::class, 'dailySettlement'])->middleware(EnsurePermission::class.':kams.products.view');
-Route::post('stock/daily-settlements', [KamsStockController::class, 'closeDailySettlement'])->middleware(EnsurePermission::class.':kams.products.update');
+Route::get('stock/daily-settlements', [KamsStockController::class, 'dailySettlement'])->middleware(EnsurePermission::class.':kams.products.view,kams.finance.dashboard.view');
+Route::post('stock/daily-settlements', [KamsStockController::class, 'closeDailySettlement'])->middleware(EnsurePermission::class.':kams.products.update,kams.finance.company.expense');
+
+Route::get('finance/dashboard', [KamsFinanceController::class, 'dashboard'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view');
+Route::get('finance/account', [KamsFinanceController::class, 'account'])->middleware(EnsurePermission::class.':kams.finance.account.view');
+Route::post('finance/account/deposit', [KamsFinanceController::class, 'deposit'])->middleware(EnsurePermission::class.':kams.finance.account.deposit');
+Route::post('finance/account/withdraw', [KamsFinanceController::class, 'withdraw'])->middleware(EnsurePermission::class.':kams.finance.account.withdraw');
+Route::post('finance/company-accounts/{treasuryAccount}/entries/{treasuryEntry}/approve', [KamsFinanceController::class, 'companyApprove'])->middleware(EnsurePermission::class.':kams.finance.company.approve');
+Route::post('finance/company-accounts/{treasuryAccount}/entries/{treasuryEntry}/reject', [KamsFinanceController::class, 'companyReject'])->middleware(EnsurePermission::class.':kams.finance.company.approve');
+Route::get('finance/company-accounts', [KamsFinanceController::class, 'companyAccounts'])->middleware(EnsurePermission::class.':kams.finance.company.view');
+Route::get('finance/company-accounts/{treasuryAccount}', [KamsFinanceController::class, 'companyAccount'])->middleware(EnsurePermission::class.':kams.finance.company.view');
+Route::post('finance/company-accounts/{treasuryAccount}/deposit', [KamsFinanceController::class, 'companyDeposit'])->middleware(EnsurePermission::class.':kams.finance.company.deposit');
+Route::post('finance/company-accounts/{treasuryAccount}/withdraw', [KamsFinanceController::class, 'companyWithdraw'])->middleware(EnsurePermission::class.':kams.finance.company.withdraw');
+Route::post('finance/company-accounts/{treasuryAccount}/expense', [KamsFinanceController::class, 'companyExpense'])->middleware(EnsurePermission::class.':kams.finance.company.expense');
 
 Route::get('depots/lookups', [KamsStockController::class, 'lookups'])->middleware(EnsurePermission::class.':kams.products.view');
 Route::get('depots', [KamsResourceController::class, 'depots'])->middleware(EnsurePermission::class.':kams.products.view');

@@ -10,12 +10,13 @@ export function Button({
   variant = 'primary',
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'accent' }) {
   const styles = {
     primary: 'bg-lhms text-white hover:bg-lhms-deep',
     secondary: 'bg-lhms-soft text-lhms hover:bg-[#d7eadb]',
     ghost: 'bg-transparent text-ink hover:bg-surface',
     danger: 'bg-danger text-white hover:bg-[#a31818]',
+    accent: 'bg-[#fde8d6] text-[#b45309] hover:bg-[#f8d4b0]',
   }
 
   return (

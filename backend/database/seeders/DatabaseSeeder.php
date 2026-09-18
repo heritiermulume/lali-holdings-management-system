@@ -31,6 +31,7 @@ use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsStockAssignment;
 use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockTransfer;
+use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Support\PersonName;
@@ -51,6 +52,7 @@ class DatabaseSeeder extends Seeder
         $this->seedKams($companies['king'], $companies['gomaOffice']);
         $this->seedKamsRecruitment($companies['king']);
         $this->seedKamsStock($companies['king']);
+        $this->seedKamsAccounts();
         $this->seedInbox($admin, $companies['king']);
     }
 
@@ -87,8 +89,11 @@ class DatabaseSeeder extends Seeder
                 ]
             );
 
-            if ($roleData['full_access']) {
+            $slugs = RoleCatalog::permissionSlugsFor($roleData['slug']);
+            if ($slugs === null) {
                 $role->permissions()->sync($permissionIds->values());
+            } else {
+                $role->permissions()->sync($permissionIds->only($slugs)->values());
             }
         }
     }
@@ -640,6 +645,14 @@ class DatabaseSeeder extends Seeder
             ->where('company_id', $company->id)
             ->where('member_code', 'ATL-2019-0142')
             ->update(['manager_member_id' => $manager->id, 'manager_name' => $manager->full_name]);
+
+        $companyAdmin = User::query()->where('email', 'kevin.m@example.com')->first();
+        if ($companyAdmin) {
+            $manager->forceFill([
+                'user_id' => $companyAdmin->id,
+                'email' => $companyAdmin->email,
+            ])->save();
+        }
     }
 
     private function seedKamsStock(Company $company): void
@@ -741,6 +754,18 @@ class DatabaseSeeder extends Seeder
                 $inventory->acceptReturn($return, (int) $adminId);
             }
         }
+    }
+
+    private function seedKamsAccounts(): void
+    {
+        $wallets = app(KamsAccountProvisioner::class);
+        KamsMember::query()->each(fn (KamsMember $member) => $wallets->ensureWallet($member));
+        User::query()->where('is_active', true)->with('roles')->each(function (User $user) use ($wallets) {
+            $wallets->tryForUser($user);
+        });
+        Company::query()->whereHas('module', fn ($q) => $q->where('slug', 'kams'))->each(function (Company $company) use ($wallets) {
+            $wallets->ensureCompanyBooks((int) $company->id);
+        });
     }
 
     private function seedInbox(User $admin, Company $company): void

@@ -99,7 +99,7 @@ export function KamsDashboard() {
               </div>
               <div className="text-right">
                 <div className="font-semibold">{money(order.total)}</div>
-                <Badge>{order.status}</Badge>
+                <Badge>{t(`kams.status.${order.status}`, { defaultValue: order.status })}</Badge>
               </div>
             </div>
           ))}

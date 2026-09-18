@@ -16,32 +16,38 @@ class PermissionCatalog
         'preview',
         'activate',
         'manage',
+        'deposit',
+        'withdraw',
+        'expense',
     ];
 
     public static function core(): array
     {
         return [
-            ['slug' => 'dashboard.group', 'group' => 'dashboard', 'name' => 'View group dashboard'],
-            ['slug' => 'dashboard.company', 'group' => 'dashboard', 'name' => 'View company dashboard'],
+            ['slug' => 'administration.view', 'group' => 'administration', 'name' => 'View administration'],
 
-            ['slug' => 'users.view', 'group' => 'users', 'name' => 'View users'],
-            ['slug' => 'users.create', 'group' => 'users', 'name' => 'Create users'],
-            ['slug' => 'users.update', 'group' => 'users', 'name' => 'Update users'],
-            ['slug' => 'users.delete', 'group' => 'users', 'name' => 'Delete users'],
-            ['slug' => 'users.manage', 'group' => 'users', 'name' => 'Manage users and assignments'],
+            ['slug' => 'users.view', 'group' => 'administration', 'name' => 'View users'],
+            ['slug' => 'users.create', 'group' => 'administration', 'name' => 'Create users'],
+            ['slug' => 'users.update', 'group' => 'administration', 'name' => 'Update users'],
+            ['slug' => 'users.delete', 'group' => 'administration', 'name' => 'Delete users'],
+            ['slug' => 'users.manage', 'group' => 'administration', 'name' => 'Manage users and assignments'],
+            ['slug' => 'users.import', 'group' => 'administration', 'name' => 'Import users'],
+            ['slug' => 'users.export', 'group' => 'administration', 'name' => 'Export users'],
+            ['slug' => 'users.print', 'group' => 'administration', 'name' => 'Print users'],
+            ['slug' => 'users.preview', 'group' => 'administration', 'name' => 'Preview users'],
 
-            ['slug' => 'roles.view', 'group' => 'roles', 'name' => 'View roles'],
-            ['slug' => 'roles.manage', 'group' => 'roles', 'name' => 'Manage roles and permissions'],
+            ['slug' => 'roles.view', 'group' => 'administration', 'name' => 'View roles'],
+            ['slug' => 'roles.manage', 'group' => 'administration', 'name' => 'Manage roles and permissions'],
 
-            ['slug' => 'organization.view', 'group' => 'organization', 'name' => 'View organization'],
-            ['slug' => 'organization.create', 'group' => 'organization', 'name' => 'Create organization units'],
-            ['slug' => 'organization.update', 'group' => 'organization', 'name' => 'Update organization units'],
-            ['slug' => 'organization.delete', 'group' => 'organization', 'name' => 'Delete organization units'],
+            ['slug' => 'organization.view', 'group' => 'administration', 'name' => 'View organization'],
+            ['slug' => 'organization.create', 'group' => 'administration', 'name' => 'Create organization units'],
+            ['slug' => 'organization.update', 'group' => 'administration', 'name' => 'Update organization units'],
+            ['slug' => 'organization.delete', 'group' => 'administration', 'name' => 'Delete organization units'],
 
-            ['slug' => 'companies.view', 'group' => 'companies', 'name' => 'View companies'],
-            ['slug' => 'companies.create', 'group' => 'companies', 'name' => 'Create companies'],
-            ['slug' => 'companies.update', 'group' => 'companies', 'name' => 'Update companies'],
-            ['slug' => 'companies.delete', 'group' => 'companies', 'name' => 'Delete companies'],
+            ['slug' => 'companies.view', 'group' => 'administration', 'name' => 'View companies'],
+            ['slug' => 'companies.create', 'group' => 'administration', 'name' => 'Create companies'],
+            ['slug' => 'companies.update', 'group' => 'administration', 'name' => 'Update companies'],
+            ['slug' => 'companies.delete', 'group' => 'administration', 'name' => 'Delete companies'],
 
             ['slug' => 'finance.view', 'group' => 'finance', 'name' => 'View finances'],
             ['slug' => 'finance.create', 'group' => 'finance', 'name' => 'Create financial records'],
@@ -57,8 +63,8 @@ class PermissionCatalog
             ['slug' => 'modules.manage', 'group' => 'modules', 'name' => 'Activate and configure modules'],
 
             ['slug' => 'notifications.view', 'group' => 'notifications', 'name' => 'View notifications'],
-            ['slug' => 'audit.view', 'group' => 'audit', 'name' => 'View audit logs'],
-            ['slug' => 'settings.manage', 'group' => 'settings', 'name' => 'Manage settings'],
+            ['slug' => 'audit.view', 'group' => 'administration', 'name' => 'View audit logs'],
+            ['slug' => 'settings.manage', 'group' => 'administration', 'name' => 'Manage settings'],
             ['slug' => 'files.manage', 'group' => 'files', 'name' => 'Manage files'],
         ];
     }
@@ -90,16 +96,20 @@ class PermissionCatalog
             'clients' => ['view', 'create', 'update', 'delete'],
             'products' => ['view', 'create', 'update', 'delete'],
             'orders' => ['view', 'create', 'update', 'export', 'print'],
+            'finance.dashboard' => ['view', 'update'],
+            'finance.account' => ['view', 'deposit', 'withdraw', 'update', 'print', 'preview'],
+            'finance.company' => ['view', 'deposit', 'withdraw', 'expense', 'approve', 'print', 'preview'],
             'campaigns' => ['view', 'create', 'update', 'delete'],
         ];
 
         $permissions = [];
 
         foreach ($areas as $area => $actions) {
+            $group = str_starts_with($area, 'finance.') ? 'kams.finance' : "kams.{$area}";
             foreach ($actions as $action) {
                 $permissions[] = [
                     'slug' => "kams.{$area}.{$action}",
-                    'group' => "kams.{$area}",
+                    'group' => $group,
                     'name' => ucfirst($action).' kams '.$area,
                 ];
             }

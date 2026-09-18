@@ -29,7 +29,7 @@ export function AuditPage() {
           {rows.map((row) => (
             <div key={row.id} className="px-5 py-4">
               <div className="font-semibold">
-                {row.user?.name || 'Système'} → {row.action} → {row.auditable_type.split('\\').pop()}
+                {row.user?.name || t('common.system')} → {row.action} → {row.auditable_type.split('\\').pop()}
               </div>
               <div className="mt-1 text-sm text-muted">
                 {new Date(row.created_at).toLocaleString()} · {row.ip_address || '—'}

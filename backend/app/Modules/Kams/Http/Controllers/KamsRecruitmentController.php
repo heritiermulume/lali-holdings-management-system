@@ -19,6 +19,7 @@ use App\Modules\Kams\Models\KamsMemberImportRow;
 use App\Modules\Kams\Models\KamsMemberOpeningPosition;
 use App\Modules\Kams\Models\KamsObservationDay;
 use App\Modules\Kams\Services\AgentAccountService;
+use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\KamsIdentityService;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\MemberRegistrationService;
@@ -41,6 +42,7 @@ class KamsRecruitmentController extends Controller
         private readonly MemberMigrationService $migration,
         private readonly RecruitmentMetrics $metrics,
         private readonly AgentAccountService $accounts,
+        private readonly KamsAccountProvisioner $wallets,
     ) {}
 
     public function lookups(Request $request): JsonResponse
@@ -456,6 +458,7 @@ class KamsRecruitmentController extends Controller
         ]);
 
         $this->accounts->provision($member);
+        $this->wallets->ensureWallet($member);
 
         AuditLogger::record('create', $member, [], $member->toArray());
 
@@ -466,6 +469,7 @@ class KamsRecruitmentController extends Controller
     {
         $this->assertCompany($request, (int) $member->company_id);
         $this->accounts->provision($member);
+        $this->wallets->ensureWallet($member);
 
         return $this->ok($member->fresh([
             'office',

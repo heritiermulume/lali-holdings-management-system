@@ -30,23 +30,50 @@ trait HasLhmsPermissions
         return $this->hasRole('super_administrator');
     }
 
+    public function isPartner(): bool
+    {
+        return $this->hasRole('partner');
+    }
+
     public function isPresident(): bool
     {
         return $this->hasRole('president');
     }
 
+    public function hasFullAccess(): bool
+    {
+        return $this->roles->contains(fn (Role $role) => $role->hasFullAccess());
+    }
+
     public function isGroupAdmin(): bool
     {
-        return $this->isSuperAdmin() || $this->isPresident();
+        return $this->hasFullAccess();
     }
 
     public function hasPermission(string $slug): bool
     {
-        if ($this->isSuperAdmin() || $this->isPresident()) {
+        if ($this->hasFullAccess()) {
             return true;
         }
 
         return in_array($slug, $this->permissionSlugs(), true);
+    }
+
+    public function hasAnyPermission(string ...$slugs): bool
+    {
+        if ($this->hasFullAccess()) {
+            return true;
+        }
+
+        $owned = $this->permissionSlugs();
+
+        foreach ($slugs as $slug) {
+            if (in_array($slug, $owned, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function permissionSlugs(): array

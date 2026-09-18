@@ -1,6 +1,6 @@
 import type { User } from '../types'
 
-export const DASHBOARD_PERMS = ['dashboard.group', 'dashboard.company']
+export const DASHBOARD_PERMS = ['administration.view']
 
 export const SETTINGS_PERMS = [
   'settings.manage',
@@ -9,6 +9,8 @@ export const SETTINGS_PERMS = [
   'roles.manage',
   'roles.view',
 ]
+
+export const ADMIN_PERMS = ['administration.view']
 
 export function canAccessModule(user: User | null | undefined, slug: string) {
   if (!user) return false

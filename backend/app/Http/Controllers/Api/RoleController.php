@@ -28,17 +28,27 @@ class RoleController extends Controller
 
     public function permissions(): JsonResponse
     {
-        $actionOrder = array_flip(['view', 'create', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate', 'approve', 'manage']);
+        $actionOrder = array_flip(['view', 'create', 'deposit', 'withdraw', 'expense', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate', 'approve', 'manage', 'group', 'company']);
+        $pageOrder = array_flip(['view', 'users', 'audit', 'settings', 'account', 'company']);
 
         $groups = Permission::query()
             ->orderBy('group')
             ->orderBy('slug')
             ->get()
             ->groupBy('group')
-            ->map(fn ($permissions) => $permissions->sortBy(function (Permission $permission) use ($actionOrder) {
-                $action = last(explode('.', $permission->slug));
+            ->map(fn ($permissions) => $permissions->sortBy(function (Permission $permission) use ($actionOrder, $pageOrder) {
+                $parts = explode('.', $permission->slug);
+                $action = last($parts);
+                $root = $parts[0] ?? '';
+                $page = match ($root) {
+                    'administration' => 'view',
+                    'users' => 'users',
+                    'audit' => 'audit',
+                    'settings', 'organization', 'companies', 'roles' => 'settings',
+                    default => count($parts) >= 4 ? $parts[2] : '',
+                };
 
-                return $actionOrder[$action] ?? 99;
+                return (($pageOrder[$page] ?? 99) * 100) + ($actionOrder[$action] ?? 99);
             })->values());
 
         return $this->ok($groups);
@@ -76,19 +86,47 @@ class RoleController extends Controller
     {
         $selected = collect($ids)->map(fn ($id) => (int) $id)->unique()->values();
         $permissions = Permission::query()->whereIn('id', $selected->all() ?: [0])->get();
-        $grouped = Permission::query()
-            ->whereIn('group', $permissions->pluck('group')->unique()->filter()->all() ?: [''])
-            ->get()
-            ->groupBy('group');
+        $prefixes = $permissions
+            ->map(fn (Permission $permission) => $this->permissionPrefix($permission->slug))
+            ->unique()
+            ->filter()
+            ->values();
 
-        foreach ($grouped as $groupPermissions) {
-            $view = $groupPermissions->first(fn (Permission $permission) => str_ends_with($permission->slug, '.view'));
+        if ($prefixes->isEmpty()) {
+            return $selected->all();
+        }
+
+        $related = Permission::query()
+            ->where(function ($query) use ($prefixes) {
+                foreach ($prefixes as $prefix) {
+                    $query->orWhere('slug', 'like', $prefix.'.%');
+                }
+            })
+            ->get()
+            ->groupBy(fn (Permission $permission) => $this->permissionPrefix($permission->slug));
+
+        foreach ($related as $siblings) {
+            $view = $siblings->first(fn (Permission $permission) => str_ends_with($permission->slug, '.view'));
             if ($view && ! $selected->contains($view->id)) {
-                $selected = $selected->reject(fn ($id) => $groupPermissions->contains('id', $id))->values();
+                $selected = $selected->reject(fn ($id) => $siblings->contains('id', $id))->values();
             }
         }
 
+        $adminView = Permission::query()->where('slug', 'administration.view')->first();
+        if ($adminView && ! $selected->contains($adminView->id)) {
+            $adminIds = Permission::query()->where('group', 'administration')->pluck('id');
+            $selected = $selected->reject(fn ($id) => $adminIds->contains($id))->values();
+        }
+
         return $selected->all();
+    }
+
+    private function permissionPrefix(string $slug): string
+    {
+        $parts = explode('.', $slug);
+        array_pop($parts);
+
+        return implode('.', $parts);
     }
 
     private function present(Role $role): array

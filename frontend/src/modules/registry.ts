@@ -51,14 +51,26 @@ export type ModuleDefinition = {
 }
 
 export const moduleRegistry: Record<string, ModuleDefinition> = {
+  administration: {
+    slug: 'administration',
+    nameKey: 'nav.administration',
+    titleKey: 'nav.administration',
+    icon: Shield,
+    items: [
+      { to: '/administration/dashboard', labelKey: 'nav.dashboard', descriptionKey: 'dashboard.overview', icon: LayoutDashboard, anyPerm: ['administration.view'] },
+      { to: '/administration/users', labelKey: 'nav.users', descriptionKey: 'users.subtitle', icon: Users, perm: 'users.view' },
+      { to: '/administration/audit', labelKey: 'nav.audit', descriptionKey: 'audit.subtitle', icon: ScrollText, perm: 'audit.view' },
+      { to: '/administration/settings', labelKey: 'nav.settings', descriptionKey: 'settings.generalHint', icon: Settings, anyPerm: ['settings.manage', 'organization.view', 'companies.view', 'roles.manage', 'roles.view'] },
+    ],
+  },
   dashboard: {
     slug: 'dashboard',
     nameKey: 'nav.dashboard',
     titleKey: 'groupDash.title',
     icon: LayoutDashboard,
     items: [
-      { to: '/modules/dashboard', labelKey: 'groupDash.overview', descriptionKey: 'groupDash.overviewHint', icon: LayoutDashboard, end: true, anyPerm: ['dashboard.group', 'dashboard.company'] },
-      { to: '/modules/dashboard/actions', labelKey: 'groupDash.actions', descriptionKey: 'groupDash.actionsHint', icon: ListChecks, anyPerm: ['dashboard.group', 'dashboard.company'] },
+      { to: '/administration/dashboard', labelKey: 'groupDash.overview', descriptionKey: 'groupDash.overviewHint', icon: LayoutDashboard, end: true, anyPerm: ['administration.view'] },
+      { to: '/administration/dashboard/actions', labelKey: 'groupDash.actions', descriptionKey: 'groupDash.actionsHint', icon: ListChecks, anyPerm: ['administration.view'] },
     ],
   },
   kams: {
@@ -71,6 +83,7 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
       { to: '/modules/kams/members', labelKey: 'kams.members', descriptionKey: 'kams.membersHint', icon: Users, perm: 'kams.members.view', anyPerm: ['kams.members.view', 'kams.recruitment.view'] },
       { to: '/modules/kams/clients', labelKey: 'kams.clients', descriptionKey: 'kams.clientsHint', icon: Users, perm: 'kams.clients.view' },
       { to: '/modules/kams/stock', labelKey: 'kams.stock', descriptionKey: 'kams.stockHint', icon: Warehouse, anyPerm: ['kams.products.view', 'kams.orders.view'] },
+      { to: '/modules/kams/finance', labelKey: 'kams.finance', descriptionKey: 'kams.financeHint', icon: Landmark, anyPerm: ['kams.finance.dashboard.view', 'kams.finance.account.view', 'kams.finance.company.view'] },
       { to: '/modules/kams/campaigns', labelKey: 'kams.campaigns', descriptionKey: 'kams.campaignsHint', icon: Megaphone, perm: 'kams.campaigns.view' },
     ],
   },
@@ -80,7 +93,7 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     titleKey: 'nav.users',
     icon: Users,
     items: [
-      { to: '/users', labelKey: 'nav.users', descriptionKey: 'users.subtitle', icon: Users, end: true, perm: 'users.view' },
+      { to: '/administration/users', labelKey: 'nav.users', descriptionKey: 'users.subtitle', icon: Users, end: true, perm: 'users.view' },
     ],
   },
   notifications: {
@@ -98,7 +111,7 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     titleKey: 'nav.audit',
     icon: ScrollText,
     items: [
-      { to: '/audit', labelKey: 'nav.audit', descriptionKey: 'audit.subtitle', icon: ScrollText, end: true, perm: 'audit.view' },
+      { to: '/administration/audit', labelKey: 'nav.audit', descriptionKey: 'audit.subtitle', icon: ScrollText, end: true, perm: 'audit.view' },
     ],
   },
   settings: {
@@ -107,13 +120,13 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     titleKey: 'nav.settings',
     icon: Settings,
     items: [
-      { to: '/settings', labelKey: 'settings.general', descriptionKey: 'settings.generalHint', icon: SlidersHorizontal, end: true, perm: 'settings.manage' },
-      { to: '/settings/organization', labelKey: 'nav.organization', descriptionKey: 'settings.organizationHint', icon: Globe2, perm: 'organization.view' },
-      { to: '/settings/companies', labelKey: 'nav.companies', descriptionKey: 'settings.companiesHint', icon: Building2, perm: 'companies.view' },
-      { to: '/settings/roles', labelKey: 'nav.roles', descriptionKey: 'settings.rolesNavHint', icon: UserCog, perm: 'roles.manage' },
-      { to: '/settings/finance', labelKey: 'settings.finance', descriptionKey: 'settings.financeHint', icon: Landmark, perm: 'settings.manage' },
-      { to: '/settings/notifications', labelKey: 'settings.notifications', descriptionKey: 'settings.notificationsHint', icon: Bell, perm: 'settings.manage' },
-      { to: '/settings/security', labelKey: 'settings.security', descriptionKey: 'settings.securityHint', icon: Shield, perm: 'settings.manage' },
+      { to: '/administration/settings', labelKey: 'settings.general', descriptionKey: 'settings.generalHint', icon: SlidersHorizontal, end: true, perm: 'settings.manage' },
+      { to: '/administration/settings/organization', labelKey: 'nav.organization', descriptionKey: 'settings.organizationHint', icon: Globe2, perm: 'organization.view' },
+      { to: '/administration/settings/companies', labelKey: 'nav.companies', descriptionKey: 'settings.companiesHint', icon: Building2, perm: 'companies.view' },
+      { to: '/administration/settings/roles', labelKey: 'nav.roles', descriptionKey: 'settings.rolesNavHint', icon: UserCog, perm: 'roles.manage' },
+      { to: '/administration/settings/finance', labelKey: 'settings.finance', descriptionKey: 'settings.financeHint', icon: Landmark, perm: 'settings.manage' },
+      { to: '/administration/settings/notifications', labelKey: 'settings.notifications', descriptionKey: 'settings.notificationsHint', icon: Bell, perm: 'settings.manage' },
+      { to: '/administration/settings/security', labelKey: 'settings.security', descriptionKey: 'settings.securityHint', icon: Shield, perm: 'settings.manage' },
     ],
   },
 }
@@ -123,7 +136,7 @@ export function settingsNavItems(modules: SystemModule[], locale: string): Modul
   return [
     ...moduleRegistry.settings.items,
     ...modules.map((module) => ({
-      to: `/settings/modules/${module.slug}`,
+      to: `/administration/settings/modules/${module.slug}`,
       labelKey: 'settings.module',
       descriptionKey: 'settings.moduleHint',
       label: langFr ? module.name_fr : module.name,
@@ -135,12 +148,13 @@ export function settingsNavItems(modules: SystemModule[], locale: string): Modul
 }
 
 const platformPrefixes: Array<[string, string]> = [
-  ['/users', 'users'],
+  ['/administration', 'administration'],
+  ['/users', 'administration'],
   ['/notifications', 'notifications'],
-  ['/audit', 'audit'],
-  ['/settings', 'settings'],
-  ['/organization', 'settings'],
-  ['/companies', 'settings'],
+  ['/audit', 'administration'],
+  ['/settings', 'administration'],
+  ['/organization', 'administration'],
+  ['/companies', 'administration'],
 ]
 
 export function moduleFromPath(pathname: string): ModuleDefinition | null {
@@ -151,7 +165,7 @@ export function moduleFromPath(pathname: string): ModuleDefinition | null {
 }
 
 export function settingsModuleSlug(pathname: string): string | null {
-  const match = pathname.match(/^\/settings\/modules\/([^/]+)$/)
+  const match = pathname.match(/^\/(?:administration\/)?settings\/modules\/([^/]+)$/)
   return match?.[1] ?? null
 }
 
@@ -168,7 +182,7 @@ export function businessModuleIcon(slug: string): LucideIcon {
 }
 
 export function dashboardBusinessSlug(pathname: string): string | null {
-  const match = pathname.match(/^\/modules\/dashboard\/([^/]+)$/)
+  const match = pathname.match(/^\/(?:administration|modules)\/dashboard\/([^/]+)$/)
   if (!match) return null
   if (['actions', 'modules'].includes(match[1])) return null
   return match[1]

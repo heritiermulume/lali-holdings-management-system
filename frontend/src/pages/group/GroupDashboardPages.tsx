@@ -1,17 +1,39 @@
 import { ArrowUpRight, Building2, Globe2, MapPin, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useParams } from 'react-router-dom'
+import { Link, Outlet, useLocation, useParams } from 'react-router-dom'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge, Card, Empty } from '../../components/ui'
 import { PresenceMap, type PresenceCountry } from '../../components/PresenceMap'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
 import { canAccessModule } from '../../lib/access'
-import { greetingKey, money } from '../../lib/format'
+import { greetingKey, money, roleLabel } from '../../lib/format'
 import api from '../../lib/api'
+import { KamsWorkspaceTabs } from '../kams/KamsWorkspaceTabs'
 import { KamsDashboard } from '../kams/KamsPages'
+import { ModuleOfficePerformance } from './ModuleOfficePerformance'
 import type { SystemModule } from '../../types'
+
+export function GroupDashboardWorkspace() {
+  const { t } = useTranslation()
+  const { pathname } = useLocation()
+  const nested = /^\/administration\/dashboard\/(?!actions(?:\/|$))[^/]+/.test(pathname)
+
+  if (nested) return <Outlet />
+
+  return (
+    <div>
+      <KamsWorkspaceTabs
+        tabs={[
+          { to: '/administration/dashboard', end: true, label: t('groupDash.overview') },
+          { to: '/administration/dashboard/actions', label: t('groupDash.actions') },
+        ]}
+      />
+      <Outlet />
+    </div>
+  )
+}
 
 type DashboardData = {
   welcome: { name: string; role?: string; company?: string }
@@ -26,31 +48,20 @@ type DashboardData = {
   trend: Array<{ month: string; revenue: number; expenses: number }>
 }
 
-type KamsSnapshot = {
-  stats: Record<string, number>
-  finance: Record<string, number>
-  recent_orders: Array<{ id: number; reference: string; total: number; status: string; client?: { name: string } }>
-}
-
 function useGroupDashboard() {
-  const { hasPermission } = useAuth()
   const [data, setData] = useState<DashboardData | null>(null)
-  const [kams, setKams] = useState<KamsSnapshot | null>(null)
 
   useEffect(() => {
     api.get('/dashboard').then((res) => setData(res.data.data)).catch(() => undefined)
-    if (hasPermission('kams.dashboard.view')) {
-      api.get('/modules/kams/dashboard').then((res) => setKams(res.data.data)).catch(() => undefined)
-    }
-  }, [hasPermission])
+  }, [])
 
-  return { data, kams }
+  return { data }
 }
 
 export function GroupOverviewPage() {
   const { t } = useTranslation()
   const { user } = useAuth()
-  const { data, kams } = useGroupDashboard()
+  const { data } = useGroupDashboard()
 
   if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
 
@@ -71,7 +82,7 @@ export function GroupOverviewPage() {
         <div className="text-xs font-semibold tracking-[0.22em] text-white/60">{t('groupDash.decision')}</div>
         <h2 className="mt-2 text-xl font-bold">{t(greetingKey())}, {user?.first_name?.trim()}</h2>
         <p className="mt-1 text-sm text-white/75">
-          {data.welcome.role}{data.welcome.company ? ` · ${data.welcome.company}` : ''} · {t('dashboard.overview')}
+          {roleLabel(t, user?.roles?.[0])}{data.welcome.company ? ` · ${data.welcome.company}` : ''} · {t('dashboard.overview')}
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl bg-white/10 p-4">
@@ -122,6 +133,8 @@ export function GroupOverviewPage() {
         </div>
       ) : null}
 
+      <ModuleOfficePerformance />
+
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
         <Card className="p-5">
           <div className="mb-4 font-semibold">{t('dashboard.trend')}</div>
@@ -147,7 +160,7 @@ export function GroupOverviewPage() {
         <Card className="p-5">
           <div className="mb-4 flex items-center justify-between">
             <div className="font-semibold">{t('groupDash.attention')}</div>
-            <Link to="/modules/dashboard/actions" className="text-sm font-semibold text-lhms">{t('common.view')}</Link>
+            <Link to="/administration/dashboard/actions" className="text-sm font-semibold text-lhms">{t('common.view')}</Link>
           </div>
           <div className="space-y-3">
             {data.notifications.slice(0, 4).length === 0 ? <Empty>{t('notifications.empty')}</Empty> : data.notifications.slice(0, 4).map((item) => (
@@ -197,25 +210,6 @@ export function GroupOverviewPage() {
           ))}
         </div>
       </Card>
-
-      {kams ? (
-        <Card className="p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="font-semibold">{t('nav.kams')}</div>
-            <Link to="/modules/dashboard/kams" className="inline-flex items-center gap-1 text-sm font-semibold text-lhms">
-              {t('modules.open')} <ArrowUpRight size={16} />
-            </Link>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {Object.entries(kams.stats).map(([key, value]) => (
-              <div key={key} className="rounded-xl bg-surface p-4">
-                <div className="text-sm text-muted">{t(`kams.${key}`)}</div>
-                <div className="mt-2 text-2xl font-extrabold">{value}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : null}
     </div>
   )
 }
@@ -258,7 +252,7 @@ export function GroupActionsPage() {
         <div className="space-y-3">
           {data.activity.map((item) => (
             <div key={item.id} className="text-sm">
-              <span className="font-semibold">{item.user?.name || 'Système'}</span> → {item.action} → {item.auditable_type.split('\\').pop()}
+              <span className="font-semibold">{item.user?.name || t('common.system')}</span> → {item.action} → {item.auditable_type.split('\\').pop()}
               <div className="text-xs text-muted">{new Date(item.created_at).toLocaleString()}</div>
             </div>
           ))}
@@ -298,6 +292,7 @@ export function GroupModuleDashboardPage() {
             {t('modules.open')} <ArrowUpRight size={16} />
           </Link>
         </div>
+        <ModuleOfficePerformance slug="kams" />
         <KamsDashboard />
       </div>
     )
@@ -327,6 +322,7 @@ export function GroupModuleDashboardPage() {
         <p className="text-sm text-muted">{details}</p>
         <p className="mt-3 text-sm text-muted">{t('groupDash.modulePending')}</p>
       </Card>
+      <ModuleOfficePerformance slug={slug} />
     </div>
   )
 }

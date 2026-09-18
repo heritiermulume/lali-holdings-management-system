@@ -6,10 +6,11 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 #[Fillable([
-    'company_id', 'account_id', 'member_id', 'kind', 'type', 'amount',
-    'source_type', 'source_id', 'occurred_on', 'notes', 'created_by',
+    'company_id', 'account_id', 'member_id', 'kind', 'type', 'status', 'amount',
+    'source_type', 'source_id', 'occurred_on', 'notes', 'decision_notes', 'created_by', 'requested_by', 'performed_by',
 ])]
 class KamsSavingsEntry extends Model
 {
@@ -34,5 +35,20 @@ class KamsSavingsEntry extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function requestedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    public function performedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'performed_by');
+    }
+
+    public function source(): MorphTo
+    {
+        return $this->morphTo();
     }
 }

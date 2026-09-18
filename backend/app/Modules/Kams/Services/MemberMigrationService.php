@@ -23,6 +23,7 @@ class MemberMigrationService
         private readonly KamsIdentityService $identity,
         private readonly RecruitmentCommunicationService $communications,
         private readonly AgentAccountService $accounts,
+        private readonly KamsAccountProvisioner $wallets,
     ) {}
 
     /**
@@ -332,7 +333,7 @@ class MemberMigrationService
             $names = PersonName::fromFullName($row['full_name'] ?? 'Unknown');
         }
 
-        return KamsMember::query()->create([
+        return tap(KamsMember::query()->create([
             'company_id' => $companyId,
             'office_id' => $officeId,
             'member_code' => $code,
@@ -354,7 +355,7 @@ class MemberMigrationService
             'joined_on' => $row['joined_on'] ?? null,
             'migrated_at' => now(),
             'notes' => 'Migrated existing member. Not a new recruit.',
-        ]);
+        ]), fn (KamsMember $member) => $this->wallets->ensureWallet($member));
     }
 
     /**

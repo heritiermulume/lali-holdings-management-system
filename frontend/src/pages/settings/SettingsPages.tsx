@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Navigate, useParams } from 'react-router-dom'
+import { Navigate, Outlet, useParams } from 'react-router-dom'
 import { Button, Card, Empty, Field, Select } from '../../components/ui'
+import { SettingsMobileTabs } from '../../components/layout/SettingsMobileTabs'
 import { useAuth } from '../../context/AuthContext'
+import { useSystemModules } from '../../context/ModulesContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { moduleRegistry } from '../../modules/registry'
+import { moduleRegistry, settingsNavItems } from '../../modules/registry'
 import { moduleSettingFields, settingDefaults, settingGroups, type SettingField, type SettingGroupId } from './catalog'
 
 type SettingRow = { group: string; key: string; value: string | null; type?: string }
@@ -166,7 +168,7 @@ export function SettingsHome() {
   }
 
   const next = moduleRegistry.settings.items.find((item) => (
-    item.to !== '/settings' && item.perm && hasPermission(item.perm)
+    !item.end && item.perm && hasPermission(item.perm)
   ))
 
   if (next) return <Navigate to={next.to} replace />
@@ -195,4 +197,20 @@ export function ModuleSettingsPage() {
   }
 
   return <SettingsForm group={slug} fields={fields} />
+}
+
+export function SettingsWorkspace() {
+  const { i18n } = useTranslation()
+  const { hasPermission } = useAuth()
+  const { modules } = useSystemModules()
+  const items = settingsNavItems(modules, i18n.language).filter((item) => (
+    item.anyPerm?.length ? item.anyPerm.some((perm) => hasPermission(perm)) : Boolean(!item.perm || hasPermission(item.perm))
+  ))
+
+  return (
+    <div>
+      <SettingsMobileTabs items={items} />
+      <Outlet />
+    </div>
+  )
 }

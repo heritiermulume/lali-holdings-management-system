@@ -35,7 +35,7 @@ class Role extends Model
 
     public function hasFullAccess(): bool
     {
-        return in_array($this->slug, ['super_administrator', 'president'], true);
+        return RoleCatalog::isFullAccess((string) $this->slug);
     }
 
     public function isSystemWide(): bool

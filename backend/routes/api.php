@@ -27,6 +27,7 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
 
         Route::get('dashboard', DashboardController::class);
+        Route::get('dashboard/module-performance', [DashboardController::class, 'modulePerformance']);
 
         Route::get('notifications', [NotificationController::class, 'index']);
         Route::post('notifications/{notification}/read', [NotificationController::class, 'markRead']);
@@ -42,6 +43,7 @@ Route::prefix('v1')->group(function () {
 
         Route::get('users', [UserController::class, 'index'])->middleware(EnsurePermission::class.':users.view');
         Route::post('users', [UserController::class, 'store'])->middleware(EnsurePermission::class.':users.create');
+        Route::post('users/import', [UserController::class, 'import'])->middleware(EnsurePermission::class.':users.import');
         Route::get('users/{user}', [UserController::class, 'show'])->middleware(EnsurePermission::class.':users.view');
         Route::put('users/{user}', [UserController::class, 'update'])->middleware(EnsurePermission::class.':users.update');
         Route::delete('users/{user}', [UserController::class, 'destroy'])->middleware(EnsurePermission::class.':users.delete');

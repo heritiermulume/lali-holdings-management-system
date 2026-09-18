@@ -32,9 +32,9 @@ export function LoginPage() {
           <p className="mt-4 max-w-md text-lg text-white/75">{t('app.tagline')}</p>
         </div>
         <ul className="space-y-3 text-sm text-white/80">
-          <li>Multi-pays · Multi-sociétés · Multi-modules</li>
-          <li>Permissions granulaires · Audit · Consolidation groupe</li>
-          <li>Architecture ERP conçue pour grandir</li>
+          <li>{t('auth.featureMulti')}</li>
+          <li>{t('auth.featureSecurity')}</li>
+          <li>{t('auth.featureScale')}</li>
         </ul>
       </section>
 
@@ -69,7 +69,7 @@ export function LoginPage() {
           <div className="flex items-center justify-between text-sm text-muted">
             <span>{t('auth.hint')}</span>
             <button type="button" onClick={() => void i18n.changeLanguage(i18n.language.startsWith('fr') ? 'en' : 'fr')}>
-              {i18n.language === 'fr' ? 'EN' : 'FR'}
+              {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
             </button>
           </div>
         </form>

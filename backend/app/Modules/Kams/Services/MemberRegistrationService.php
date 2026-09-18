@@ -14,6 +14,7 @@ class MemberRegistrationService
         private readonly KamsIdentityService $identity,
         private readonly RecruitmentCommunicationService $communications,
         private readonly AgentAccountService $accounts,
+        private readonly KamsAccountProvisioner $wallets,
     ) {}
 
     public function registerFromObservation(KamsObservationDay $observation, string $locale = 'fr'): KamsMember
@@ -66,6 +67,7 @@ class MemberRegistrationService
 
             AuditLogger::record('register_member', $member, [], $member->toArray());
             $credentials = $this->accounts->provision($member);
+            $this->wallets->ensureWallet($member);
             $this->communications->notifyFinalApproval($candidate, $member->fresh('user'), $locale, $credentials);
 
             return $member->fresh(['office', 'user']);

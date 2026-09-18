@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Core\Support\AuditLogger;
+use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
@@ -10,14 +11,19 @@ use App\Models\Office;
 use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
+use App\Modules\Kams\Services\KamsAccountProvisioner;
+use App\Modules\Kams\Support\SpreadsheetRows;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
     use RespondsWithJson;
+
+    public function __construct(private readonly KamsAccountProvisioner $kamsAccounts) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -26,11 +32,31 @@ class UserController extends Controller
         if ($search = $request->string('search')->toString()) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
+                    ->orWhere('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%");
             });
         }
 
-        $page = $query->latest()->paginate($request->integer('per_page', 15));
+        if ($request->filled('company_id')) {
+            $companyId = $request->integer('company_id');
+            $query->where(function ($q) use ($companyId) {
+                $q->where('primary_company_id', $companyId)
+                    ->orWhereHas('roles', fn ($roles) => $roles->where('role_user.company_id', $companyId));
+            });
+        }
+
+        if ($request->filled('role_id')) {
+            $roleId = $request->integer('role_id');
+            $query->whereHas('roles', fn ($roles) => $roles->where('roles.id', $roleId));
+        }
+
+        if ($request->exists('is_active') && $request->input('is_active') !== '' && $request->input('is_active') !== null) {
+            $query->where('is_active', $request->boolean('is_active'));
+        }
+
+        $page = $query->latest()->paginate($request->integer('per_page', 50));
         $page->getCollection()->transform(fn (User $user) => $this->present($user));
 
         return $this->paginated($page);
@@ -46,6 +72,7 @@ class UserController extends Controller
 
         $user = User::query()->create($data);
         $this->syncMemberships($user, $request);
+        $this->kamsAccounts->tryForUser($user->fresh('roles'));
 
         AuditLogger::record('create', $user, [], $user->toArray());
 
@@ -67,7 +94,7 @@ class UserController extends Controller
             $data['password'] = $request->string('password')->toString();
         }
 
-        $this->assertPresidentCannotAffectSuperAdmin($request->user(), $user, $request);
+        $this->assertCannotAffectSuperAdmin($request->user(), $user, $request);
 
         $user->fill($data)->save();
 
@@ -76,13 +103,16 @@ class UserController extends Controller
         }
 
         AuditLogger::record('update', $user, $old, $user->fresh()->toArray());
+        $this->kamsAccounts->tryForUser($user->fresh('roles'));
 
         return $this->ok($this->present($user->fresh()), __('User updated.'));
     }
 
     public function destroy(Request $request, User $user): JsonResponse
     {
-        $this->assertPresidentCannotAffectSuperAdmin($request->user(), $user, $request, 'delete');
+        abort_if($request->user()?->id === $user->id, 422, __('You cannot delete your own account.'));
+
+        $this->assertCannotAffectSuperAdmin($request->user(), $user, $request, 'delete');
 
         abort_if($user->isSuperAdmin() && User::query()->whereHas('roles', fn ($q) => $q->where('slug', 'super_administrator'))->count() <= 1, 422, __('The last super administrator cannot be deleted.'));
 
@@ -92,18 +122,57 @@ class UserController extends Controller
         return $this->ok(null, __('User deleted.'));
     }
 
-    private function assertPresidentCannotAffectSuperAdmin(?User $actor, User $target, Request $request, string $action = 'update'): void
+    public function import(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'file' => ['nullable', 'file', 'max:10240'],
+            'rows' => ['nullable', 'array'],
+            'rows.*' => ['array'],
+        ]);
+
+        $rows = $data['rows'] ?? [];
+        if ($request->hasFile('file')) {
+            $rows = SpreadsheetRows::fromUpload($request->file('file'));
+        }
+
+        abort_if($rows === [], 422, __('Add an Excel/CSV file or paste rows to import.'));
+
+        $created = [];
+        $errors = [];
+
+        foreach (array_values($rows) as $index => $row) {
+            $payload = is_array($row) ? $row : [];
+            try {
+                $created[] = DB::transaction(fn () => $this->importRow($request, $payload));
+            } catch (\Throwable $exception) {
+                $errors[] = [
+                    'row' => $index + 2,
+                    'email' => $this->rowValue($payload, ['email', 'e-mail', 'mail']) ?: null,
+                    'message' => $exception->getMessage(),
+                ];
+            }
+        }
+
+        return $this->ok([
+            'created' => $created,
+            'errors' => $errors,
+            'imported' => count($created),
+            'skipped' => count($errors),
+        ], __('Users imported.'));
+    }
+
+    private function assertCannotAffectSuperAdmin(?User $actor, User $target, Request $request, string $action = 'update'): void
     {
         if (! $target->isSuperAdmin() || ($actor && $actor->isSuperAdmin())) {
             return;
         }
 
         if ($action === 'delete') {
-            abort(403, __('The president cannot delete or deactivate a super administrator.'));
+            abort(403, __('Only a super administrator can delete or deactivate another super administrator.'));
         }
 
         if ($request->has('is_active') && ! $request->boolean('is_active')) {
-            abort(403, __('The president cannot delete or deactivate a super administrator.'));
+            abort(403, __('Only a super administrator can delete or deactivate another super administrator.'));
         }
 
         if ($request->has('role_ids') || $request->has('platform_role_id') || $request->has('assignments')) {
@@ -111,7 +180,7 @@ class UserController extends Controller
             $keepsSuper = collect($request->input('role_ids', []))->contains(fn ($id) => (int) $id === (int) $superId)
                 || (int) $request->input('platform_role_id') === (int) $superId
                 || collect($request->input('assignments', []))->contains(fn ($row) => (int) ($row['role_id'] ?? 0) === (int) $superId);
-            abort_unless($keepsSuper, 403, __('The president cannot delete or deactivate a super administrator.'));
+            abort_unless($keepsSuper, 403, __('Only a super administrator can delete or deactivate another super administrator.'));
         }
     }
 
@@ -156,6 +225,7 @@ class UserController extends Controller
         if ($platformRoleId) {
             $platform = Role::query()->findOrFail((int) $platformRoleId);
             abort_unless($platform->hasFullAccess(), 422, __('Only Super Administrator and President can be assigned outside a module.'));
+            abort_if($platform->slug === 'super_administrator' && ! $request->user()?->isSuperAdmin(), 403, __('Only a super administrator can assign the Super Administrator role.'));
             $rows[] = ['role_id' => $platform->id, 'company_id' => null];
         }
 
@@ -255,12 +325,151 @@ class UserController extends Controller
             'last_name' => $user->last_name,
             'name' => $user->name,
             'email' => $user->email,
+            'phone' => $user->phone,
+            'avatar_url' => $user->avatar_path ? '/storage/'.$user->avatar_path : null,
             'is_active' => $user->is_active,
+            'last_login_at' => $user->last_login_at,
             'primary_company' => $user->primaryCompany,
             'primary_office' => $user->primaryOffice,
             'roles' => $user->roles,
             'assignments' => $user->roleAssignmentPayload(),
             'scopes' => $user->scopes,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function importRow(Request $request, array $row): array
+    {
+        $firstName = $this->rowValue($row, ['first_name', 'prenom', 'prénom']);
+        $lastName = $this->rowValue($row, ['last_name', 'nom']);
+        $email = strtolower($this->rowValue($row, ['email', 'e-mail', 'mail']));
+        $phone = $this->rowValue($row, ['phone', 'telephone', 'téléphone']) ?: null;
+        $platformRole = $this->rowValue($row, ['platform_role', 'role_transversal', 'rôle_transversal']);
+        $companyValue = $this->rowValue($row, ['company', 'societe', 'société', 'company_code']);
+        $roleValue = $this->rowValue($row, ['role', 'rôle', 'membership_role']);
+        $officesValue = $this->rowValue($row, ['offices', 'bureaux', 'office', 'office_codes']);
+        $activeValue = strtolower($this->rowValue($row, ['is_active', 'actif', 'status', 'statut']));
+
+        abort_unless($firstName && $lastName && $email, 422, __('First name, last name and email are required.'));
+        abort_if(User::query()->where('email', $email)->exists(), 422, __('A user with this email already exists.'));
+
+        $isActive = ! in_array($activeValue, ['0', 'false', 'inactive', 'inactif', 'no', 'non'], true);
+
+        $user = User::query()->create([
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'email' => $email,
+            'phone' => $phone,
+            'password' => 'Password123!',
+            'locale' => SettingsCatalog::defaultLocale(),
+            'timezone' => (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa'),
+            'is_active' => $isActive,
+        ]);
+
+        $payload = new Request;
+        $payload->setUserResolver(fn () => $request->user());
+
+        if ($platformRole) {
+            $role = $this->resolveRole($platformRole);
+            abort_unless($role?->hasFullAccess(), 422, __('The platform role is invalid.'));
+            abort_if($role->slug === 'super_administrator' && ! $request->user()?->isSuperAdmin(), 403, __('Only a super administrator can assign the Super Administrator role.'));
+            $payload->merge(['platform_role_id' => $role->id, 'assignments' => []]);
+        } else {
+            abort_unless($companyValue && $roleValue, 422, __('Company and role are required when no platform role is set.'));
+            $company = $this->resolveCompany($companyValue);
+            abort_unless($company, 422, __('The company could not be found.'));
+            $role = $this->resolveRole($roleValue);
+            abort_unless($role, 422, __('The role could not be found.'));
+            abort_if($role->hasFullAccess(), 422, __('Platform roles cannot be tied to a company.'));
+            $officeIds = $this->resolveOfficeIds($company->id, $officesValue);
+            $payload->merge([
+                'platform_role_id' => null,
+                'assignments' => [[
+                    'company_id' => $company->id,
+                    'role_id' => $role->id,
+                    'office_ids' => $officeIds,
+                ]],
+            ]);
+        }
+
+        $this->syncMemberships($user, $payload);
+        $this->kamsAccounts->tryForUser($user->fresh('roles'));
+        AuditLogger::record('create', $user, [], $user->toArray());
+
+        return $this->present($user->fresh());
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  list<string>  $keys
+     */
+    private function rowValue(array $row, array $keys): string
+    {
+        $normalized = [];
+        foreach ($row as $key => $value) {
+            $normalized[strtolower(trim((string) $key))] = trim((string) $value);
+        }
+
+        foreach ($keys as $key) {
+            $value = $normalized[strtolower($key)] ?? '';
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function resolveRole(string $value): ?Role
+    {
+        $slug = RoleCatalog::resolve($value) ?? strtolower(str_replace(['-', ' '], '_', trim($value)));
+
+        return Role::query()
+            ->where(function ($query) use ($slug, $value) {
+                $query->where('slug', $slug)
+                    ->orWhereRaw('lower(name) = ?', [mb_strtolower(trim($value))]);
+            })
+            ->first();
+    }
+
+    private function resolveCompany(string $value): ?Company
+    {
+        return Company::query()
+            ->where(function ($query) use ($value) {
+                $query->where('code', $value)
+                    ->orWhere('name', $value)
+                    ->orWhere('legal_name', $value);
+            })
+            ->first();
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function resolveOfficeIds(int $companyId, string $value): array
+    {
+        if ($value === '') {
+            return [];
+        }
+
+        $tokens = collect(preg_split('/[|;,]+/', $value) ?: [])
+            ->map(fn ($item) => trim((string) $item))
+            ->filter()
+            ->values();
+
+        if ($tokens->isEmpty()) {
+            return [];
+        }
+
+        return Office::query()
+            ->where('company_id', $companyId)
+            ->where(function ($query) use ($tokens) {
+                $query->whereIn('code', $tokens)->orWhereIn('name', $tokens);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 }

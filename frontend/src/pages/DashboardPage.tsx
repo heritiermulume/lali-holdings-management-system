@@ -6,6 +6,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  Shield,
   Truck,
   Tv,
   Users,
@@ -17,7 +18,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Modal } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
 import { useSystemModules } from '../context/ModulesContext'
-import { canAccessModule, DASHBOARD_PERMS, SETTINGS_PERMS } from '../lib/access'
+import { ADMIN_PERMS, canAccessModule, DASHBOARD_PERMS, SETTINGS_PERMS } from '../lib/access'
 import { cn } from '../lib/cn'
 import { greetingKey } from '../lib/format'
 import { moduleRegistry } from '../modules/registry'
@@ -40,11 +41,16 @@ type DockApp = {
   tint: string
 }
 
+const adminApps: DockApp[] = [
+  { to: '/administration', key: 'administration', icon: Shield, anyPerm: ADMIN_PERMS, tint: 'bg-[linear-gradient(145deg,#64748b,#1e293b)]' },
+  { to: '/administration/dashboard', key: 'dashboard', icon: LayoutDashboard, anyPerm: DASHBOARD_PERMS, tint: 'bg-[linear-gradient(145deg,#4ade80,#094924)]' },
+  { to: '/administration/users', key: 'users', icon: Users, perm: 'users.view', tint: 'bg-[linear-gradient(145deg,#818cf8,#3730a3)]' },
+  { to: '/administration/audit', key: 'audit', icon: ScrollText, perm: 'audit.view', tint: 'bg-[linear-gradient(145deg,#94a3b8,#334155)]' },
+  { to: '/administration/settings', key: 'settings', icon: Settings, anyPerm: SETTINGS_PERMS, tint: 'bg-[linear-gradient(145deg,#cbd5e1,#475569)]' },
+]
+
 const dockApps: DockApp[] = [
-  { to: '/users', key: 'users', icon: Users, perm: 'users.view', tint: 'bg-[linear-gradient(145deg,#818cf8,#3730a3)]' },
   { to: '/notifications', key: 'notifications', icon: Bell, perm: 'notifications.view', tint: 'bg-[linear-gradient(145deg,#fb7185,#be123c)]' },
-  { to: '/audit', key: 'audit', icon: ScrollText, perm: 'audit.view', tint: 'bg-[linear-gradient(145deg,#94a3b8,#334155)]' },
-  { to: '/settings', key: 'settings', icon: Settings, anyPerm: SETTINGS_PERMS, tint: 'bg-[linear-gradient(145deg,#cbd5e1,#475569)]' },
 ]
 
 function AppIcon({
@@ -96,16 +102,19 @@ export function DashboardPage() {
     })
   }, [modules, query, i18n.language])
 
-  const showDashboard = hasAnyPermission(DASHBOARD_PERMS)
-  const dashboardLabel = t('nav.dashboard')
-  const dashboardMatches = !query.trim()
-    || dashboardLabel.toLowerCase().includes(query.trim().toLowerCase())
-    || 'dashboard'.includes(query.trim().toLowerCase())
-    || 'tableau'.includes(query.trim().toLowerCase())
-
-  const dock = dockApps.filter((app) => (
+  const canSeeApp = (app: DockApp) => (
     app.anyPerm?.length ? hasAnyPermission(app.anyPerm) : Boolean(!app.perm || hasPermission(app.perm))
-  ))
+  )
+
+  const admin = adminApps.filter(canSeeApp)
+  const dock = dockApps.filter(canSeeApp)
+  const q = query.trim().toLowerCase()
+  const searchedAdmin = q
+    ? admin.filter((app) => {
+      const label = t(`nav.${app.key}`).toLowerCase()
+      return label.includes(q) || app.key.includes(q)
+    })
+    : []
 
   const openModule = (module: SystemModule) => {
     if (!canAccessModule(user, module.slug)) {
@@ -151,14 +160,15 @@ export function DashboardPage() {
 
         <div className="mt-10 flex flex-1 items-start justify-center">
           <div className="grid grid-cols-3 justify-items-center gap-x-4 gap-y-8 sm:grid-cols-4 sm:gap-x-8 sm:gap-y-10 md:grid-cols-5 lg:grid-cols-6">
-            {showDashboard && dashboardMatches ? (
+            {searchedAdmin.map((app) => (
               <AppIcon
-                label={dashboardLabel}
-                icon={LayoutDashboard}
-                tint="bg-[linear-gradient(145deg,#4ade80,#094924)]"
-                onClick={() => navigate('/modules/dashboard')}
+                key={app.to}
+                label={t(`nav.${app.key}`)}
+                icon={app.icon}
+                tint={app.tint}
+                onClick={() => navigate(app.to)}
               />
-            ) : null}
+            ))}
             {filteredModules.map((module) => {
               const look = moduleLooks[module.slug as keyof typeof moduleLooks] ?? { icon: Crown, tint: 'bg-[linear-gradient(145deg,#86efac,#166534)]' }
               const title = i18n.language.startsWith('fr') ? module.name_fr : module.name
@@ -177,9 +187,23 @@ export function DashboardPage() {
           </div>
         </div>
 
-        {dock.length > 0 ? (
-          <div className="mx-auto mt-8 flex max-w-full items-end justify-center">
-            <div className="flex items-end gap-3 overflow-x-auto rounded-[28px] border border-white/15 bg-white/12 px-3 py-3 shadow-[0_20px_50px_rgba(0,0,0,0.28)] backdrop-blur-2xl sm:gap-4 sm:px-4">
+        {admin.length > 0 || dock.length > 0 ? (
+          <div className="relative mx-auto mt-8 flex max-w-full items-end justify-center">
+            <div className="relative z-30 flex items-end gap-3 overflow-x-auto rounded-[28px] border border-white/15 bg-white/12 px-3 py-3 shadow-[0_20px_50px_rgba(0,0,0,0.28)] backdrop-blur-2xl sm:gap-4 sm:px-4">
+              {admin.length > 0 ? (
+                <Link
+                  to="/administration"
+                  title={t('nav.administration')}
+                  className="group flex w-16 flex-col items-center sm:w-[72px]"
+                >
+                  <span className="grid h-12 w-12 place-items-center rounded-[16px] bg-[linear-gradient(145deg,#64748b,#1e293b)] text-white shadow-[0_10px_20px_rgba(0,0,0,0.28)] transition duration-200 group-hover:-translate-y-1 group-hover:scale-110 sm:h-14 sm:w-14 sm:rounded-[18px]">
+                    <Shield size={24} strokeWidth={1.7} />
+                  </span>
+                  <span className="mt-1.5 line-clamp-1 text-center text-[10px] font-medium text-white/80 sm:text-[11px]">
+                    {t('nav.administration')}
+                  </span>
+                </Link>
+              ) : null}
               {dock.map((app) => {
                 const Icon = app.icon
                 return (

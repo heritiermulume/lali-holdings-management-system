@@ -82,5 +82,5 @@ export function PresenceMap({ countries }: { countries: PresenceCountry[] }) {
     return <p className="text-sm text-muted">{t('dashboard.mapEmpty')}</p>
   }
 
-  return <div ref={container} className="h-80 w-full overflow-hidden rounded-2xl" />
+  return <div ref={container} className="relative z-0 isolate h-80 w-full overflow-hidden rounded-2xl" />
 }

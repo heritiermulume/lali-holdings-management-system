@@ -276,7 +276,7 @@ Préfixe API : `/api/v1/modules/kams`
 | Commandes | création, mise à jour de statut |
 | Campagnes | marketing / collections |
 
-Écrans React : `/modules/kams`, `/clients`, `/products`, `/orders`, `/campaigns`.
+Écrans React : `/modules/kams`, `/clients`, `/stock`, `/finance`, `/campaigns`.
 
 ---
 
@@ -300,19 +300,19 @@ Les modules communiquent avec le cœur uniquement par les contrats (`BusinessMod
 
 Les permissions du cœur sont définies dans `App\Core\Support\PermissionCatalog`. Chaque module ajoute `view`, `create`, `update`, `delete`, `approve`, `export`.
 
-Rôles système (niveaux décroissants) :
+Profils KAMS (niveaux décroissants) :
 
 | Rôle | Niveau | Périmètre typique |
 |---|---|---|
-| Super Administrator | 100 | Toutes les permissions, scope groupe |
-| Group Administrator | 90 | Quasi-totalité |
-| Country Manager | 80 | Lecture organisation, sociétés, finances, rapports |
-| Company Administrator | 70 | Société (ex. King Attitude + KAMS) |
-| City Manager | 60 | Lecture locale |
-| Office Manager | 50 | Bureau + opérations KAMS limitées |
-| Department Manager | 40 | Département |
-| Employee / Staff | 20 | Dashboard société + lecture KAMS |
-| Viewer | 10 | Consultation |
+| Super Admin | 100 | Toutes les permissions, tout le système |
+| Partenaire | 90 | Tous les droits, sauf supprimer / désactiver un Super Admin |
+| Vice-président | 80 | KAMS complet + lecture groupe (hors bureau unique) |
+| Divisionnaire | 70 | KAMS régional |
+| Manager | 60 | Bureau + opérations KAMS |
+| Secrétaire | 50 | Bureau, suivi administratif KAMS |
+| Assistant Manager | 40 | Bureau, opérations limitées |
+| Chef | 30 | Équipe terrain |
+| Distributeur | 20 | Ventes et clients |
 
 Les routes API sont protégées par `auth:sanctum` et `EnsurePermission` (`permission.slug`). Le middleware `SetLocale` aligne la langue API sur l’utilisateur / l’en-tête.
 

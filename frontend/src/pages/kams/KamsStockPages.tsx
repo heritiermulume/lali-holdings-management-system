@@ -1,12 +1,10 @@
-import { AlertTriangle, Package, TrendingDown, TrendingUp, Users, Wallet } from 'lucide-react'
+import { AlertTriangle, Package, TrendingUp, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Legend,
   ResponsiveContainer,
@@ -18,7 +16,6 @@ import { Card, Empty } from '../../components/ui'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { money } from '../../lib/format'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type Period = 'day' | 'week' | 'month'
@@ -90,11 +87,6 @@ export function KamsStockWorkspace() {
           { to: '/modules/kams/stock/transfers', end: true, label: t('kams.transfers'), show: canStock },
           { to: '/modules/kams/stock/assignments', end: true, label: t('kams.assignments'), show: canStock },
           { to: '/modules/kams/stock/returns', end: true, label: t('kams.returns'), show: canStock },
-          { to: '/modules/kams/stock/commissions', end: true, label: t('kams.commissions'), show: canStock },
-          { to: '/modules/kams/stock/savings', end: true, label: t('kams.savings'), show: canStock },
-          { to: '/modules/kams/stock/daily', end: true, label: t('kams.dailyMaster'), show: canStock },
-          { to: '/modules/kams/stock/hierarchy', end: true, label: t('kams.hierarchy'), show: canStock || hasPermission('kams.orders.view') },
-          { to: '/modules/kams/stock/orders', end: true, label: t('kams.orders'), show: hasPermission('kams.orders.view') },
         ]}
       />
       <Outlet />
@@ -133,7 +125,7 @@ export function KamsStockStats() {
     { key: 'availableStock', value: data.totals.units, icon: Package },
     { key: 'soldUnits', value: data.totals.sold_units, icon: TrendingUp },
     { key: 'activeSellers', value: data.totals.active_sellers, icon: Users },
-    { key: 'guySavings', value: money(data.totals.guy_savings || 0), icon: Wallet },
+    { key: 'openAssignments', value: data.totals.open_assignments, icon: Package },
   ]
 
   return (
@@ -180,30 +172,21 @@ export function KamsStockStats() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.inventoryValue')}</div>
-          <div className="mt-2 text-2xl font-extrabold text-lhms">{money(data.totals.inventory_value)}</div>
-          <div className="mt-1 text-xs text-muted">{data.totals.warehouse_units} / {data.totals.depot_units} / {data.totals.with_agents} · {t('kams.inTransit')}: {data.totals.in_transit} · {t('kams.quarantine')}: {data.totals.quarantine}</div>
+          <div className="text-sm text-muted">{t('kams.warehouses')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{data.totals.warehouse_units}</div>
         </Card>
         <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted">{t('kams.cashCollected')}</span>
-            <Wallet size={16} className="text-lhms" />
-          </div>
-          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.cash)}</div>
+          <div className="text-sm text-muted">{t('kams.depot')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{data.totals.depot_units}</div>
         </Card>
         <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted">{t('kams.profit')}</span>
-            <TrendingUp size={16} className="text-lhms" />
-          </div>
-          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.profit)}</div>
+          <div className="text-sm text-muted">{t('kams.withAgents')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{data.totals.with_agents}</div>
         </Card>
         <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted">{t('kams.loss')}</span>
-            <TrendingDown size={16} className="text-red-600" />
-          </div>
-          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.loss)}</div>
+          <div className="text-sm text-muted">{t('kams.inTransit')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{data.totals.in_transit}</div>
+          <div className="mt-1 text-xs text-muted">{t('kams.quarantine')}: {data.totals.quarantine}</div>
         </Card>
       </div>
 
@@ -262,40 +245,22 @@ export function KamsStockStats() {
         </div>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Card className="p-5">
-          <div className="mb-4 font-semibold">{t('kams.profitLossTrend')}</div>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
-                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="profit" name={t('kams.profit')} fill="#094924" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="loss" name={t('kams.loss')} fill="#c81e1e" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-        <Card className="p-5">
-          <div className="mb-4 font-semibold">{t('kams.lowStock')}</div>
-          {data.low_stock.length === 0 ? <Empty>{t('common.empty')}</Empty> : (
-            <div className="space-y-3">
-              {data.low_stock.map((row, index) => (
-                <div key={`${row.product}-${row.location}-${index}`} className="flex items-center justify-between rounded-xl bg-surface p-3">
-                  <div>
-                    <div className="font-semibold">{row.product}</div>
-                    <div className="text-sm text-muted">{row.location}</div>
-                  </div>
-                  <div className="font-semibold">{row.quantity}</div>
+      <Card className="p-5">
+        <div className="mb-4 font-semibold">{t('kams.lowStock')}</div>
+        {data.low_stock.length === 0 ? <Empty>{t('common.empty')}</Empty> : (
+          <div className="space-y-3">
+            {data.low_stock.map((row, index) => (
+              <div key={`${row.product}-${row.location}-${index}`} className="flex items-center justify-between rounded-xl bg-surface p-3">
+                <div>
+                  <div className="font-semibold">{row.product}</div>
+                  <div className="text-sm text-muted">{row.location}</div>
                 </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
+                <div className="font-semibold">{row.quantity}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }
