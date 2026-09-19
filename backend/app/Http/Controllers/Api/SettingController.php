@@ -21,6 +21,7 @@ class SettingController extends Controller
         return $this->ok([
             'default_locale' => SettingsCatalog::defaultLocale(),
             'group_name' => Setting::getValue('general', 'group_name', 'LALI Holdings'),
+            'features' => (object) [],
         ]);
     }
 

@@ -200,6 +200,7 @@ class KamsResourceController extends Controller
             'cost' => ['nullable', 'numeric', 'min:0'],
             'stock' => ['nullable', 'integer', 'min:0'],
             'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'warehouse_id' => ['nullable', 'exists:kams_depots,id'],
             'status' => ['nullable', 'in:active,draft,archived'],
             'description' => ['nullable', 'string'],
@@ -245,6 +246,7 @@ class KamsResourceController extends Controller
             'company_price' => ['nullable', 'numeric', 'min:0'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', 'in:active,draft,archived'],
             'description' => ['nullable', 'string'],
         ]), $request);

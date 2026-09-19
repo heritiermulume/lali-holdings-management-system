@@ -76,7 +76,7 @@ class MemberRegistrationService
 
     public function applyProfileChange(KamsMember $member, string $field, mixed $value, ?string $reason, bool $requiresApproval = false): void
     {
-        $tracked = ['office_id', 'trainer_name', 'trainer_user_id', 'manager_name', 'team_name', 'rank', 'role_id', 'status', 'phone', 'address'];
+        $tracked = ['office_id', 'trainer_name', 'trainer_user_id', 'manager_name', 'manager_member_id', 'assistant_manager_member_id', 'fixed_salary', 'team_name', 'rank', 'role_id', 'status', 'phone', 'address'];
 
         if (! in_array($field, $tracked, true)) {
             $member->forceFill([$field => $value])->save();

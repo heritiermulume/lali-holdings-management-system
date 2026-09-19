@@ -7,8 +7,10 @@ use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsSavingsAccount;
 use App\Modules\Kams\Models\KamsSavingsEntry;
+use App\Modules\Kams\Models\KamsStockAssignment;
 use App\Modules\Kams\Models\KamsStockReturn;
 use App\Modules\Kams\Models\KamsStockReturnItem;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use Illuminate\Support\Facades\DB;
@@ -17,7 +19,7 @@ class SavingsLedger
 {
     public function account(KamsMember $member, string $kind): KamsSavingsAccount
     {
-        abort_unless(in_array($kind, ['guy', 'manager'], true), 422, __('Unknown savings account.'));
+        abort_unless(in_array($kind, ['guy', 'manager', 'assistant_manager', 'secretary', 'divisionnaire'], true), 422, __('Unknown savings account.'));
 
         return KamsSavingsAccount::query()->firstOrCreate(
             ['member_id' => $member->id, 'kind' => $kind],
@@ -72,9 +74,16 @@ class SavingsLedger
             : $this->resolveManager($seller);
 
         $this->postUnique($seller, 'guy', (float) $sale->seller_margin, 'settlement', $sale, $sale->sold_at?->toDateString(), 'Guy margin on '.$sale->reference);
-        if ($manager && (float) $sale->manager_margin > 0) {
+        app(RevenueShareService::class)->post($sale);
+        $hasShares = KamsRevenueShare::query()->where('sale_id', $sale->id)->exists();
+        if (! $hasShares && $manager && (float) $sale->manager_margin > 0) {
             $this->postUnique($manager, 'manager', (float) $sale->manager_margin, 'settlement', $sale, $sale->sold_at?->toDateString(), 'Manager margin on '.$sale->reference);
         }
+    }
+
+    public function postCompensation(KamsMember $member, string $kind, float $amount, string $type, object $source, ?string $date, string $notes): void
+    {
+        $this->postUnique($member, $kind, $amount, $type, $source, $date, $notes);
     }
 
     public function reverseReturn(KamsStockReturn $return, KamsStockReturnItem $line): void
@@ -194,6 +203,63 @@ class SavingsLedger
             ->all();
     }
 
+    /**
+     * @param  list<int>  $officeIds
+     * @return array{members: list<array<string, mixed>>, totals: array<string, float>}
+     */
+    public function memberAccounts(?int $companyId, array $officeIds = []): array
+    {
+        $kinds = ['guy', 'manager', 'assistant_manager', 'secretary', 'divisionnaire'];
+        $emptyBalances = array_fill_keys($kinds, 0.0);
+
+        $members = KamsMember::query()
+            ->with([
+                'office:id,name,code',
+                'role:id,name,slug',
+                'savingsAccounts:id,member_id,kind,balance',
+            ])
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds))
+            ->whereIn('status', ['active', 'verified'])
+            ->orderBy('full_name')
+            ->get(['id', 'full_name', 'member_code', 'status', 'office_id', 'role_id']);
+
+        $totals = array_merge($emptyBalances, ['total' => 0.0]);
+        $rows = [];
+
+        foreach ($members as $member) {
+            $balances = $emptyBalances;
+            foreach ($member->savingsAccounts as $account) {
+                $kind = (string) $account->kind;
+                if (! array_key_exists($kind, $balances)) {
+                    continue;
+                }
+                $balances[$kind] = round((float) $account->balance, 2);
+            }
+            $total = round(array_sum($balances), 2);
+            foreach ($balances as $kind => $amount) {
+                $totals[$kind] = round($totals[$kind] + $amount, 2);
+            }
+            $totals['total'] = round($totals['total'] + $total, 2);
+
+            $rows[] = [
+                'id' => $member->id,
+                'full_name' => $member->full_name,
+                'member_code' => $member->member_code,
+                'status' => $member->status,
+                'office' => $member->office?->only(['id', 'name', 'code']),
+                'role' => $member->role?->only(['id', 'name', 'slug']),
+                'accounts' => $balances,
+                'total_balance' => $total,
+            ];
+        }
+
+        return [
+            'members' => $rows,
+            'totals' => $totals,
+        ];
+    }
+
     private function postUnique(KamsMember $member, string $kind, float $amount, string $type, object $source, ?string $date, string $notes): void
     {
         if (abs($amount) < 0.001) {
@@ -246,6 +312,8 @@ class SavingsLedger
      */
     public function statement(KamsMember $member): array
     {
+        app(RevenueShareService::class)->syncMemberLedger($member);
+
         $accounts = KamsSavingsAccount::query()
             ->where('member_id', $member->id)
             ->get();
@@ -257,7 +325,7 @@ class SavingsLedger
             ->with(['createdBy:id,name', 'requestedBy:id,name', 'performedBy:id,name', 'member:id,full_name,member_code,user_id', 'source'])
             ->where('member_id', $member->id)
             ->latest()
-            ->limit(80)
+            ->limit(500)
             ->get();
         $mapped = $entries->map(fn (KamsSavingsEntry $entry) => $this->serializeEntry($entry))->values();
         $linkedTreasuryIds = $entries
@@ -277,14 +345,14 @@ class SavingsLedger
             ->where('member_id', $member->id)
             ->when($linkedTreasuryIds !== [], fn ($q) => $q->whereNotIn('id', $linkedTreasuryIds))
             ->latest()
-            ->limit(80)
+            ->limit(500)
             ->get()
             ->map(fn (KamsTreasuryEntry $entry) => $this->serializeTreasuryMirror($entry));
         $mapped = $mapped
             ->concat($orphans)
             ->sortByDesc(fn (array $row) => $row['created_at'] ?? $row['occurred_on'] ?? '')
             ->values()
-            ->take(80)
+            ->take(500)
             ->values();
 
         $posted = KamsSavingsEntry::query()
@@ -299,10 +367,7 @@ class SavingsLedger
             ->where('status', 'pending')
             ->where('type', 'deposit_request');
 
-        $balance = round((float) $accounts->sum('balance'), 2);
-        if ($balance == 0.0) {
-            $balance = round((float) (clone $posted)->sum('amount'), 2);
-        }
+        $balance = round((float) (clone $posted)->sum('amount'), 2);
 
         return [
             'member' => [
@@ -328,6 +393,59 @@ class SavingsLedger
         abort_unless($amount > 0, 422, __('The amount must be greater than zero.'));
 
         return $this->postManual($member, 'deposit', abs($amount), $notes, $userId, 'posted', $requestedBy, $userId, $source);
+    }
+
+    /**
+     * Credit day-closing cash surplus to the agent's savings account (posted deposit).
+     */
+    public function depositDayClosingSurplus(
+        KamsMember $member,
+        float $amount,
+        KamsStockAssignment $assignment,
+        int $userId,
+    ): KamsSavingsEntry {
+        abort_unless($amount > 0, 422, __('The amount must be greater than zero.'));
+
+        $performer = User::query()->find($userId);
+        $performerName = trim((string) ($performer?->name ?: $performer?->email ?: ('#'.$userId)));
+
+        $notes = trim(sprintf(
+            'Surplus clôture journée %s · Effectué par %s',
+            $assignment->reference,
+            $performerName,
+        ));
+
+        $entry = $this->postManual(
+            $member,
+            'deposit',
+            abs($amount),
+            $notes,
+            $userId,
+            'posted',
+            $userId,
+            $userId,
+            $assignment,
+        );
+
+        // Ensure the cashier/manager who closed the day is stored as the deposit performer.
+        $entry->forceFill([
+            'created_by' => $userId,
+            'requested_by' => $userId,
+            'performed_by' => $userId,
+        ])->save();
+
+        $account = $this->account($member, 'guy');
+        $this->refreshBalance($account);
+
+        $accountId = (int) $account->id;
+        DB::afterCommit(function () use ($accountId) {
+            $account = KamsSavingsAccount::query()->find($accountId);
+            if ($account) {
+                app(self::class)->refreshBalance($account);
+            }
+        });
+
+        return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source', 'account']);
     }
 
     public function expense(KamsMember $member, float $amount, string $notes, int $userId, ?object $source = null, ?int $requestedBy = null): KamsSavingsEntry
@@ -500,7 +618,9 @@ class SavingsLedger
             'decision_notes' => $entry->decision_notes ?? null,
             'member' => $this->memberActor($entry->member),
             'requested_by' => $this->actor($entry->requestedBy, $entry->member?->full_name),
-            'performed_by' => $this->actor($entry->performedBy),
+            'performed_by' => $this->actor(
+                $entry->performedBy ?: ($entry->status === 'pending' ? null : $entry->createdBy),
+            ),
             'created_by' => $this->actor($entry->createdBy),
             'source' => $this->sourcePayload($entry->source),
         ];
@@ -587,6 +707,9 @@ class SavingsLedger
         }
         if ($source instanceof KamsStockSale) {
             return ['type' => 'sale', 'id' => $source->id, 'label' => $source->reference ?? null];
+        }
+        if ($source instanceof KamsStockAssignment) {
+            return ['type' => 'assignment', 'id' => $source->id, 'label' => $source->reference ?? null];
         }
         if ($source instanceof KamsStockReturn) {
             return ['type' => 'return', 'id' => $source->id, 'label' => $source->reference ?? null];

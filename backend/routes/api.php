@@ -45,7 +45,7 @@ Route::prefix('v1')->group(function () {
         Route::post('users', [UserController::class, 'store'])->middleware(EnsurePermission::class.':users.create');
         Route::post('users/import', [UserController::class, 'import'])->middleware(EnsurePermission::class.':users.import');
         Route::get('users/{user}', [UserController::class, 'show'])->middleware(EnsurePermission::class.':users.view');
-        Route::put('users/{user}', [UserController::class, 'update'])->middleware(EnsurePermission::class.':users.update');
+        Route::match(['put', 'post'], 'users/{user}', [UserController::class, 'update'])->middleware(EnsurePermission::class.':users.update');
         Route::delete('users/{user}', [UserController::class, 'destroy'])->middleware(EnsurePermission::class.':users.delete');
 
         Route::get('roles', [RoleController::class, 'index'])->middleware(EnsurePermission::class.':roles.view');
@@ -85,6 +85,7 @@ Route::prefix('v1')->group(function () {
         Route::put('companies/{company}', [OrganizationController::class, 'updateCompany'])->middleware(EnsurePermission::class.':companies.update');
         Route::delete('companies/{company}', [OrganizationController::class, 'destroyCompany'])->middleware(EnsurePermission::class.':companies.delete');
 
+        Route::get('offices/lookups', [OrganizationController::class, 'officeLookups'])->middleware(EnsurePermission::class.':organization.view,companies.view');
         Route::get('offices', [OrganizationController::class, 'offices'])->middleware(EnsurePermission::class.':organization.view');
         Route::post('offices', [OrganizationController::class, 'storeOffice'])->middleware(EnsurePermission::class.':organization.create');
         Route::put('offices/{office}', [OrganizationController::class, 'updateOffice'])->middleware(EnsurePermission::class.':organization.update');

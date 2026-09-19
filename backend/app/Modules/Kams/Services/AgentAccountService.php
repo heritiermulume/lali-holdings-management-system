@@ -8,26 +8,37 @@ use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Services\UserCredentialsService;
 use App\Support\SettingsCatalog;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class AgentAccountService
 {
+    public function __construct(private readonly UserCredentialsService $userCredentials) {}
+
     /**
-     * @return array{email: string, password: string, is_active: bool}
+     * @return array{email: string, phone: ?string, password: ?string, is_active: bool}
      */
     public function provision(KamsMember $member): array
     {
         $member->refresh();
 
         if ($member->user_id) {
-            $user = $member->user()->firstOrFail();
-            $this->syncUser($member, $user);
-
-            return $this->credentials($member->fresh('user'));
+            return $this->ensureCredentials($member, $member->user()->firstOrFail());
         }
 
-        $password = $this->generatePassword();
+        $preferred = $this->preferredEmail($member);
+        if ($preferred) {
+            $existing = User::query()->where('email', $preferred)->first();
+            if ($existing) {
+                $member->forceFill(['user_id' => $existing->id])->save();
+
+                return $this->ensureCredentials($member, $existing);
+            }
+        }
+
+        $password = $this->userCredentials->generatePassword();
         $email = $this->loginEmail($member);
 
         $user = User::query()->create([
@@ -38,7 +49,7 @@ class AgentAccountService
             'avatar_path' => $member->photo_path,
             'locale' => SettingsCatalog::defaultLocale(),
             'timezone' => (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa'),
-            'is_active' => false,
+            'is_active' => true,
             'primary_company_id' => $member->company_id,
             'primary_office_id' => $member->office_id,
             'password' => $password,
@@ -47,12 +58,16 @@ class AgentAccountService
         $this->syncRoles($member, $user);
         $this->syncScopes($member, $user);
 
+        $user->forceFill(['login_password' => $password])->save();
+
         $member->forceFill([
             'user_id' => $user->id,
             'login_password' => $password,
         ])->save();
 
-        return $this->credentials($member->fresh('user'), false);
+        $this->queueCredentialsMail($user, $password, $this->mailRecipient($member, $email));
+
+        return $this->credentials($member->fresh('user'), true);
     }
 
     /**
@@ -102,7 +117,7 @@ class AgentAccountService
     }
 
     /**
-     * @return array{email: string, password: ?string, is_active: bool}
+     * @return array{email: string, phone: ?string, password: ?string, is_active: bool}
      */
     public function credentials(KamsMember $member, ?bool $isActive = null): array
     {
@@ -110,9 +125,64 @@ class AgentAccountService
 
         return [
             'email' => $user?->email ?? $member->email,
+            'phone' => $user?->phone ?? $member->phone,
             'password' => $member->login_password,
             'is_active' => $isActive ?? (bool) $user?->is_active,
         ];
+    }
+
+    /**
+     * @return array{email: string, phone: ?string, password: ?string, is_active: bool}
+     */
+    private function ensureCredentials(KamsMember $member, User $user): array
+    {
+        $this->syncUser($member, $user);
+        $user->refresh();
+
+        $plain = $user->login_password ?: $member->login_password;
+
+        if (blank($plain)) {
+            $plain = $this->userCredentials->generatePassword();
+            $user->forceFill([
+                'password' => $plain,
+                'login_password' => $plain,
+                'is_active' => true,
+            ])->save();
+            $member->forceFill([
+                'user_id' => $user->id,
+                'login_password' => $plain,
+            ])->save();
+            $this->queueCredentialsMail($user, $plain, $this->mailRecipient($member, $user->email));
+
+            return $this->credentials($member->fresh('user'), true);
+        }
+
+        $user->forceFill(['login_password' => $plain])->save();
+        $member->forceFill([
+            'user_id' => $user->id,
+            'login_password' => $plain,
+        ])->save();
+
+        return $this->credentials($member->fresh('user'));
+    }
+
+    private function queueCredentialsMail(User $user, string $password, ?string $to): void
+    {
+        $userId = $user->id;
+        $send = function () use ($userId, $password, $to) {
+            $fresh = User::query()->find($userId);
+            if (! $fresh) {
+                return;
+            }
+
+            $this->userCredentials->sendTo($fresh, $password, $to);
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($send);
+        } else {
+            $send();
+        }
     }
 
     private function syncUser(KamsMember $member, User $user): void
@@ -148,7 +218,7 @@ class AgentAccountService
         }
 
         if ($roleId) {
-            $user->assignCompanyRole((int) $roleId, (int) $member->company_id);
+            $user->assignCompanyRole((int) $roleId, (int) $member->company_id, $member->office_id ? (int) $member->office_id : null);
         }
     }
 
@@ -189,6 +259,20 @@ class AgentAccountService
         return $email;
     }
 
+    private function mailRecipient(KamsMember $member, string $loginEmail): ?string
+    {
+        if ($preferred = $this->preferredEmail($member)) {
+            return $preferred;
+        }
+
+        $loginEmail = strtolower(trim($loginEmail));
+        if ($loginEmail === '' || str_ends_with($loginEmail, '@kams.lali') || ! filter_var($loginEmail, FILTER_VALIDATE_EMAIL)) {
+            return null;
+        }
+
+        return $loginEmail;
+    }
+
     private function preferredEmail(KamsMember $member): ?string
     {
         $email = strtolower(trim((string) $member->email));
@@ -202,10 +286,5 @@ class AgentAccountService
             ->where('email', $email)
             ->when($ignoreUserId, fn ($q) => $q->where('id', '!=', $ignoreUserId))
             ->exists();
-    }
-
-    private function generatePassword(): string
-    {
-        return 'Ka-'.Str::upper(Str::random(4)).random_int(10, 99).'!';
     }
 }

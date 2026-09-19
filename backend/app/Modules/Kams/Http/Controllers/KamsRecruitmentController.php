@@ -69,7 +69,7 @@ class KamsRecruitmentController extends Controller
             ->whereIn('status', ['active', 'verified', 'pending_verification'])
             ->orderBy('full_name')
             ->limit(500)
-            ->get(['id', 'company_id', 'member_code', 'full_name', 'phone']);
+            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id']);
 
         $users = User::query()
             ->where('is_active', true)
@@ -433,6 +433,9 @@ class KamsRecruitmentController extends Controller
             'trainer_name' => ['nullable', 'string', 'max:255'],
             'trainer_user_id' => ['nullable', 'exists:users,id'],
             'manager_name' => ['nullable', 'string', 'max:255'],
+            'manager_member_id' => ['nullable', 'exists:kams_members,id'],
+            'assistant_manager_member_id' => ['nullable', 'exists:kams_members,id'],
+            'fixed_salary' => ['nullable', 'numeric', 'min:0'],
             'rank' => ['nullable', 'string', 'max:64'],
             'role_id' => ['nullable', 'exists:roles,id'],
             'joined_on' => ['nullable', 'date'],
@@ -462,7 +465,7 @@ class KamsRecruitmentController extends Controller
 
         AuditLogger::record('create', $member, [], $member->toArray());
 
-        return $this->created($member->fresh(['office', 'role', 'trainer', 'user']));
+        return $this->created($member->fresh(['office', 'role', 'trainer', 'user', 'managerMember', 'assistantManager']));
     }
 
     public function showMember(Request $request, KamsMember $member): JsonResponse
@@ -475,6 +478,8 @@ class KamsRecruitmentController extends Controller
             'office',
             'role',
             'trainer',
+            'managerMember',
+            'assistantManager',
             'user',
             'candidate',
             'history.changer',
@@ -510,6 +515,9 @@ class KamsRecruitmentController extends Controller
             'trainer_name' => ['nullable', 'string'],
             'trainer_user_id' => ['nullable', 'exists:users,id'],
             'manager_name' => ['nullable', 'string'],
+            'manager_member_id' => ['nullable', 'exists:kams_members,id'],
+            'assistant_manager_member_id' => ['nullable', 'exists:kams_members,id'],
+            'fixed_salary' => ['nullable', 'numeric', 'min:0'],
             'team_name' => ['nullable', 'string'],
             'rank' => ['nullable', 'string'],
             'role_id' => ['nullable', 'exists:roles,id'],
@@ -543,10 +551,10 @@ class KamsRecruitmentController extends Controller
             $this->registration->applyProfileChange($member, $field, $value, $reason, $sensitive);
         }
 
-        $member = $member->fresh(['office', 'role', 'trainer', 'history', 'openingPositions', 'user']);
+        $member = $member->fresh(['office', 'role', 'trainer', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']);
         $this->accounts->syncFromMember($member);
 
-        return $this->ok($member->fresh(['office', 'role', 'trainer', 'history', 'openingPositions', 'user']));
+        return $this->ok($member->fresh(['office', 'role', 'trainer', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']));
     }
 
     public function destroyMember(Request $request, KamsMember $member): JsonResponse

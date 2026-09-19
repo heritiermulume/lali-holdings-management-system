@@ -1,7 +1,9 @@
 import { Ban, MapPin, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { SearchCombobox, type SearchComboboxItem } from '../components/SearchCombobox'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../components/ui'
+import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
@@ -9,6 +11,7 @@ import { businessModuleIcon } from '../modules/registry'
 
 type Geo = { id: number; name: string; name_fr?: string }
 
+type PersonRef = { id: number; name: string }
 type Office = {
   id: number
   name: string
@@ -17,6 +20,14 @@ type Office = {
   address?: string | null
   phone?: string | null
   is_active: boolean
+  parent_office_id?: number | null
+  creator_user_id?: number | null
+  manager_user_id?: number | null
+  recorded_by_user_id?: number | null
+  parent?: { id: number; name: string; code: string } | null
+  creator?: PersonRef | null
+  manager?: PersonRef | null
+  recorded_by?: PersonRef | null
   country?: Geo | null
   province?: Geo | null
   city?: Geo | null
@@ -47,6 +58,9 @@ const emptyOfficeForm = {
   city_id: '',
   commune_id: '',
   neighborhood_id: '',
+  parent_office_id: '',
+  creator_user_id: '',
+  manager_user_id: '',
 }
 
 function geoName(item: Geo | null | undefined, locale: string) {
@@ -69,6 +83,14 @@ function idOrNull(value: string) {
   return value ? Number(value) : null
 }
 
+function officeRoots(offices: Office[]) {
+  return offices.filter((office) => !office.parent_office_id || !offices.some((item) => item.id === office.parent_office_id))
+}
+
+function officeChildren(offices: Office[], parentId: number) {
+  return offices.filter((office) => office.parent_office_id === parentId)
+}
+
 export function CompaniesPage() {
   const { t, i18n } = useTranslation()
   const { hasPermission } = useAuth()
@@ -89,9 +111,15 @@ export function CompaniesPage() {
   const [toggling, setToggling] = useState<{ company: Company; office: Office } | null>(null)
   const [form, setForm] = useState(emptyOfficeForm)
   const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [people, setPeople] = useState<SearchComboboxItem[]>([])
+  const [parentOptions, setParentOptions] = useState<Array<{ id: number; name: string; code: string }>>([])
 
   const load = () => {
-    api.get('/companies', { params: { business: 1, per_page: 50 } }).then((res) => setRows(res.data.data ?? []))
+    setLoading(true)
+    api.get('/companies', { params: { business: 1, per_page: 50 } })
+      .then((res) => setRows(res.data.data ?? []))
+      .finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [])
@@ -136,10 +164,23 @@ export function CompaniesPage() {
       .then((res) => setNeighborhoods(res.data.data ?? []))
   }, [form.commune_id])
 
+  const loadLookups = (companyId: number) => {
+    api.get('/offices/lookups', { params: { company_id: companyId } }).then((res) => {
+      const users = (res.data.data?.users ?? []) as Array<{ id: number; name: string; email?: string | null }>
+      setPeople(users.map((user) => ({
+        id: String(user.id),
+        label: user.name,
+        hint: user.email || undefined,
+      })))
+      setParentOptions(res.data.data?.offices ?? [])
+    })
+  }
+
   const openCreate = (row: Company) => {
     setCompany(row)
     setEditing(null)
     setForm(emptyOfficeForm)
+    loadLookups(row.id)
     setOpen(true)
   }
 
@@ -157,7 +198,11 @@ export function CompaniesPage() {
       city_id: geoId(office.city),
       commune_id: geoId(office.commune),
       neighborhood_id: geoId(office.neighborhood),
+      parent_office_id: office.parent_office_id ? String(office.parent_office_id) : '',
+      creator_user_id: office.creator_user_id || office.creator?.id ? String(office.creator_user_id || office.creator?.id) : '',
+      manager_user_id: office.manager_user_id || office.manager?.id ? String(office.manager_user_id || office.manager?.id) : '',
     })
+    loadLookups(row.id)
     setOpen(true)
   }
 
@@ -172,6 +217,9 @@ export function CompaniesPage() {
     city_id: idOrNull(form.city_id),
     commune_id: idOrNull(form.commune_id),
     neighborhood_id: idOrNull(form.neighborhood_id),
+    parent_office_id: idOrNull(form.parent_office_id),
+    creator_user_id: idOrNull(form.creator_user_id),
+    manager_user_id: idOrNull(form.manager_user_id),
   })
 
   const saveOffice = async () => {
@@ -222,6 +270,8 @@ export function CompaniesPage() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted">{t('org.companiesIntro')}</p>
+      {loading ? <LoadingScreen /> : (
+        <>
       {ordered.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
       {ordered.map((row) => {
         const Icon = businessModuleIcon(row.module?.slug ?? row.code.toLowerCase())
@@ -253,60 +303,79 @@ export function CompaniesPage() {
               {(row.offices ?? []).length === 0 ? (
                 <p className="text-sm text-muted">{t('org.noOffices')}</p>
               ) : (
-                (row.offices ?? []).map((office) => (
-                  <div
-                    key={office.id}
-                    className={cn(
-                      'flex flex-col gap-3 rounded-2xl border border-line bg-surface/60 px-4 py-3 sm:flex-row sm:items-start',
-                      !office.is_active && 'opacity-60',
-                    )}
-                  >
-                    <MapPin className={cn('mt-0.5 shrink-0', office.is_active ? 'text-lhms' : 'text-muted')} size={16} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold">
-                        {office.name} <span className="text-xs font-medium text-muted">{office.code}</span>
+                <>
+                  <div className="mb-1 text-sm font-semibold text-muted">{t('kams.officeHierarchy')}</div>
+                  {officeRoots(row.offices ?? []).map((office) => {
+                    const renderOffice = (node: Office, depth = 0): ReactNode => (
+                      <div key={node.id} className="space-y-2" style={{ marginLeft: depth ? depth * 16 : 0 }}>
+                        <div
+                          className={cn(
+                            'flex flex-col gap-3 rounded-2xl border border-line bg-surface/60 px-4 py-3 sm:flex-row sm:items-start',
+                            !node.is_active && 'opacity-60',
+                          )}
+                        >
+                          <MapPin className={cn('mt-0.5 shrink-0', node.is_active ? 'text-lhms' : 'text-muted')} size={16} />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold">
+                              {node.name} <span className="text-xs font-medium text-muted">{node.code}</span>
+                            </div>
+                            <div className="mt-0.5 text-sm text-muted">{officeLocation(node, locale) || node.address || '—'}</div>
+                            {node.parent || node.creator || node.manager ? (
+                              <div className="mt-1 text-xs text-muted">
+                                {[
+                                  node.parent ? `${t('org.parentOffice')}: ${node.parent.name}` : null,
+                                  node.creator ? `${t('org.officeCreator')}: ${node.creator.name}` : null,
+                                  node.manager ? `${t('org.officeManager')}: ${node.manager.name}` : null,
+                                ].filter(Boolean).join(' · ')}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={node.is_active ? 'slate' : 'amber'}>
+                              {node.is_active ? t(`org.officeTypes.${node.type}`) : t('org.inactive')}
+                            </Badge>
+                            {canUpdate ? (
+                              <button
+                                type="button"
+                                className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
+                                onClick={() => openEdit(row, node)}
+                              >
+                                <Pencil size={14} /> {t('common.edit')}
+                              </button>
+                            ) : null}
+                            {canUpdate ? (
+                              <button
+                                type="button"
+                                className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
+                                onClick={() => setToggling({ company: row, office: node })}
+                              >
+                                <Ban size={14} /> {node.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
+                              </button>
+                            ) : null}
+                            {canDelete ? (
+                              <button
+                                type="button"
+                                className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-white"
+                                onClick={() => setDeleting({ company: row, office: node })}
+                              >
+                                <Trash2 size={14} /> {t('common.delete')}
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                        {officeChildren(row.offices ?? [], node.id).map((child) => renderOffice(child, depth + 1))}
                       </div>
-                      <div className="mt-0.5 text-sm text-muted">{officeLocation(office, locale) || office.address || '—'}</div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge tone={office.is_active ? 'slate' : 'amber'}>
-                        {office.is_active ? t(`org.officeTypes.${office.type}`) : t('org.inactive')}
-                      </Badge>
-                      {canUpdate ? (
-                      <button
-                        type="button"
-                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
-                        onClick={() => openEdit(row, office)}
-                      >
-                        <Pencil size={14} /> {t('common.edit')}
-                      </button>
-                      ) : null}
-                      {canUpdate ? (
-                      <button
-                        type="button"
-                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
-                        onClick={() => setToggling({ company: row, office })}
-                      >
-                        <Ban size={14} /> {office.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
-                      </button>
-                      ) : null}
-                      {canDelete ? (
-                      <button
-                        type="button"
-                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-white"
-                        onClick={() => setDeleting({ company: row, office })}
-                      >
-                        <Trash2 size={14} /> {t('common.delete')}
-                      </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))
+                    )
+                    return renderOffice(office)
+                  })}
+                </>
               )}
             </div>
           </Card>
         )
       })}
+        </>
+      )}
 
       <Modal
         open={open}
@@ -369,9 +438,32 @@ export function CompaniesPage() {
             <option value="">—</option>
             {neighborhoods.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
           </Select>
+          <Select label={t('org.parentOffice')} value={form.parent_office_id} onChange={(e) => setForm({ ...form, parent_office_id: e.target.value })}>
+            <option value="">{t('org.noParentOffice')}</option>
+            {parentOptions.filter((office) => office.id !== editing?.id).map((office) => (
+              <option key={office.id} value={office.id}>{office.name} ({office.code})</option>
+            ))}
+          </Select>
+          <SearchCombobox
+            label={t('org.officeCreator')}
+            value={people.find((item) => item.id === form.creator_user_id) || null}
+            items={people}
+            placeholder={t('kams.searchUser')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({ ...form, creator_user_id: item?.id || '' })}
+          />
+          <SearchCombobox
+            label={t('org.officeManager')}
+            value={people.find((item) => item.id === form.manager_user_id) || null}
+            items={people}
+            placeholder={t('kams.searchUser')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({ ...form, manager_user_id: item?.id || '' })}
+          />
+          <p className="text-xs text-muted">{t('org.officeActorsHint')}</p>
           <Field label={t('org.address')} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <Button className="w-full" disabled={saving || !form.name || !form.code} onClick={() => void saveOffice()}>
+          <Button className="w-full" disabled={saving || !form.name || !form.code || (company?.module?.slug === 'kams' && !editing && (!form.creator_user_id || !form.manager_user_id))} onClick={() => void saveOffice()}>
             {saving ? t('common.loading') : t('common.save')}
           </Button>
         </div>

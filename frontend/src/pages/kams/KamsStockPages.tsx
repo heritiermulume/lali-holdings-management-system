@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts'
 import { Card, Empty } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -119,7 +120,7 @@ export function KamsStockStats() {
     }))
   }, [data, locale, period])
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   const kpis = [
     { key: 'availableStock', value: data.totals.units, icon: Package },

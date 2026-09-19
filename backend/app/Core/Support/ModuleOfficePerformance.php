@@ -5,6 +5,7 @@ namespace App\Core\Support;
 use App\Models\Company;
 use App\Models\SystemModule;
 use App\Models\User;
+use App\Modules\Kams\Services\RevenueShareService;
 use App\Modules\Kams\Services\StockMetrics;
 use Illuminate\Support\Carbon;
 
@@ -12,6 +13,7 @@ class ModuleOfficePerformance
 {
     public function __construct(
         private readonly StockMetrics $stock,
+        private readonly RevenueShareService $revenueShares,
         private readonly CurrencyConverter $fx,
     ) {}
 
@@ -54,15 +56,59 @@ class ModuleOfficePerformance
             }
 
             $offices = [];
+            $moduleCompensation = [
+                'generated' => 0.0,
+                'posted' => 0.0,
+                'remaining' => 0.0,
+                'manager_sale' => 0.0,
+                'assistant_share' => 0.0,
+                'manager_office' => 0.0,
+                'divisionnaire_office' => 0.0,
+                'secretary_office' => 0.0,
+                'salary_paid' => 0.0,
+            ];
+            $moduleSavings = [
+                'guy_savings' => 0.0,
+                'assistant_manager_savings' => 0.0,
+                'manager_savings' => 0.0,
+            ];
             foreach ($companies as $company) {
                 $fromCurrency = strtoupper((string) ($company->currency_code ?: $default));
                 if ($module->slug === 'kams' && $canSeeFinance) {
+                    $companyComp = $this->revenueShares->dashboardTotals((int) $company->id, $scopedOfficeIds, $range['from'], $range['to']);
+                    $convertedComp = $this->fx->convertBag([
+                        'generated' => (float) $companyComp['generated'],
+                        'posted' => (float) $companyComp['posted'],
+                        'remaining' => (float) $companyComp['remaining'],
+                        'manager_sale' => (float) $companyComp['manager_sale'],
+                        'assistant_share' => (float) $companyComp['assistant_share'],
+                        'manager_office' => (float) (($companyComp['manager_office'] ?? 0) + ($companyComp['manager_descendant_office'] ?? 0)),
+                        'divisionnaire_office' => (float) $companyComp['divisionnaire_office'],
+                        'secretary_office' => (float) $companyComp['secretary_office'],
+                        'salary_paid' => (float) $companyComp['salary_paid'],
+                    ], $fromCurrency, $default);
+                    foreach ($convertedComp as $key => $value) {
+                        $moduleCompensation[$key] = round($moduleCompensation[$key] + (float) $value, 2);
+                    }
+
                     foreach ($this->stock->officesForPeriod((int) $company->id, $scopedOfficeIds, $range['from'], $range['to']) as $row) {
                         $converted = $this->fx->convertBag([
                             'revenue' => (float) ($row['expected'] ?? 0),
                             'profit' => (float) ($row['profit'] ?? 0),
                             'cash' => (float) ($row['cash'] ?? 0),
+                            'compensation' => (float) ($row['compensation_generated'] ?? 0),
+                            'manager_sale' => (float) ($row['manager_sale'] ?? 0),
+                            'assistant_share' => (float) ($row['assistant_share'] ?? 0),
+                            'manager_office_share' => (float) ($row['manager_office_share'] ?? 0),
+                            'divisionnaire_share' => (float) ($row['divisionnaire_share'] ?? 0),
+                            'secretary_share' => (float) ($row['secretary_share'] ?? 0),
+                            'guy_savings' => (float) ($row['guy_savings'] ?? 0),
+                            'assistant_manager_savings' => (float) ($row['assistant_manager_savings'] ?? 0),
+                            'manager_savings' => (float) ($row['manager_savings'] ?? 0),
                         ], $fromCurrency, $default);
+                        $moduleSavings['guy_savings'] = round($moduleSavings['guy_savings'] + (float) $converted['guy_savings'], 2);
+                        $moduleSavings['assistant_manager_savings'] = round($moduleSavings['assistant_manager_savings'] + (float) $converted['assistant_manager_savings'], 2);
+                        $moduleSavings['manager_savings'] = round($moduleSavings['manager_savings'] + (float) $converted['manager_savings'], 2);
                         $offices[] = [
                             'id' => $row['id'],
                             'name' => $row['name'],
@@ -95,6 +141,8 @@ class ModuleOfficePerformance
                 'name' => $module->name,
                 'name_fr' => $module->name_fr,
                 'offices' => $offices,
+                'compensation' => $module->slug === 'kams' ? $moduleCompensation : null,
+                'savings' => $module->slug === 'kams' ? $moduleSavings : null,
             ];
         }
 

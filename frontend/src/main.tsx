@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.tsx'
+import { BusyOverlay } from './components/LoadingScreen'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { SystemModulesProvider } from './context/ModulesContext.tsx'
 import './i18n/index.ts'
@@ -13,6 +14,7 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <SystemModulesProvider>
           <App />
+          <BusyOverlay />
         </SystemModulesProvider>
       </AuthProvider>
     </BrowserRouter>

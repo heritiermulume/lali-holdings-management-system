@@ -51,3 +51,31 @@ textarea,
 button {
   font-family: inherit;
 }
+
+@keyframes lhms-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lhms-loader-bar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.lhms-loader-ring {
+  animation: lhms-loader-spin 1s linear infinite;
+}
+
+.lhms-loader-ring-slow {
+  animation-duration: 1.7s;
+  animation-direction: reverse;
+}
+
+.lhms-loader-bar > span {
+  animation: lhms-loader-bar 1.15s ease-in-out infinite;
+}

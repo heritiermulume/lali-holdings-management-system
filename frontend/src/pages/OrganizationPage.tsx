@@ -2,6 +2,7 @@ import { Ban, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal } from '../components/ui'
+import { LoadingScreen } from '../components/LoadingScreen'
 import { WorldCountryCombobox } from '../components/WorldCountryCombobox'
 import { useAuth } from '../context/AuthContext'
 import type { WorldCountry } from '../data/worldCountries'
@@ -33,17 +34,21 @@ export function OrganizationPage() {
   const [deleting, setDeleting] = useState<Row | null>(null)
   const [toggling, setToggling] = useState<Row | null>(null)
   const [actionError, setActionError] = useState('')
+  const [loading, setLoading] = useState(true)
 
   const canCreate = hasPermission('organization.create')
   const canUpdate = hasPermission('organization.update')
   const canDelete = hasPermission('organization.delete')
 
   const load = () => {
-    api.get(`/${tab}`, { params: { per_page: 50 } }).then((res) => setRows(res.data.data))
-    api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data))
-    api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data))
-    api.get('/communes', { params: { per_page: 50 } }).then((res) => setCommunes(res.data.data))
-    api.get('/companies', { params: { per_page: 50 } }).then((res) => setCompanies(res.data.data))
+    setLoading(true)
+    Promise.all([
+      api.get(`/${tab}`, { params: { per_page: 50 } }).then((res) => setRows(res.data.data)),
+      api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data)),
+      api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data)),
+      api.get('/communes', { params: { per_page: 50 } }).then((res) => setCommunes(res.data.data)),
+      api.get('/companies', { params: { per_page: 50 } }).then((res) => setCompanies(res.data.data)),
+    ]).finally(() => setLoading(false))
   }
 
   useEffect(() => {
@@ -166,6 +171,7 @@ export function OrganizationPage() {
         ))}
       </div>
       {actionError ? <p className="mb-3 text-sm text-danger">{actionError}</p> : null}
+      {loading ? <LoadingScreen /> : (
       <Card className="overflow-hidden">
         <div className="hidden md:block">
           <table className="w-full text-sm">
@@ -216,6 +222,7 @@ export function OrganizationPage() {
           ))}
         </div>
       </Card>
+      )}
 
       <Modal open={open} title={`${t('org.add')} ${t(`org.${tab}`)}`} onClose={() => setOpen(false)}>
         <div className="space-y-3">

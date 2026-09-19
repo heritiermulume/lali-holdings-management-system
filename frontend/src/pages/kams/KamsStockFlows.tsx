@@ -167,11 +167,13 @@ export function KamsAssignments() {
   const [products, setProducts] = useState<Product[]>([])
   const [open, setOpen] = useState(false)
   const [settling, setSettling] = useState<Assignment | null>(null)
+  const [surplusConfirm, setSurplusConfirm] = useState<{ amount: number } | null>(null)
   const [memberId, setMemberId] = useState('')
   const [lines, setLines] = useState<Line[]>([emptyLine()])
   const [collected, setCollected] = useState('')
   const [returns, setReturns] = useState<Record<number, { returned: string; lost: string }>>({})
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const load = () => api.get('/modules/kams/stock/assignments').then((res) => setRows(res.data.data))
 
@@ -182,6 +184,25 @@ export function KamsAssignments() {
       setProducts(res.data.data.products || [])
     })
   }, [])
+
+  const settleTotals = (() => {
+    if (!settling) return { amountDue: 0, collectedAmount: 0, surplus: 0, shortfall: 0 }
+    const amountDue = (settling.items || []).reduce((sum, item) => {
+      const returnedQty = Number(returns[item.id]?.returned || 0)
+      const lostQty = Number(returns[item.id]?.lost || 0)
+      const soldQty = Math.max(0, item.quantity_out - returnedQty - lostQty)
+      return sum + soldQty * Number(item.unit_price || 0)
+    }, 0)
+    const collectedAmount = Number(collected || 0)
+    const surplus = Math.max(0, collectedAmount - amountDue)
+    const shortfall = Math.max(0, amountDue - collectedAmount)
+    return {
+      amountDue: Math.round(amountDue * 100) / 100,
+      collectedAmount: Math.round(collectedAmount * 100) / 100,
+      surplus: Math.round(surplus * 100) / 100,
+      shortfall: Math.round(shortfall * 100) / 100,
+    }
+  })()
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -200,19 +221,21 @@ export function KamsAssignments() {
     }
   }
 
-  const settle = async (event: FormEvent) => {
-    event.preventDefault()
+  const submitSettle = async (depositSurplus: boolean) => {
     if (!settling) return
     setError('')
+    setSaving(true)
     try {
       await api.post(`/modules/kams/stock/assignments/${settling.id}/settle`, {
         collected_amount: Number(collected),
+        deposit_surplus: depositSurplus,
         items: (settling.items || []).map((item) => ({
           id: item.id,
           quantity_returned: Number(returns[item.id]?.returned || 0),
           quantity_lost: Number(returns[item.id]?.lost || 0),
         })),
       })
+      setSurplusConfirm(null)
       setSettling(null)
       setCollected('')
       setReturns({})
@@ -220,7 +243,27 @@ export function KamsAssignments() {
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
+      setSurplusConfirm(null)
+    } finally {
+      setSaving(false)
     }
+  }
+
+  const settle = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!settling) return
+    if (settleTotals.surplus > 0) {
+      setSurplusConfirm({ amount: settleTotals.surplus })
+      return
+    }
+    await submitSettle(false)
+  }
+
+  const closeSettle = () => {
+    if (saving) return
+    setSettling(null)
+    setSurplusConfirm(null)
+    setError('')
   }
 
   return (
@@ -248,13 +291,14 @@ export function KamsAssignments() {
               ))}
             </div>
             {row.status === 'settled' ? (
-              <div className="mt-3 grid gap-2 sm:grid-cols-3 text-sm">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                <div>{t('kams.amountDue')}: <b>{money(row.expected_amount)}</b></div>
                 <div>{t('kams.cashCollected')}: <b>{money(row.collected_amount)}</b></div>
                 <div>{t('kams.profit')}: <b>{money(row.profit_amount)}</b></div>
                 <div>{t('kams.loss')}: <b>{money(row.loss_amount)}</b></div>
               </div>
             ) : hasPermission('kams.products.update') ? (
-              <Button className="mt-4" variant="secondary" onClick={() => { setSettling(row); setError(''); setCollected(''); setReturns({}) }}>{t('kams.settleAssignment')}</Button>
+              <Button className="mt-4" variant="secondary" onClick={() => { setSettling(row); setError(''); setCollected(''); setReturns({}); setSurplusConfirm(null) }}>{t('kams.settleAssignment')}</Button>
             ) : null}
           </Card>
         ))}
@@ -282,7 +326,7 @@ export function KamsAssignments() {
         </form>
       </Modal>
 
-      <Modal open={Boolean(settling)} title={t('kams.settleAssignment')} onClose={() => setSettling(null)}>
+      <Modal open={Boolean(settling) && !surplusConfirm} title={t('kams.settleAssignment')} onClose={closeSettle}>
         <form className="space-y-3" onSubmit={(e) => void settle(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <p className="text-sm text-muted">{t('kams.closeDayHint')}</p>
@@ -291,6 +335,7 @@ export function KamsAssignments() {
             const returnedQty = Number(returns[item.id]?.returned || 0)
             const lostQty = Number(returns[item.id]?.lost || 0)
             const soldQty = Math.max(0, item.quantity_out - returnedQty - lostQty)
+            const lineDue = Math.round(soldQty * Number(item.unit_price || 0) * 100) / 100
             return (
             <div key={item.id} className="rounded-xl bg-surface p-3 space-y-2">
               <div className="font-semibold">{item.product?.name} · {item.quantity_out} {t('kams.assignedQty')}</div>
@@ -298,13 +343,52 @@ export function KamsAssignments() {
                 <Field label={t('kams.returned')} type="number" min="0" max={item.quantity_out} value={returns[item.id]?.returned || '0'} onChange={(e) => setReturns({ ...returns, [item.id]: { returned: e.target.value, lost: returns[item.id]?.lost || '0' } })} />
                 <Field label={t('kams.lost')} type="number" min="0" max={item.quantity_out} value={returns[item.id]?.lost || '0'} onChange={(e) => setReturns({ ...returns, [item.id]: { returned: returns[item.id]?.returned || '0', lost: e.target.value } })} />
               </div>
-              <div className="text-sm text-muted">{t('kams.sold')}: <b>{soldQty}</b></div>
+              <div className="flex justify-between gap-3 text-sm text-muted">
+                <span>{t('kams.sold')}: <b>{soldQty}</b></span>
+                <span>{t('kams.lineDue')}: <b>{money(lineDue)}</b></span>
+              </div>
             </div>
             )
           })}
+          <div className="rounded-xl border border-line bg-white p-3 space-y-1 text-sm">
+            <div className="flex justify-between gap-3">
+              <span className="text-muted">{t('kams.amountDue')}</span>
+              <b>{money(settleTotals.amountDue)}</b>
+            </div>
+            {settleTotals.surplus > 0 ? (
+              <div className="flex justify-between gap-3 text-lhms">
+                <span>{t('kams.surplus')}</span>
+                <b>{money(settleTotals.surplus)}</b>
+              </div>
+            ) : null}
+            {settleTotals.shortfall > 0 && Number(collected || 0) > 0 ? (
+              <div className="flex justify-between gap-3 text-danger">
+                <span>{t('kams.shortfall')}</span>
+                <b>{money(settleTotals.shortfall)}</b>
+              </div>
+            ) : null}
+          </div>
           <Field label={t('kams.cashCollected')} type="number" min="0" step="0.01" value={collected} onChange={(e) => setCollected(e.target.value)} required />
-          <Button type="submit" className="w-full">{t('common.save')}</Button>
+          <Button type="submit" className="w-full" disabled={saving}>{t('common.save')}</Button>
         </form>
+      </Modal>
+
+      <Modal open={Boolean(surplusConfirm)} title={t('kams.surplusConfirmTitle')} onClose={() => { if (!saving) setSurplusConfirm(null) }}>
+        <div className="space-y-4">
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <p className="text-sm text-muted">
+            {t('kams.surplusConfirmBody', {
+              surplus: money(surplusConfirm?.amount || 0),
+              due: money(settleTotals.amountDue),
+              collected: money(settleTotals.collectedAmount),
+              agent: settling?.member?.full_name || '',
+            })}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" variant="secondary" disabled={saving} onClick={() => void submitSettle(false)}>{t('kams.surplusSkip')}</Button>
+            <Button type="button" disabled={saving} onClick={() => void submitSettle(true)}>{t('kams.surplusDeposit')}</Button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

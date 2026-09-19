@@ -17,9 +17,9 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'company_id', 'office_id', 'candidate_id', 'user_id', 'member_code', 'first_name', 'last_name', 'full_name', 'gender', 'birth_date', 'phone', 'email',
-    'login_password', 'photo_path', 'address', 'guardian_name', 'guardian_phone', 'trainer_name', 'trainer_user_id', 'manager_member_id', 'manager_name', 'team_name',
+    'login_password', 'photo_path', 'address', 'guardian_name', 'guardian_phone', 'trainer_name', 'trainer_user_id', 'manager_member_id', 'assistant_manager_member_id', 'manager_name', 'team_name',
     'rank', 'role_id', 'origin', 'status', 'joined_on', 'migrated_at', 'first_week_completed',
-    'first_week_completed_at', 'documents', 'notes',
+    'first_week_completed_at', 'documents', 'notes', 'fixed_salary',
 ])]
 #[Hidden(['login_password'])]
 class KamsMember extends Model
@@ -38,6 +38,7 @@ class KamsMember extends Model
             'first_week_completed_at' => 'datetime',
             'documents' => 'array',
             'login_password' => 'encrypted',
+            'fixed_salary' => 'float',
         ];
     }
 
@@ -71,6 +72,11 @@ class KamsMember extends Model
         return $this->belongsTo(self::class, 'manager_member_id');
     }
 
+    public function assistantManager(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'assistant_manager_member_id');
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
@@ -83,6 +89,7 @@ class KamsMember extends Model
 
             return [
                 'email' => $user?->email,
+                'phone' => $user?->phone ?? $this->phone,
                 'password' => $this->login_password,
                 'is_active' => (bool) ($user?->is_active),
             ];
@@ -102,6 +109,11 @@ class KamsMember extends Model
     public function openingPositions(): HasMany
     {
         return $this->hasMany(KamsMemberOpeningPosition::class, 'member_id');
+    }
+
+    public function savingsAccounts(): HasMany
+    {
+        return $this->hasMany(KamsSavingsAccount::class, 'member_id');
     }
 
     public function communications(): MorphMany

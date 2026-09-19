@@ -110,18 +110,23 @@ export function Modal({
   title,
   children,
   onClose,
+  size = 'default',
 }: {
   open: boolean
   title: string
   children: ReactNode
   onClose: () => void
+  size?: 'default' | 'lg'
 }) {
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-6">
       <button className="absolute inset-0" aria-label="Close" onClick={onClose} />
-      <div className="relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+      <div className={cn(
+        'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl',
+        size === 'lg' ? 'max-w-3xl' : 'max-w-lg',
+      )}>
         <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-3 pt-5 sm:px-6 sm:pt-6">
           <h2 className="min-w-0 text-lg font-bold">{title}</h2>
           <button type="button" onClick={onClose} className="shrink-0 text-sm text-muted" aria-label="Close">✕</button>

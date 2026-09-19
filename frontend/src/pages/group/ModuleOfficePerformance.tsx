@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Card, Empty, Field } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -19,6 +20,33 @@ type OfficePoint = {
   revenue: number
   profit: number
   cash: number
+  compensation?: number
+  manager_sale?: number
+  assistant_share?: number
+  manager_office_share?: number
+  divisionnaire_share?: number
+  secretary_share?: number
+  guy_savings?: number
+  assistant_manager_savings?: number
+  manager_savings?: number
+}
+
+type CompensationSummary = {
+  generated: number
+  posted: number
+  remaining: number
+  manager_sale: number
+  assistant_share: number
+  manager_office: number
+  divisionnaire_office: number
+  secretary_office: number
+  salary_paid: number
+}
+
+type SavingsSummary = {
+  guy_savings: number
+  assistant_manager_savings: number
+  manager_savings: number
 }
 
 type ModulePerformance = {
@@ -26,6 +54,8 @@ type ModulePerformance = {
   name: string
   name_fr: string
   offices: OfficePoint[]
+  compensation?: CompensationSummary | null
+  savings?: SavingsSummary | null
 }
 
 type Payload = {
@@ -96,7 +126,7 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
     setTo(next.to)
   }
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   const modules = data.modules.filter((item) => canAccessModule(user, item.slug))
   const currency = data.currency || 'USD'
@@ -174,24 +204,69 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
                   ) : null}
                 </div>
                 {module.offices.length === 0 ? <Empty>{t('dashboard.officePerformanceEmpty')}</Empty> : (
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={module.offices} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
-                        <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} />
-                        <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => compact(Number(value))} domain={[0, 'auto']} />
+                  <>
+                {module.savings ? (
+                      <div className="mb-4 grid gap-2 sm:grid-cols-3">
+                        {[
+                          ['guy_savings', module.savings.guy_savings],
+                          ['assistant_manager_savings', module.savings.assistant_manager_savings],
+                          ['manager_savings', module.savings.manager_savings],
+                        ].map(([key, value]) => (
+                          <div key={String(key)} className="rounded-xl bg-surface px-3 py-2">
+                            <div className="text-xs text-muted">{t(`dashboard.${String(key)}`)}</div>
+                            <div className="mt-1 text-sm font-bold">{money(Number(value), currency)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {module.compensation ? (
+                      <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        {[
+                          ['generated', module.compensation.generated],
+                          ['manager_sale', module.compensation.manager_sale],
+                          ['assistant_share', module.compensation.assistant_share],
+                          ['manager_office', module.compensation.manager_office],
+                          ['divisionnaire_office', module.compensation.divisionnaire_office],
+                          ['secretary_office', module.compensation.secretary_office + module.compensation.salary_paid],
+                          ['posted', module.compensation.posted],
+                          ['remaining', module.compensation.remaining],
+                        ].map(([key, value]) => (
+                          <div key={String(key)} className="rounded-xl bg-surface px-3 py-2">
+                            <div className="text-xs text-muted">{t(`dashboard.compensation.${String(key)}`)}</div>
+                            <div className="mt-1 text-sm font-bold">{money(Number(value), currency)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <div className="h-72">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={module.offices} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+                          <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} />
+                          <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => compact(Number(value))} domain={[0, 'auto']} />
                         <Tooltip
-                          formatter={(value, key) => [
-                            money(Number(value), currency),
-                            t(`dashboard.${String(key)}`),
-                          ]}
+                          formatter={(value, key) => {
+                            const labelKey = String(key)
+                            const label = ['compensation', 'manager_sale', 'assistant_share', 'manager_office_share', 'divisionnaire_share', 'secretary_share'].includes(labelKey)
+                              ? t(`dashboard.compensation.${labelKey === 'compensation' ? 'compensation' : labelKey}`)
+                              : t(`dashboard.${labelKey}`)
+                            return [money(Number(value), currency), label]
+                          }}
                         />
-                        <Legend formatter={(value) => t(`dashboard.${value}`)} />
-                        <Bar dataKey="revenue" fill="#094924" radius={[6, 6, 0, 0]} />
-                        <Bar dataKey="profit" fill="#c9a227" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                        <Legend formatter={(value) => {
+                          const labelKey = String(value)
+                          if (['compensation', 'manager_sale', 'assistant_share', 'manager_office_share', 'divisionnaire_share', 'secretary_share'].includes(labelKey)) {
+                            return t(`dashboard.compensation.${labelKey === 'compensation' ? 'compensation' : labelKey}`)
+                          }
+                          return t(`dashboard.${labelKey}`)
+                        }} />
+                          <Bar dataKey="revenue" fill="#094924" radius={[6, 6, 0, 0]} />
+                          <Bar dataKey="profit" fill="#c9a227" radius={[6, 6, 0, 0]} />
+                          {module.slug === 'kams' ? <Bar dataKey="compensation" fill="#5b8a72" radius={[6, 6, 0, 0]} /> : null}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </>
                 )}
               </Card>
             )

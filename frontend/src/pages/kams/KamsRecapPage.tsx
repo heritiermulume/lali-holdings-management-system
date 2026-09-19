@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts'
 import { Card, Empty } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { cn } from '../../lib/cn'
 import api from '../../lib/api'
 
@@ -96,7 +97,7 @@ export function KamsRecruitmentDashboard() {
     }))
   }, [data, locale, period])
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   const kpis = [
     { key: 'applications', value: data.totals.applications, icon: UserPlus },

@@ -2,6 +2,7 @@ import { ChevronDown, Shield } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Card } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useSystemModules } from '../../context/ModulesContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -238,7 +239,7 @@ export function RolesSettingsPage() {
   }
 
   if (loading) {
-    return <p className="text-sm text-muted">{t('common.loading')}</p>
+    return <LoadingScreen />
   }
 
   return (

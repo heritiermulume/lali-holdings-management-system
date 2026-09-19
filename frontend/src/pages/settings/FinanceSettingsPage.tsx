@@ -1,7 +1,8 @@
-import { Ban, Star, Trash2 } from 'lucide-react'
+import { Ban, Info, Star, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
+import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { money } from '../../lib/format'
 import api from '../../lib/api'
 import { settingGroups } from './catalog'
@@ -34,6 +35,17 @@ type FxCurrency = {
 
 type CatalogItem = { code: string; name: string; name_fr: string; symbol: string; enabled: boolean }
 
+type RevenueRule = {
+  id: number
+  code: string
+  role_slug: string
+  label: string
+  percent: number
+  divisor?: number | null
+  scope: string
+  is_active: boolean
+}
+
 function countryDraftDirty(saved: CountryTax, draft: CountryTax) {
   return saved.currency_code !== draft.currency_code
     || (saved.tax_name ?? '') !== (draft.tax_name ?? '')
@@ -65,6 +77,12 @@ export function FinanceSettingsPage() {
   const [error, setError] = useState('')
   const [toggling, setToggling] = useState<FxCurrency | null>(null)
   const [deleting, setDeleting] = useState<FxCurrency | null>(null)
+  const [rules, setRules] = useState<RevenueRule[]>([])
+  const [ruleDrafts, setRuleDrafts] = useState<Record<number, string>>({})
+  const [savingRuleId, setSavingRuleId] = useState<number | null>(null)
+  const [kamsError, setKamsError] = useState('')
+  const [infoRule, setInfoRule] = useState<RevenueRule | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const load = async () => {
     const [finance, list] = await Promise.all([
@@ -87,9 +105,46 @@ export function FinanceSettingsPage() {
     }
   }
 
+  const loadKamsRevenue = async () => {
+    setKamsError('')
+    try {
+      const ruleRes = await api.get('/modules/kams/revenue/rules')
+      setRules(ruleRes.data.data ?? [])
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      setKamsError(message || t('settings.kamsRevenue.empty'))
+      setRules([])
+    }
+  }
+
   useEffect(() => {
-    load().catch(() => undefined)
+    setLoading(true)
+    Promise.all([
+      load().catch(() => undefined),
+      loadKamsRevenue().catch(() => undefined),
+    ]).finally(() => setLoading(false))
   }, [])
+
+  const saveRule = async (rule: RevenueRule) => {
+    const raw = ruleDrafts[rule.id] ?? String(rule.percent)
+    if (Number(raw) === Number(rule.percent)) return
+    setSavingRuleId(rule.id)
+    setKamsError('')
+    try {
+      await api.put(`/modules/kams/revenue/rules/${rule.id}`, { percent: Number(raw) })
+      setRuleDrafts((current) => {
+        const next = { ...current }
+        delete next[rule.id]
+        return next
+      })
+      await loadKamsRevenue()
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      setKamsError(message || t('org.saveError'))
+    } finally {
+      setSavingRuleId(null)
+    }
+  }
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -147,6 +202,8 @@ export function FinanceSettingsPage() {
     localeFr ? item.name_fr : item.name
 
   const linkedCurrencies = currencies.filter((row) => (row.countries?.length ?? 0) > 0 || row.is_default)
+
+  if (loading) return <LoadingScreen />
 
   return (
     <div className="space-y-6">
@@ -328,6 +385,82 @@ export function FinanceSettingsPage() {
           </div>
         ) : null}
       </Card>
+
+      <Card className="p-4 sm:p-6">
+        <h2 className="text-base font-bold">{t('settings.kamsRevenue.title')}</h2>
+        <p className="mt-1 text-sm text-muted">{t('settings.kamsRevenue.help')}</p>
+        {kamsError ? <p className="mt-3 text-sm text-red-600">{kamsError}</p> : null}
+        <div className="mt-4 space-y-3">
+          {rules.length === 0 && !kamsError ? <Empty>{t('settings.kamsRevenue.empty')}</Empty> : null}
+          {rules.map((rule) => {
+            const draftValue = ruleDrafts[rule.id] ?? String(rule.percent)
+            const dirty = Number(draftValue) !== Number(rule.percent)
+            const saving = savingRuleId === rule.id
+            return (
+              <div key={rule.id} className="flex flex-col gap-2 rounded-xl border border-line bg-surface/40 p-3 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start gap-1.5">
+                    <div className="w-fit max-w-full font-semibold">{t(`kams.rule.${rule.code}`, { defaultValue: rule.label })}</div>
+                    <button
+                      type="button"
+                      className="mt-0.5 shrink-0 rounded-lg p-0.5 text-muted hover:bg-white hover:text-lhms"
+                      aria-label={t('settings.kamsRevenue.ruleInfo')}
+                      onClick={() => setInfoRule(rule)}
+                    >
+                      <Info size={16} />
+                    </button>
+                  </div>
+                  <div className="text-xs text-muted">{t(`kams.ruleScope.${rule.scope}`, { defaultValue: rule.scope })} · {rule.role_slug}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Field
+                    type="number"
+                    label={t('kams.percent')}
+                    value={draftValue}
+                    onChange={(e) => setRuleDrafts((current) => ({ ...current, [rule.id]: e.target.value }))}
+                  />
+                  {rule.divisor ? <Badge>{t('kams.divisor')}: {rule.divisor}</Badge> : null}
+                  <Button disabled={!dirty || saving} onClick={() => void saveRule(rule)}>
+                    {saving ? t('common.loading') : dirty ? t('common.save') : t('common.saved')}
+                  </Button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Card>
+
+      <Modal
+        open={Boolean(infoRule)}
+        title={infoRule ? t(`kams.rule.${infoRule.code}`, { defaultValue: infoRule.label }) : ''}
+        onClose={() => setInfoRule(null)}
+      >
+        {infoRule ? (
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">{t('settings.kamsRevenue.formula')}</div>
+              <p className="mt-2 rounded-xl bg-surface px-4 py-3 font-mono text-sm font-semibold text-lhms">
+                {t(`kams.ruleFormula.${infoRule.code}`, {
+                  percent: ruleDrafts[infoRule.id] ?? String(infoRule.percent),
+                  divisor: infoRule.divisor ?? 4,
+                  defaultValue: t('settings.kamsRevenue.formulaFallback', {
+                    percent: ruleDrafts[infoRule.id] ?? String(infoRule.percent),
+                  }),
+                })}
+              </p>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">{t('settings.kamsRevenue.description')}</div>
+              <p className="mt-2 text-sm text-muted">
+                {t(`kams.ruleHelp.${infoRule.code}`, { defaultValue: t('settings.kamsRevenue.helpFallback') })}
+              </p>
+            </div>
+            <Button className="w-full" variant="secondary" onClick={() => setInfoRule(null)}>
+              {t('common.close')}
+            </Button>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal open={Boolean(toggling)} title={toggling?.is_active ? t('org.deactivateOffice') : t('org.activateOffice')} onClose={() => setToggling(null)}>
         <p className="text-sm text-muted">

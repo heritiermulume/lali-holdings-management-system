@@ -21,7 +21,10 @@ use Illuminate\Support\Collection;
 
 class StockMetrics
 {
-    public function __construct(private readonly StockInventory $inventory) {}
+    public function __construct(
+        private readonly StockInventory $inventory,
+        private readonly RevenueShareService $revenueShares,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -155,6 +158,7 @@ class StockMetrics
                 'commissions_payable' => round($commissionsPayable, 2),
                 'guy_savings' => round((float) KamsSavingsAccount::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->where('kind', 'guy')->sum('balance'), 2),
                 'manager_savings' => round((float) KamsSavingsAccount::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->where('kind', 'manager')->sum('balance'), 2),
+                'assistant_manager_savings' => round((float) KamsSavingsAccount::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->where('kind', 'assistant_manager')->sum('balance'), 2),
                 'cash' => round((float) (clone $periodSales)->sum('paid_amount'), 2),
                 'profit' => round(max(0, (float) (clone $periodSales)->sum('margin') - $returnedMargin), 2),
                 'loss' => 0,
@@ -289,7 +293,11 @@ class StockMetrics
             ->orderBy('name')
             ->get(['id', 'name', 'code']);
 
-        $officeRows = $offices->map(fn (Office $office) => $this->officeFinance($office, $start, $end))->values()->all();
+        $compensation = $this->revenueShares->dashboardTotals($companyId, $officeIds, $start, $end);
+        $officeRows = $offices
+            ->map(fn (Office $office) => $this->officeFinance($office, $start, $end, $compensation['by_office'][(int) $office->id] ?? null))
+            ->values()
+            ->all();
 
         $companyShare = (float) KamsStockSale::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
@@ -303,13 +311,16 @@ class StockMetrics
             $data['totals']['expected'] = round(array_sum(array_column($officeRows, 'expected')), 2);
             $data['totals']['guy_savings'] = round(array_sum(array_column($officeRows, 'guy_savings')), 2);
             $data['totals']['manager_savings'] = round(array_sum(array_column($officeRows, 'manager_savings')), 2);
+            $data['totals']['assistant_manager_savings'] = round(array_sum(array_column($officeRows, 'assistant_manager_savings')), 2);
             $data['totals']['commissions_payable'] = round(array_sum(array_column($officeRows, 'commissions_payable')), 2);
             $data['totals']['inventory_value'] = round(array_sum(array_column($officeRows, 'inventory_value')), 2);
             $data['series'] = $this->officeSeries($data['series'], $groupBy, $companyId, $officeIds, $start, $end);
         }
 
         $data['totals']['company_share'] = round($companyShare, 2);
+        $data['totals']['compensation'] = $this->compensationSummary($compensation);
         $data['offices'] = $officeRows;
+        $data['compensation'] = $this->compensationSummary($compensation);
 
         return $data;
     }
@@ -327,7 +338,12 @@ class StockMetrics
             ->orderBy('name')
             ->get(['id', 'name', 'code']);
 
-        return $offices->map(fn (Office $office) => $this->officeFinance($office, $from, $to))->values()->all();
+        $compensation = $this->revenueShares->dashboardTotals($companyId, $officeIds, $from, $to);
+
+        return $offices
+            ->map(fn (Office $office) => $this->officeFinance($office, $from, $to, $compensation['by_office'][(int) $office->id] ?? null))
+            ->values()
+            ->all();
     }
 
     /**
@@ -366,9 +382,10 @@ class StockMetrics
     }
 
     /**
+     * @param  array<string, float>|null  $compensation
      * @return array<string, mixed>
      */
-    private function officeFinance(Office $office, string $from, string $to): array
+    private function officeFinance(Office $office, string $from, string $to, ?array $compensation = null): array
     {
         $sales = KamsStockSale::query()
             ->whereHas('member', fn ($m) => $m->where('office_id', $office->id))
@@ -384,6 +401,20 @@ class StockMetrics
                 ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
                 ->value('value');
 
+        $comp = $compensation ?? [
+            'generated' => 0.0,
+            'posted' => 0.0,
+            'accrued' => 0.0,
+            'remaining' => 0.0,
+            'manager_sale' => 0.0,
+            'assistant_manager' => 0.0,
+            'manager_office' => 0.0,
+            'manager_descendant_office' => 0.0,
+            'divisionnaire_office' => 0.0,
+            'secretary_office' => 0.0,
+            'salary_paid' => 0.0,
+        ];
+
         return [
             'id' => $office->id,
             'name' => $office->name,
@@ -396,8 +427,38 @@ class StockMetrics
             'agents' => KamsMember::query()->where('office_id', $office->id)->whereIn('status', ['active', 'verified'])->count(),
             'guy_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'guy')->sum('balance'), 2),
             'manager_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'manager')->sum('balance'), 2),
+            'assistant_manager_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'assistant_manager')->sum('balance'), 2),
             'commissions_payable' => round((float) KamsSellerCommission::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('status', 'payable')->sum('payable_amount'), 2),
             'inventory_value' => round($inventory, 2),
+            'compensation_generated' => round((float) ($comp['generated'] ?? 0), 2),
+            'compensation_posted' => round((float) ($comp['posted'] ?? 0), 2),
+            'compensation_remaining' => round((float) ($comp['remaining'] ?? $comp['accrued'] ?? 0), 2),
+            'manager_sale' => round((float) ($comp['manager_sale'] ?? 0), 2),
+            'assistant_share' => round((float) ($comp['assistant_manager'] ?? 0), 2),
+            'manager_office_share' => round((float) (($comp['manager_office'] ?? 0) + ($comp['manager_descendant_office'] ?? 0)), 2),
+            'divisionnaire_share' => round((float) ($comp['divisionnaire_office'] ?? 0), 2),
+            'secretary_share' => round((float) ($comp['secretary_office'] ?? 0), 2),
+            'salary_paid' => round((float) ($comp['salary_paid'] ?? 0), 2),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $compensation
+     * @return array<string, float>
+     */
+    private function compensationSummary(array $compensation): array
+    {
+        return [
+            'generated' => round((float) ($compensation['generated'] ?? 0), 2),
+            'posted' => round((float) ($compensation['posted'] ?? 0), 2),
+            'accrued' => round((float) ($compensation['accrued'] ?? 0), 2),
+            'remaining' => round((float) ($compensation['remaining'] ?? 0), 2),
+            'assistant_share' => round((float) ($compensation['assistant_share'] ?? 0), 2),
+            'manager_sale' => round((float) ($compensation['manager_sale'] ?? 0), 2),
+            'manager_office' => round((float) (($compensation['manager_office'] ?? 0) + ($compensation['manager_descendant_office'] ?? 0)), 2),
+            'divisionnaire_office' => round((float) ($compensation['divisionnaire_office'] ?? 0), 2),
+            'secretary_office' => round((float) ($compensation['secretary_office'] ?? 0), 2),
+            'salary_paid' => round((float) ($compensation['salary_paid'] ?? 0), 2),
         ];
     }
 

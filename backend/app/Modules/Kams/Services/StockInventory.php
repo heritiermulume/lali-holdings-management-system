@@ -332,8 +332,10 @@ class StockInventory
                 'estimated_amount' => round($sellerMargin, 2),
                 'adjusted_amount' => round($sellerMargin, 2),
             ]);
+            $fresh = $sale->fresh(['member', 'client', 'items.product', 'commission']);
+            app(RevenueShareService::class)->accrue($fresh);
             if ($paidAmount > 0) {
-                $this->paySale($sale->fresh(), $paidAmount);
+                $this->paySale($fresh, $paidAmount);
             }
 
             return $sale->fresh(['member', 'client', 'items.product', 'commission']);
@@ -493,45 +495,112 @@ class StockInventory
     /**
      * @param  list<array{id:int, quantity_returned:int, quantity_lost:int}>  $items
      */
-    public function settle(KamsStockAssignment $assignment, array $items, float $collectedAmount, ?string $notes = null, ?int $userId = null): KamsStockAssignment
-    {
+    public function settle(
+        KamsStockAssignment $assignment,
+        array $items,
+        float $collectedAmount,
+        ?string $notes = null,
+        ?int $userId = null,
+        bool $depositSurplus = false,
+    ): KamsStockAssignment {
         abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
-        $member = $assignment->member;
-        $byId = collect($items)->keyBy('id');
-        $saleLines = [];
-        $returnLines = [];
 
-        foreach ($assignment->items as $line) {
-            $payload = $byId->get($line->id, []);
-            $returned = (int) ($payload['quantity_returned'] ?? 0);
-            $lost = (int) ($payload['quantity_lost'] ?? 0);
-            $sold = max(0, $line->quantity_out - $returned - $lost);
-            if ($sold > 0) {
-                $saleLines[] = ['product_id' => $line->product_id, 'quantity' => $sold, 'unit_price' => $line->unit_price];
-            }
-            if ($returned > 0) {
-                $returnLines[] = ['product_id' => $line->product_id, 'quantity' => $returned];
-            }
-            if ($lost > 0) {
-                $seller = $this->sellerLocation($member);
-                $this->changeBalance($seller, $line->product, -$lost, 'available');
-                $this->changeBalance($seller, $line->product, $lost, 'damaged');
-            }
-        }
+        return DB::transaction(function () use ($assignment, $items, $collectedAmount, $notes, $userId, $depositSurplus) {
+            $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
+            abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+            $assignment->load(['items.product', 'member']);
+            $member = $assignment->member;
+            $byId = collect($items)->keyBy('id');
+            $saleLines = [];
+            $returnLines = [];
+            $expectedAmount = 0.0;
+            $profitAmount = 0.0;
+            $lossAmount = 0.0;
 
-        if ($saleLines !== []) {
-            $this->sell($member, $saleLines, null, null, $collectedAmount, $userId, $notes);
-        }
-        if ($returnLines !== []) {
-            $depot = KamsDepot::query()->find($assignment->depot_id);
-            $ret = $this->createReturn('seller_to_depot', $returnLines, $member, null, $this->sellerLocation($member), $depot, 'available', $notes ?: 'Return to depot', $userId);
-            if ($userId) {
-                $this->acceptReturn($ret, $userId);
+            foreach ($assignment->items as $line) {
+                $payload = $byId->get($line->id, []);
+                $returned = (int) ($payload['quantity_returned'] ?? 0);
+                $lost = (int) ($payload['quantity_lost'] ?? 0);
+                abort_unless($returned >= 0 && $lost >= 0, 422, __('Quantities must be zero or greater.'));
+                abort_unless($returned + $lost <= $line->quantity_out, 422, __('Returned and lost quantities exceed assigned stock.'));
+                $sold = max(0, $line->quantity_out - $returned - $lost);
+                $line->update([
+                    'quantity_returned' => $returned,
+                    'quantity_lost' => $lost,
+                ]);
+                $unitPrice = (float) $line->unit_price;
+                $unitCost = (float) $line->unit_cost;
+                $expectedAmount += $sold * $unitPrice;
+                $profitAmount += $sold * ($unitPrice - $unitCost);
+                $lossAmount += $lost * $unitCost;
+                if ($sold > 0) {
+                    $saleLines[] = ['product_id' => $line->product_id, 'quantity' => $sold, 'unit_price' => $line->unit_price];
+                }
+                if ($returned > 0) {
+                    $returnLines[] = ['product_id' => $line->product_id, 'quantity' => $returned];
+                }
+                if ($lost > 0) {
+                    $seller = $this->sellerLocation($member);
+                    $this->changeBalance($seller, $line->product, -$lost, 'available');
+                    $this->changeBalance($seller, $line->product, $lost, 'damaged');
+                }
             }
-        }
-        $assignment->update(['status' => 'settled', 'settled_at' => now(), 'collected_amount' => $collectedAmount, 'notes' => $notes ?? $assignment->notes]);
 
-        return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            $expectedAmount = round($expectedAmount, 2);
+            $profitAmount = round($profitAmount, 2);
+            $lossAmount = round($lossAmount, 2);
+            $surplus = round(max(0, $collectedAmount - $expectedAmount), 2);
+            $salePayment = min($collectedAmount, $expectedAmount);
+
+            if ($saleLines !== []) {
+                $this->sell($member, $saleLines, null, null, $salePayment, $userId, $notes);
+            }
+            if ($returnLines !== []) {
+                $depot = KamsDepot::query()->find($assignment->depot_id);
+                $ret = $this->createReturn('seller_to_depot', $returnLines, $member, null, $this->sellerLocation($member), $depot, 'available', $notes ?: 'Return to depot', $userId);
+                if ($userId) {
+                    $this->acceptReturn($ret, $userId);
+                }
+            }
+
+            $surplusEntry = null;
+            if ($depositSurplus && $surplus > 0 && $userId) {
+                abort_unless($member, 422, __('The assignment has no agent.'));
+                $surplusEntry = $this->savings->depositDayClosingSurplus(
+                    $member,
+                    $surplus,
+                    $assignment,
+                    $userId,
+                );
+            }
+
+            $assignmentNotes = $notes ?? $assignment->notes;
+            if ($surplusEntry) {
+                $surplusNote = __('Surplus :amount deposited to agent account (:ref).', [
+                    'amount' => number_format($surplus, 2, '.', ''),
+                    'ref' => $surplusEntry->id,
+                ]);
+                $assignmentNotes = trim(($assignmentNotes ? $assignmentNotes."\n" : '').$surplusNote);
+            }
+
+            $assignment->update([
+                'status' => 'settled',
+                'settled_at' => now(),
+                'expected_amount' => $expectedAmount,
+                'collected_amount' => round($collectedAmount, 2),
+                'profit_amount' => $profitAmount,
+                'loss_amount' => $lossAmount,
+                'notes' => $assignmentNotes,
+            ]);
+
+            $fresh = $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            if ($surplusEntry) {
+                $fresh->setAttribute('surplus_deposited', round($surplus, 2));
+                $fresh->setAttribute('surplus_entry', $this->savings->serializeEntry($surplusEntry));
+            }
+
+            return $fresh;
+        });
     }
 
     private function adjustCommissionForReturn(KamsStockReturn $return, KamsStockReturnItem $line): void

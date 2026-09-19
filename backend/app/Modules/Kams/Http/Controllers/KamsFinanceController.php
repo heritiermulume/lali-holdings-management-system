@@ -63,6 +63,43 @@ class KamsFinanceController extends Controller
         return $this->ok($payload);
     }
 
+    public function memberAccounts(Request $request, SavingsLedger $ledger): JsonResponse
+    {
+        $companyId = $this->kamsCompanyId($request);
+        $user = $request->user();
+        $restricted = ! $user->isGroupAdmin() && $user->isOfficeScoped();
+        $scopedIds = $restricted ? $this->ownOfficeIds($request) : [];
+
+        $filterOffices = $this->kamsOffices($request)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('is_active', true)
+            ->when($restricted, fn ($q) => $q->whereIn('id', $scopedIds ?: [0]))
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        $officeIds = $restricted
+            ? $filterOffices->pluck('id')->map(fn ($id) => (int) $id)->all() ?: [0]
+            : [];
+        $canFilter = $this->canFilterOffices($request) && $filterOffices->count() > 1;
+
+        if ($canFilter && $request->filled('office_id')) {
+            $officeId = (int) $request->integer('office_id');
+            $this->assertKamsOffice($request, $officeId);
+            $officeIds = [$officeId];
+        }
+
+        $payload = $ledger->memberAccounts($companyId, $officeIds);
+        $payload['can_filter_offices'] = $canFilter;
+        $payload['office_id'] = $canFilter && $request->filled('office_id') ? (int) $request->integer('office_id') : null;
+        $payload['filter_offices'] = $canFilter ? $filterOffices->map(fn ($office) => [
+            'id' => $office->id,
+            'name' => $office->name,
+            'code' => $office->code,
+        ])->values()->all() : [];
+
+        return $this->ok($payload);
+    }
+
     public function account(Request $request, SavingsLedger $ledger, KamsAccountProvisioner $accounts): JsonResponse
     {
         $member = $this->memberFor($request, $accounts);
@@ -73,10 +110,7 @@ class KamsFinanceController extends Controller
     public function deposit(Request $request, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
     {
         $member = $this->memberFor($request, $accounts);
-        abort_unless($this->ownsAccount($request, $member) || $this->canBrowseAgents($request), 403);
-        if ($this->canBrowseAgents($request)) {
-            $this->assertCashierCanAccessMember($request, $member);
-        }
+        abort_unless($this->ownsAccount($request, $member), 403);
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'notes' => ['nullable', 'string', 'max:500'],
@@ -90,10 +124,7 @@ class KamsFinanceController extends Controller
     public function withdraw(Request $request, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
     {
         $member = $this->memberFor($request, $accounts);
-        abort_unless($this->ownsAccount($request, $member) || $this->canBrowseAgents($request), 403);
-        if ($this->canBrowseAgents($request)) {
-            $this->assertCashierCanAccessMember($request, $member);
-        }
+        abort_unless($this->ownsAccount($request, $member), 403);
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'notes' => ['nullable', 'string', 'max:500'],
@@ -102,6 +133,40 @@ class KamsFinanceController extends Controller
         AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal requested.'));
+    }
+
+    public function postDeposit(Request $request, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
+    {
+        abort_unless($this->canPostAgentMovement($request, 'deposit'), 403);
+        $member = $this->memberFor($request, $accounts);
+        $this->assertCashierCanAccessMember($request, $member);
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'member_id' => ['required', 'integer', 'exists:kams_members,id'],
+        ]);
+        $account = $treasury->accountForMember($member);
+        $entry = $treasury->deposit($account, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
+        AuditLogger::record('create', $entry, [], $data);
+
+        return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Deposit recorded.'));
+    }
+
+    public function postWithdraw(Request $request, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
+    {
+        abort_unless($this->canPostAgentMovement($request, 'withdraw'), 403);
+        $member = $this->memberFor($request, $accounts);
+        $this->assertCashierCanAccessMember($request, $member);
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'notes' => ['nullable', 'string', 'max:500'],
+            'member_id' => ['required', 'integer', 'exists:kams_members,id'],
+        ]);
+        $account = $treasury->accountForMember($member);
+        $entry = $treasury->withdraw($account, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
+        AuditLogger::record('create', $entry, [], $data);
+
+        return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal recorded.'));
     }
 
     public function companyApprove(Request $request, KamsTreasuryAccount $treasuryAccount, KamsTreasuryEntry $treasuryEntry, TreasuryLedger $treasury): JsonResponse
@@ -182,14 +247,17 @@ class KamsFinanceController extends Controller
         $member->loadMissing(['office:id,name,code', 'role:id,name,slug']);
         $payload = $ledger->statement($member);
         $owns = $this->ownsAccount($request, $member);
-        $browse = $this->canBrowseAgents($request);
-        $canAct = $owns || $browse;
-        $payload['can_deposit'] = $canAct && $this->hasFinancePermission($request, 'kams.finance.account.deposit');
-        $payload['can_withdraw'] = $canAct && $this->hasFinancePermission($request, 'kams.finance.account.withdraw');
+        $canViewAgents = $this->canViewAgentAccounts($request);
+        $payload['can_deposit'] = $owns && $this->hasFinancePermission($request, 'kams.finance.account.deposit');
+        $payload['can_withdraw'] = $owns && $this->hasFinancePermission($request, 'kams.finance.account.withdraw');
+        $payload['can_post_deposit'] = $this->canPostAgentMovement($request, 'deposit');
+        $payload['can_post_withdraw'] = $this->canPostAgentMovement($request, 'withdraw');
         $payload['can_expense'] = false;
         $payload['can_decide'] = false;
-        $payload['can_browse_agents'] = $browse;
-        $payload['agents'] = $browse ? $this->agentOptions($request, $member) : [];
+        $payload['can_browse_agents'] = $canViewAgents;
+        $officeId = $request->filled('office_id') ? (int) $request->integer('office_id') : null;
+        $payload['agents'] = $canViewAgents ? $this->agentOptions($request, $member, $officeId) : [];
+        $payload['office_id'] = $officeId;
 
         return $payload;
     }
@@ -218,7 +286,7 @@ class KamsFinanceController extends Controller
     /**
      * @return list<array<string, mixed>>
      */
-    private function agentOptions(Request $request, KamsMember $current): array
+    private function agentOptions(Request $request, KamsMember $current, ?int $officeId = null): array
     {
         $companyId = $this->kamsCompanyId($request) ?: $current->company_id;
         $query = KamsMember::query()
@@ -226,8 +294,16 @@ class KamsFinanceController extends Controller
             ->where('company_id', $companyId)
             ->whereIn('status', ['active', 'verified'])
             ->orderBy('full_name');
+        if ($officeId) {
+            $query->where('office_id', $officeId);
+        }
         if (! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped()) {
-            $query->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
+            $accessible = $request->user()->accessibleOfficeIds() ?: [0];
+            if ($officeId) {
+                abort_unless(in_array($officeId, $accessible, true), 403);
+            } else {
+                $query->whereIn('office_id', $accessible);
+            }
         }
 
         return $query->get(['id', 'full_name', 'member_code', 'office_id', 'phone'])->map(fn (KamsMember $row) => [
@@ -243,7 +319,7 @@ class KamsFinanceController extends Controller
     {
         $user = $request->user();
         if ($request->filled('member_id')) {
-            abort_unless($this->canBrowseAgents($request), 403);
+            abort_unless($this->canViewAgentAccounts($request), 403);
             $member = KamsMember::query()->findOrFail((int) $request->integer('member_id'));
             $this->assertCompany($request, (int) $member->company_id);
             $this->assertCashierCanAccessMember($request, $member);
@@ -262,9 +338,35 @@ class KamsFinanceController extends Controller
         return $user->isGroupAdmin() || $user->hasPermission($slug);
     }
 
-    private function canBrowseAgents(Request $request): bool
+    private function canViewAgentAccounts(Request $request): bool
+    {
+        return $this->hasFinancePermission($request, 'kams.finance.account.update')
+            || $this->hasFinancePermission($request, 'kams.finance.dashboard.view')
+            || $this->hasFinancePermission($request, 'kams.finance.company.view')
+            || $this->hasFinancePermission($request, 'kams.finance.account.view');
+    }
+
+    private function canOperateAgentAccounts(Request $request): bool
     {
         return $this->hasFinancePermission($request, 'kams.finance.account.update');
+    }
+
+    private function canPostAgentMovement(Request $request, string $action): bool
+    {
+        $companyPerm = $action === 'withdraw' ? 'kams.finance.company.withdraw' : 'kams.finance.company.deposit';
+        $accountPerm = $action === 'withdraw' ? 'kams.finance.account.withdraw' : 'kams.finance.account.deposit';
+
+        if ($this->hasFinancePermission($request, $companyPerm)) {
+            return true;
+        }
+
+        return $this->canOperateAgentAccounts($request)
+            && $this->hasFinancePermission($request, $accountPerm);
+    }
+
+    private function canBrowseAgents(Request $request): bool
+    {
+        return $this->canViewAgentAccounts($request);
     }
 
     private function canFilterOffices(Request $request): bool

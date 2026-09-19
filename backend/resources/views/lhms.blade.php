@@ -16,7 +16,7 @@
   <body>
     <div id="root"></div>
     @if ($useVite)
-      <script type="module" src="{{ $devServer }}/@vite/client"></script>
+      <script type="module" src="{{ $devServer }}/@@vite/client"></script>
       <script type="module" src="{{ $devServer }}/src/main.tsx"></script>
     @elseif (! empty($assets['js']))
       <script type="module" src="{{ $assets['js'] }}"></script>

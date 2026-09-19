@@ -104,6 +104,16 @@ class KamsAccountProvisioner
         if ($this->isManagerial($member)) {
             $this->ledger->account($member, 'manager');
         }
+        $slug = $member->role?->slug ?: \App\Models\Role::query()->whereKey($member->role_id)->value('slug');
+        if ($slug === 'assistant_manager') {
+            $this->ledger->account($member, 'assistant_manager');
+        }
+        if ($slug === 'secretary') {
+            $this->ledger->account($member, 'secretary');
+        }
+        if ($slug === 'divisionnaire') {
+            $this->ledger->account($member, 'divisionnaire');
+        }
         if ($member->company_id) {
             $this->ensureCompanyBooks((int) $member->company_id);
         }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card } from '../components/ui'
+import { LoadingScreen } from '../components/LoadingScreen'
 import api from '../lib/api'
 
 type Log = {
@@ -15,10 +16,13 @@ type Log = {
 export function AuditPage() {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Log[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get('/audit-logs').then((res) => setRows(res.data.data))
+    api.get('/audit-logs').then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
   }, [])
+
+  if (loading) return <LoadingScreen />
 
   return (
     <div>

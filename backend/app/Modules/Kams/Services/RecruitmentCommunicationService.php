@@ -42,8 +42,8 @@ class RecruitmentCommunicationService
         $login = $credentials['email'] ?? $member->account['email'] ?? null;
         $password = $credentials['password'] ?? $member->login_password;
         $access = $locale === 'en'
-            ? ($login ? " Login: {$login} / Password: {$password}. The account stays disabled until an administrator activates it on the Agents page." : '')
-            : ($login ? " Identifiant : {$login} / Mot de passe : {$password}. Le compte reste désactivé tant qu'un administrateur ne l'active pas sur la page Agents." : '');
+            ? ($login ? " Login: {$login} / Password: {$password}. These credentials were also sent by email." : '')
+            : ($login ? " Identifiant : {$login} / Mot de passe : {$password}. Ces identifiants ont aussi été envoyés par e-mail." : '');
 
         $this->sendPair($candidate, 'final_approval', 'recruitment', $locale, [
             'candidate' => [
@@ -71,12 +71,17 @@ class RecruitmentCommunicationService
         ]);
     }
 
-    public function notifyMigration(KamsMember $member, string $messageType, string $locale = 'fr', ?string $extra = null): void
+    public function notifyMigration(KamsMember $member, string $messageType, string $locale = 'fr', ?string $extra = null, array $credentials = []): void
     {
-        $login = $member->account['email'] ?? null;
-        $password = $member->login_password;
-        $accessFr = $login ? " Identifiant : {$login} / Mot de passe : {$password}. Le compte reste désactivé tant qu'il n'est pas activé sur la page Agents." : '';
-        $accessEn = $login ? " Login: {$login} / Password: {$password}. The account stays disabled until it is activated on the Agents page." : '';
+        $login = $credentials['email'] ?? $member->account['email'] ?? null;
+        $password = $credentials['password'] ?? $member->login_password;
+        $accessFr = $login
+            ? " Identifiant : {$login} / Mot de passe : {$password}. Ces identifiants ont aussi été envoyés par e-mail."
+            : '';
+        $accessEn = $login
+            ? " Login: {$login} / Password: {$password}. These credentials were also sent by email."
+            : '';
+        $missing = $extra ? " {$extra}" : '';
 
         $templates = [
             'profile_verification' => [
@@ -84,8 +89,8 @@ class RecruitmentCommunicationService
                 'en' => ['subject' => 'Profile verification', 'body' => "Hello {$member->full_name}, your member profile {$member->member_code} was imported and needs verification.{$accessEn}"],
             ],
             'missing_information' => [
-                'fr' => ['subject' => 'Informations manquantes', 'body' => "Bonjour {$member->full_name}, des informations manquent sur votre profil migré. {$extra}"],
-                'en' => ['subject' => 'Missing information', 'body' => "Hello {$member->full_name}, some information is missing on your migrated profile. {$extra}"],
+                'fr' => ['subject' => 'Informations manquantes', 'body' => "Bonjour {$member->full_name}, des informations manquent sur votre profil migré.{$missing}{$accessFr}"],
+                'en' => ['subject' => 'Missing information', 'body' => "Hello {$member->full_name}, some information is missing on your migrated profile.{$missing}{$accessEn}"],
             ],
             'migration_confirmation' => [
                 'fr' => ['subject' => 'Migration confirmée', 'body' => "Votre profil membre {$member->member_code} est désormais actif dans le nouveau système. Votre date d'adhésion originale reste inchangée."],

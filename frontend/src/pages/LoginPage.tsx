@@ -60,7 +60,7 @@ export function LoginPage() {
             <h2 className="text-3xl font-extrabold">{t('auth.welcome')}</h2>
             <p className="mt-2 text-sm text-muted">{t('auth.signin')}</p>
           </div>
-          <Field label={t('auth.email')} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <Field label={t('auth.login')} type="text" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
           <Field label={t('auth.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
           <Button type="submit" className="w-full" disabled={loading}>

@@ -62,6 +62,11 @@ class KamsStockSale extends Model
         return $this->hasOne(KamsSellerCommission::class, 'sale_id');
     }
 
+    public function revenueShares(): HasMany
+    {
+        return $this->hasMany(KamsRevenueShare::class, 'sale_id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

@@ -15,6 +15,9 @@ use App\Models\Department;
 use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Province;
+use App\Models\User;
+use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Services\OfficeHierarchy;
 use App\Support\CountryTaxCatalog;
 use App\Support\CurrencyCatalog;
 use Illuminate\Database\Eloquent\Model;
@@ -297,17 +300,82 @@ class OrganizationController extends Controller
             ->when($request->company_id, fn ($q) => $q->where('company_id', $request->company_id)), $request);
     }
 
-    public function storeOffice(Request $request): JsonResponse
+    public function officeLookups(Request $request): JsonResponse
     {
-        $office = Office::query()->create($this->validatedOffice($request));
+        $companyId = $request->integer('company_id') ?: null;
+        if ($companyId) {
+            abort_unless($request->user()->canAccessCompany($companyId), 403);
+        }
+
+        $offices = Office::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when(! $request->user()->isGroupAdmin(), function ($q) use ($request) {
+                $q->whereIn('company_id', $request->user()->accessibleCompanyIds() ?: [0]);
+                if ($request->user()->isOfficeScoped()) {
+                    $q->whereIn('id', $request->user()->accessibleOfficeIds() ?: [0]);
+                }
+            })
+            ->orderBy('name')
+            ->get(['id', 'company_id', 'parent_office_id', 'name', 'code']);
+
+        $users = User::query()
+            ->where('is_active', true)
+            ->when($companyId, function ($q) use ($companyId) {
+                $q->where(function ($inner) use ($companyId) {
+                    $inner->where('primary_company_id', $companyId)
+                        ->orWhereHas('roles', fn ($roles) => $roles->where('role_user.company_id', $companyId));
+                });
+            })
+            ->orderBy('name')
+            ->limit(400)
+            ->get(['id', 'name', 'email', 'primary_company_id']);
+
+        $members = KamsMember::query()
+            ->with('role:id,name,slug')
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->whereIn('status', ['active', 'verified'])
+            ->orderBy('full_name')
+            ->limit(400)
+            ->get(['id', 'company_id', 'user_id', 'full_name', 'member_code', 'role_id', 'office_id']);
+
+        return $this->ok([
+            'offices' => $offices,
+            'users' => $users,
+            'members' => $members,
+        ]);
+    }
+
+    public function storeOffice(Request $request, OfficeHierarchy $hierarchy): JsonResponse
+    {
+        $data = $this->validatedOffice($request);
+        if ($request->user()->isOfficeScoped() && empty($data['parent_office_id'])) {
+            $data['parent_office_id'] = $request->user()->primary_office_id
+                ?: ($request->user()->accessibleOfficeIds()[0] ?? null);
+        }
+        $data['recorded_by_user_id'] = $request->user()->id;
+        $office = Office::query()->create($data);
+        $hierarchy->recordHistory($office, [], $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']), $request->user()->id);
         AuditLogger::record('create', $office, [], $office->toArray());
 
         return $this->created($office->fresh($this->officeRelations()));
     }
 
-    public function updateOffice(Request $request, Office $office): JsonResponse
+    public function updateOffice(Request $request, Office $office, OfficeHierarchy $hierarchy): JsonResponse
     {
-        return $this->updateModel($office, $this->validatedOffice($request, $office));
+        $data = $this->validatedOffice($request, $office);
+        unset($data['recorded_by_user_id']);
+        if (! empty($data['parent_office_id']) && $hierarchy->wouldCycle($office, (int) $data['parent_office_id'])) {
+            return response()->json([
+                'success' => false,
+                'message' => __('The parent office cannot create a circular hierarchy.'),
+            ], 422);
+        }
+        $before = $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']);
+        $office->fill($data)->save();
+        $hierarchy->recordHistory($office->fresh(), $before, $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']), $request->user()->id);
+        AuditLogger::record('update', $office, $before, $data);
+
+        return $this->ok($office->fresh($this->officeRelations()));
     }
 
     public function destroyOffice(Office $office): JsonResponse
@@ -436,7 +504,11 @@ class OrganizationController extends Controller
      */
     private function companyRelations(): array
     {
-        return ['country', 'city', 'module', 'offices.country', 'offices.province', 'offices.city', 'offices.commune', 'offices.neighborhood'];
+        return [
+            'country', 'city', 'module',
+            'offices.country', 'offices.province', 'offices.city', 'offices.commune', 'offices.neighborhood',
+            'offices.parent', 'offices.creator', 'offices.manager', 'offices.recordedBy',
+        ];
     }
 
     /**
@@ -444,12 +516,18 @@ class OrganizationController extends Controller
      */
     private function officeRelations(): array
     {
-        return ['company.module', 'country', 'province', 'city', 'commune', 'neighborhood'];
+        return ['company.module', 'country', 'province', 'city', 'commune', 'neighborhood', 'parent', 'creator', 'manager', 'recordedBy', 'children'];
     }
 
     private function validatedOffice(Request $request, ?Office $office = null): array
     {
-        return $request->validate([
+        $companyId = $office?->company_id ?? $request->input('company_id');
+        $isKams = $companyId && Company::query()
+            ->whereKey($companyId)
+            ->whereHas('module', fn ($q) => $q->where('slug', 'kams'))
+            ->exists();
+
+        $data = $request->validate([
             'company_id' => [$office ? 'sometimes' : 'required', 'exists:companies,id'],
             'country_id' => ['nullable', 'exists:countries,id'],
             'province_id' => ['nullable', 'exists:provinces,id'],
@@ -459,9 +537,19 @@ class OrganizationController extends Controller
             'name' => [$office ? 'sometimes' : 'required', 'string'],
             'code' => [$office ? 'sometimes' : 'required', 'string'],
             'type' => [$office ? 'sometimes' : 'required', 'in:headquarters,office,agency,branch'],
+            'parent_office_id' => ['nullable', 'exists:offices,id'],
+            'creator_user_id' => [$isKams && ! $office ? 'required' : 'nullable', 'exists:users,id'],
+            'manager_user_id' => [$isKams && ! $office ? 'required' : 'nullable', 'exists:users,id'],
             'address' => ['nullable', 'string'],
             'phone' => ['nullable', 'string'],
             'is_active' => ['boolean'],
         ]);
+
+        if (! empty($data['parent_office_id']) && $companyId) {
+            $parentCompany = Office::query()->whereKey($data['parent_office_id'])->value('company_id');
+            abort_unless((int) $parentCompany === (int) $companyId, 422, __('The parent office must belong to the same company.'));
+        }
+
+        return $data;
     }
 }

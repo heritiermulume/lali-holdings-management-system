@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { LoadingScreen } from './components/LoadingScreen'
 import { AppShell } from './components/layout/AppShell'
 import { ModuleWorkspaceLayout } from './components/layout/ModuleWorkspaceLayout'
 import { RequireModule, RequirePermission } from './components/RequirePermission'
@@ -26,18 +27,19 @@ import { KamsStockStats, KamsStockWorkspace } from './pages/kams/KamsStockPages'
 import { KamsAccountPage } from './pages/kams/KamsAccountPage'
 import { KamsCompanyAccountPage } from './pages/kams/KamsCompanyAccountPage'
 import { KamsFinanceIndex, KamsFinanceWorkspace } from './pages/kams/KamsFinancePages'
+import { KamsMemberAccountsPage } from './pages/kams/KamsMemberAccountsPage'
 import { AdministrationIndex } from './pages/administration/AdministrationIndex'
 
 function Guard({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return <div className="grid min-h-dvh place-items-center text-sm text-muted">LHMS</div>
+  if (loading) return <LoadingScreen variant="page" />
   if (!user) return <Navigate to="/login" replace />
   return children
 }
 
 function Guest({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return <div className="grid min-h-dvh place-items-center text-sm text-muted">LHMS</div>
+  if (loading) return <LoadingScreen variant="page" />
   if (user) return <Navigate to="/" replace />
   return children
 }
@@ -116,11 +118,13 @@ export default function App() {
           </Route>
           <Route path="finance" element={<RequirePermission anyPerm={['kams.finance.dashboard.view', 'kams.finance.account.view', 'kams.finance.company.view']}><KamsFinanceWorkspace /></RequirePermission>}>
             <Route index element={<KamsFinanceIndex />} />
+            <Route path="accounts" element={<RequirePermission perm="kams.finance.dashboard.view"><KamsMemberAccountsPage /></RequirePermission>} />
             <Route path="account" element={<RequirePermission perm="kams.finance.account.view"><KamsAccountPage /></RequirePermission>} />
             <Route path="company" element={<RequirePermission perm="kams.finance.company.view"><KamsCompanyAccountPage /></RequirePermission>} />
+            <Route path="revenue" element={<Navigate to="/administration/settings/finance" replace />} />
             <Route path="orders" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="commissions" element={<Navigate to="/modules/kams/finance" replace />} />
-            <Route path="savings" element={<Navigate to="/modules/kams/finance" replace />} />
+            <Route path="savings" element={<Navigate to="/modules/kams/finance/accounts" replace />} />
             <Route path="daily" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="hierarchy" element={<Navigate to="/modules/kams/finance" replace />} />
           </Route>

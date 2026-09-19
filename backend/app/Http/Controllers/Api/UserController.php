@@ -13,17 +13,22 @@ use App\Models\Setting;
 use App\Models\User;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Support\SpreadsheetRows;
+use App\Services\UserCredentialsService;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
     use RespondsWithJson;
 
-    public function __construct(private readonly KamsAccountProvisioner $kamsAccounts) {}
+    public function __construct(
+        private readonly KamsAccountProvisioner $kamsAccounts,
+        private readonly UserCredentialsService $credentials,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -64,15 +69,27 @@ class UserController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->normalizeMembershipPayload($request);
         $data = $this->validated($request);
-        $data['password'] = $data['password'] ?? 'Password123!';
+        $this->assertHasAssignment($request);
+        $requestedPassword = $request->filled('password') ? $request->string('password')->toString() : null;
+        $data['password'] = $requestedPassword ?: 'Password123!';
         $data['locale'] = $data['locale'] ?? SettingsCatalog::defaultLocale();
         $data['timezone'] = $data['timezone'] ?? (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa');
-        unset($data['role_ids'], $data['scopes'], $data['company_ids'], $data['office_ids'], $data['assignments'], $data['platform_role_id']);
+        if (array_key_exists('is_active', $data)) {
+            $data['is_active'] = $request->boolean('is_active');
+        }
+        unset($data['role_ids'], $data['scopes'], $data['company_ids'], $data['office_ids'], $data['assignments'], $data['platform_role_id'], $data['avatar'], $data['remove_avatar']);
 
-        $user = User::query()->create($data);
-        $this->syncMemberships($user, $request);
-        $this->kamsAccounts->tryForUser($user->fresh('roles'));
+        $user = DB::transaction(function () use ($request, $data, $requestedPassword) {
+            $user = User::query()->create($data);
+            $this->syncAvatar($request, $user);
+            $this->syncMemberships($user, $request);
+            $this->kamsAccounts->tryForUser($user->fresh('roles'));
+            $this->credentials->issueIfAgent($user->fresh('roles'), $requestedPassword);
+
+            return $user->fresh();
+        });
 
         AuditLogger::record('create', $user, [], $user->toArray());
 
@@ -86,26 +103,39 @@ class UserController extends Controller
 
     public function update(Request $request, User $user): JsonResponse
     {
+        $this->normalizeMembershipPayload($request);
         $old = $user->toArray();
         $data = $this->validated($request, $user->id);
-        unset($data['password'], $data['role_ids'], $data['scopes'], $data['company_ids'], $data['office_ids'], $data['assignments'], $data['platform_role_id']);
+        unset($data['password'], $data['role_ids'], $data['scopes'], $data['company_ids'], $data['office_ids'], $data['assignments'], $data['platform_role_id'], $data['avatar'], $data['remove_avatar']);
 
-        if ($request->filled('password')) {
-            $data['password'] = $request->string('password')->toString();
+        $requestedPassword = $request->filled('password') ? $request->string('password')->toString() : null;
+        if ($requestedPassword) {
+            $data['password'] = $requestedPassword;
+        }
+        if (array_key_exists('is_active', $data)) {
+            $data['is_active'] = $request->boolean('is_active');
         }
 
         $this->assertCannotAffectSuperAdmin($request->user(), $user, $request);
 
-        $user->fill($data)->save();
+        $user = DB::transaction(function () use ($request, $user, $data, $requestedPassword) {
+            $user->fill($data)->save();
+            $this->syncAvatar($request, $user);
 
-        if ($request->has('role_ids') || $request->has('assignments') || $request->has('platform_role_id') || $request->has('company_ids') || $request->has('office_ids') || $request->has('scopes')) {
-            $this->syncMemberships($user, $request);
-        }
+            if ($request->has('role_ids') || $request->has('assignments') || $request->has('platform_role_id') || $request->has('company_ids') || $request->has('office_ids') || $request->has('scopes')) {
+                $this->assertHasAssignment($request);
+                $this->syncMemberships($user, $request);
+            }
 
-        AuditLogger::record('update', $user, $old, $user->fresh()->toArray());
-        $this->kamsAccounts->tryForUser($user->fresh('roles'));
+            $this->kamsAccounts->tryForUser($user->fresh('roles'));
+            $this->credentials->issueIfAgent($user->fresh('roles'), $requestedPassword);
 
-        return $this->ok($this->present($user->fresh()), __('User updated.'));
+            return $user->fresh();
+        });
+
+        AuditLogger::record('update', $user, $old, $user->toArray());
+
+        return $this->ok($this->present($user), __('User updated.'));
     }
 
     public function destroy(Request $request, User $user): JsonResponse
@@ -179,7 +209,13 @@ class UserController extends Controller
             $superId = Role::query()->where('slug', 'super_administrator')->value('id');
             $keepsSuper = collect($request->input('role_ids', []))->contains(fn ($id) => (int) $id === (int) $superId)
                 || (int) $request->input('platform_role_id') === (int) $superId
-                || collect($request->input('assignments', []))->contains(fn ($row) => (int) ($row['role_id'] ?? 0) === (int) $superId);
+                || collect($request->input('assignments', []))->contains(function ($row) use ($superId) {
+                    if ((int) ($row['role_id'] ?? 0) === (int) $superId) {
+                        return true;
+                    }
+
+                    return collect($row['offices'] ?? [])->contains(fn ($office) => (int) ($office['role_id'] ?? 0) === (int) $superId);
+                });
             abort_unless($keepsSuper, 403, __('Only a super administrator can delete or deactivate another super administrator.'));
         }
     }
@@ -198,6 +234,8 @@ class UserController extends Controller
             'primary_office_id' => ['nullable', 'exists:offices,id'],
             'primary_department_id' => ['nullable', 'exists:departments,id'],
             'password' => [$userId ? 'nullable' : 'nullable', 'string', 'min:8'],
+            'avatar' => ['nullable', 'image', 'max:2048'],
+            'remove_avatar' => ['sometimes', 'boolean'],
             'role_ids' => ['array'],
             'role_ids.*' => ['exists:roles,id'],
             'scopes' => ['array'],
@@ -208,10 +246,48 @@ class UserController extends Controller
             'platform_role_id' => ['nullable', 'exists:roles,id'],
             'assignments' => ['array'],
             'assignments.*.company_id' => ['required', 'exists:companies,id'],
-            'assignments.*.role_id' => ['required', 'exists:roles,id'],
+            'assignments.*.role_id' => ['nullable', 'exists:roles,id'],
             'assignments.*.office_ids' => ['array'],
             'assignments.*.office_ids.*' => ['exists:offices,id'],
+            'assignments.*.offices' => ['array'],
+            'assignments.*.offices.*.office_id' => ['required', 'exists:offices,id'],
+            'assignments.*.offices.*.role_id' => ['required', 'exists:roles,id'],
         ]);
+    }
+
+    private function normalizeMembershipPayload(Request $request): void
+    {
+        $assignments = $request->input('assignments');
+        if (is_string($assignments)) {
+            $decoded = json_decode($assignments, true);
+            $request->merge(['assignments' => is_array($decoded) ? $decoded : []]);
+        }
+
+        if ($request->exists('platform_role_id') && ! $request->filled('platform_role_id')) {
+            $request->merge(['platform_role_id' => null]);
+        }
+    }
+
+    private function assertHasAssignment(Request $request): void
+    {
+        if ($request->filled('platform_role_id') || $request->filled('role_ids')) {
+            return;
+        }
+
+        $hasMembership = collect($request->input('assignments', []))->contains(function ($row) {
+            if ((int) ($row['company_id'] ?? 0) < 1) {
+                return false;
+            }
+
+            if ((int) ($row['role_id'] ?? 0) > 0) {
+                return true;
+            }
+
+            return collect($row['offices'] ?? [])->contains(fn ($office) => (int) ($office['office_id'] ?? 0) && (int) ($office['role_id'] ?? 0))
+                || collect($row['office_ids'] ?? [])->contains(fn ($id) => (int) $id > 0);
+        });
+
+        abort_unless($hasMembership, 422, __('Choose a system-wide role, or a company with a role in the company or an office.'));
     }
 
     private function syncMemberships(User $user, Request $request): void
@@ -226,38 +302,83 @@ class UserController extends Controller
             $platform = Role::query()->findOrFail((int) $platformRoleId);
             abort_unless($platform->hasFullAccess(), 422, __('Only Super Administrator and President can be assigned outside a module.'));
             abort_if($platform->slug === 'super_administrator' && ! $request->user()?->isSuperAdmin(), 403, __('Only a super administrator can assign the Super Administrator role.'));
-            $rows[] = ['role_id' => $platform->id, 'company_id' => null];
+            $rows[] = ['role_id' => $platform->id, 'company_id' => null, 'office_id' => null];
         }
 
         if ($request->has('assignments')) {
             $seenCompanies = [];
             foreach ($request->input('assignments', []) as $assignment) {
                 $companyId = (int) ($assignment['company_id'] ?? 0);
-                $roleId = (int) ($assignment['role_id'] ?? 0);
-                if (! $companyId || ! $roleId) {
+                if (! $companyId) {
                     continue;
                 }
-                abort_if(isset($seenCompanies[$companyId]), 422, __('A user can only have one role per company.'));
+                abort_if(isset($seenCompanies[$companyId]), 422, __('A user can only have one membership per company.'));
                 $seenCompanies[$companyId] = true;
 
                 $company = Company::query()->with('module')->findOrFail($companyId);
-                $role = Role::query()->findOrFail($roleId);
-                abort_if($role->hasFullAccess(), 422, __('Platform roles cannot be tied to a company.'));
-                abort_unless($role->module_slug && $company->module && $role->module_slug === $company->module->slug, 422, __('The role must belong to the same module as the company.'));
-
-                $rows[] = ['role_id' => $role->id, 'company_id' => $company->id];
                 $companyIds->push($company->id);
                 $scopes[] = ['scope_type' => 'company', 'scope_id' => $company->id];
                 if ($company->system_module_id) {
                     $scopes[] = ['scope_type' => 'module', 'scope_id' => $company->system_module_id];
                 }
 
-                foreach (collect($assignment['office_ids'] ?? [])->filter()->map(fn ($id) => (int) $id) as $officeId) {
+                $companyRoleId = (int) ($assignment['role_id'] ?? 0);
+                $officeAssignments = collect($assignment['offices'] ?? [])
+                    ->map(fn ($item) => [
+                        'office_id' => (int) ($item['office_id'] ?? 0),
+                        'role_id' => (int) ($item['role_id'] ?? 0),
+                    ])
+                    ->filter(fn ($item) => $item['office_id'] && $item['role_id'])
+                    ->values();
+
+                if ($officeAssignments->isEmpty() && $companyRoleId) {
+                    $legacyOfficeIds = collect($assignment['office_ids'] ?? [])->filter()->map(fn ($id) => (int) $id)->unique()->values();
+                    if ($legacyOfficeIds->isNotEmpty()) {
+                        $legacyRole = Role::query()->findOrFail($companyRoleId);
+                        $this->assertModuleRole($legacyRole, $company);
+                        if ($legacyRole->isOfficeScoped()) {
+                            $officeAssignments = $legacyOfficeIds->map(fn ($officeId) => [
+                                'office_id' => $officeId,
+                                'role_id' => $companyRoleId,
+                            ]);
+                            $companyRoleId = 0;
+                        } else {
+                            foreach ($legacyOfficeIds as $officeId) {
+                                $officeCompanyId = Office::query()->whereKey($officeId)->value('company_id');
+                                abort_unless((int) $officeCompanyId === $company->id, 422, __('Offices must belong to the selected company.'));
+                                $officeIds->push($officeId);
+                                $scopes[] = ['scope_type' => 'office', 'scope_id' => $officeId];
+                            }
+                        }
+                    }
+                }
+
+                if ($companyRoleId) {
+                    $role = Role::query()->findOrFail($companyRoleId);
+                    $this->assertModuleRole($role, $company);
+                    if (! ($role->isOfficeScoped() && $officeAssignments->isNotEmpty())) {
+                        $rows[] = ['role_id' => $role->id, 'company_id' => $company->id, 'office_id' => null];
+                    }
+                }
+
+                $seenOffices = [];
+                foreach ($officeAssignments as $officeAssignment) {
+                    $officeId = $officeAssignment['office_id'];
+                    abort_if(isset($seenOffices[$officeId]), 422, __('A user can only have one role per office.'));
+                    $seenOffices[$officeId] = true;
+
                     $officeCompanyId = Office::query()->whereKey($officeId)->value('company_id');
                     abort_unless((int) $officeCompanyId === $company->id, 422, __('Offices must belong to the selected company.'));
+
+                    $officeRole = Role::query()->findOrFail($officeAssignment['role_id']);
+                    $this->assertModuleRole($officeRole, $company);
+
+                    $rows[] = ['role_id' => $officeRole->id, 'company_id' => $company->id, 'office_id' => $officeId];
                     $officeIds->push($officeId);
                     $scopes[] = ['scope_type' => 'office', 'scope_id' => $officeId];
                 }
+
+                abort_unless($companyRoleId || $officeAssignments->isNotEmpty(), 422, __('Choose a role for the company or for at least one office.'));
             }
         } elseif ($request->has('role_ids') || $request->has('company_ids')) {
             $legacyRoleId = collect($request->input('role_ids', []))->filter()->map(fn ($id) => (int) $id)->first();
@@ -267,10 +388,10 @@ class UserController extends Controller
             if ($legacyRoleId) {
                 $role = Role::query()->findOrFail($legacyRoleId);
                 if ($role->hasFullAccess()) {
-                    $rows[] = ['role_id' => $role->id, 'company_id' => null];
+                    $rows[] = ['role_id' => $role->id, 'company_id' => null, 'office_id' => null];
                 } else {
                     foreach ($legacyCompanies as $companyId) {
-                        $rows[] = ['role_id' => $role->id, 'company_id' => $companyId];
+                        $rows[] = ['role_id' => $role->id, 'company_id' => $companyId, 'office_id' => null];
                     }
                 }
             }
@@ -299,6 +420,35 @@ class UserController extends Controller
             $user->primary_office_id = $officeIds->first();
         }
         $user->save();
+    }
+
+    private function assertModuleRole(Role $role, Company $company): void
+    {
+        abort_if($role->hasFullAccess(), 422, __('Platform roles cannot be tied to a company.'));
+        abort_unless($role->module_slug && $company->module && $role->module_slug === $company->module->slug, 422, __('The role must belong to the same module as the company.'));
+    }
+
+    private function syncAvatar(Request $request, User $user): void
+    {
+        $disk = Storage::disk('public');
+
+        if ($request->hasFile('avatar')) {
+            if ($user->avatar_path) {
+                $disk->delete($user->avatar_path);
+            }
+            $user->forceFill([
+                'avatar_path' => $request->file('avatar')->store('avatars', 'public'),
+            ])->save();
+
+            return;
+        }
+
+        if ($request->boolean('remove_avatar')) {
+            if ($user->avatar_path) {
+                $disk->delete($user->avatar_path);
+            }
+            $user->forceFill(['avatar_path' => null])->save();
+        }
     }
 
     private function syncScopes(User $user, array $scopes): void
@@ -334,6 +484,7 @@ class UserController extends Controller
             'roles' => $user->roles,
             'assignments' => $user->roleAssignmentPayload(),
             'scopes' => $user->scopes,
+            'account' => $this->credentials->payload($user),
         ];
     }
 
@@ -389,13 +540,17 @@ class UserController extends Controller
                 'assignments' => [[
                     'company_id' => $company->id,
                     'role_id' => $role->id,
-                    'office_ids' => $officeIds,
+                    'offices' => collect($officeIds)->map(fn ($id) => [
+                        'office_id' => $id,
+                        'role_id' => $role->id,
+                    ])->all(),
                 ]],
             ]);
         }
 
         $this->syncMemberships($user, $payload);
         $this->kamsAccounts->tryForUser($user->fresh('roles'));
+        $this->credentials->issueIfAgent($user->fresh('roles'));
         AuditLogger::record('create', $user, [], $user->toArray());
 
         return $this->present($user->fresh());

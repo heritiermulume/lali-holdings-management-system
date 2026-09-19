@@ -5,6 +5,7 @@ use App\Modules\Kams\Http\Controllers\KamsDashboardController;
 use App\Modules\Kams\Http\Controllers\KamsFinanceController;
 use App\Modules\Kams\Http\Controllers\KamsRecruitmentController;
 use App\Modules\Kams\Http\Controllers\KamsResourceController;
+use App\Modules\Kams\Http\Controllers\KamsRevenueController;
 use App\Modules\Kams\Http\Controllers\KamsStockController;
 use Illuminate\Support\Facades\Route;
 
@@ -40,10 +41,21 @@ Route::get('stock/savings', [KamsStockController::class, 'savings'])->middleware
 Route::get('stock/daily-settlements', [KamsStockController::class, 'dailySettlement'])->middleware(EnsurePermission::class.':kams.products.view,kams.finance.dashboard.view');
 Route::post('stock/daily-settlements', [KamsStockController::class, 'closeDailySettlement'])->middleware(EnsurePermission::class.':kams.products.update,kams.finance.company.expense');
 
+Route::get('revenue/rules', [KamsRevenueController::class, 'rules'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view,settings.manage');
+Route::put('revenue/rules/{rule}', [KamsRevenueController::class, 'updateRule'])->middleware(EnsurePermission::class.':kams.finance.dashboard.update,settings.manage');
+Route::get('revenue/summary', [KamsRevenueController::class, 'summary'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view,kams.finance.account.view');
+Route::get('revenue/sales/{sale}', [KamsRevenueController::class, 'sale'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view,kams.orders.view');
+Route::get('revenue/offices', [KamsRevenueController::class, 'offices'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view,organization.view,settings.manage');
+Route::get('revenue/offices/{office}/history', [KamsRevenueController::class, 'officeHistory'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view,organization.view');
+Route::post('revenue/members/{member}/salary', [KamsRevenueController::class, 'postSalary'])->middleware(EnsurePermission::class.':kams.finance.dashboard.update,kams.finance.company.expense');
+
 Route::get('finance/dashboard', [KamsFinanceController::class, 'dashboard'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view');
+Route::get('finance/member-accounts', [KamsFinanceController::class, 'memberAccounts'])->middleware(EnsurePermission::class.':kams.finance.dashboard.view');
 Route::get('finance/account', [KamsFinanceController::class, 'account'])->middleware(EnsurePermission::class.':kams.finance.account.view');
 Route::post('finance/account/deposit', [KamsFinanceController::class, 'deposit'])->middleware(EnsurePermission::class.':kams.finance.account.deposit');
 Route::post('finance/account/withdraw', [KamsFinanceController::class, 'withdraw'])->middleware(EnsurePermission::class.':kams.finance.account.withdraw');
+Route::post('finance/account/post-deposit', [KamsFinanceController::class, 'postDeposit'])->middleware(EnsurePermission::class.':kams.finance.company.deposit,kams.finance.account.deposit');
+Route::post('finance/account/post-withdraw', [KamsFinanceController::class, 'postWithdraw'])->middleware(EnsurePermission::class.':kams.finance.company.withdraw,kams.finance.account.withdraw');
 Route::post('finance/company-accounts/{treasuryAccount}/entries/{treasuryEntry}/approve', [KamsFinanceController::class, 'companyApprove'])->middleware(EnsurePermission::class.':kams.finance.company.approve');
 Route::post('finance/company-accounts/{treasuryAccount}/entries/{treasuryEntry}/reject', [KamsFinanceController::class, 'companyReject'])->middleware(EnsurePermission::class.':kams.finance.company.approve');
 Route::get('finance/company-accounts', [KamsFinanceController::class, 'companyAccounts'])->middleware(EnsurePermission::class.':kams.finance.company.view');

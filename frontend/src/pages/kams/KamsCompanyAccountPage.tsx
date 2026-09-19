@@ -2,12 +2,14 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Empty, Field, Modal } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { money } from '../../lib/format'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
+import { KamsAgentAccountModal } from './KamsAgentAccountModal'
 import { KamsBankCard } from './KamsBankCard'
 
 type Entry = {
@@ -80,6 +82,9 @@ export function KamsCompanyAccountPage() {
   const transactionsRef = useRef<KamsAccountTransactionsHandle>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
+  const [agentModalOpen, setAgentModalOpen] = useState(false)
+  const [agentMemberId, setAgentMemberId] = useState<number | null>(null)
+  const [agentOfficeId, setAgentOfficeId] = useState<number | null>(null)
 
   const loadList = () => {
     api.get('/modules/kams/finance/company-accounts').then((res) => {
@@ -299,6 +304,21 @@ export function KamsCompanyAccountPage() {
             {data.can_expense ? (
               <Button variant="accent" onClick={() => openAction('expense')}>{t('kams.ledger.expense')}</Button>
             ) : null}
+            {(hasPermission('kams.finance.account.view')
+              || hasPermission('kams.finance.dashboard.view')
+              || hasPermission('kams.finance.company.view')) ? (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  const officeScoped = !data.account.is_central
+                  setAgentOfficeId(officeScoped ? (data.account.office?.id ?? null) : null)
+                  setAgentMemberId(data.members[0]?.id ?? null)
+                  setAgentModalOpen(true)
+                }}
+              >
+                {t('kams.agentAccounts')}
+              </Button>
+            ) : null}
             <div className="ml-auto">
               <KamsTransactionsPrintMenu
                 canPreview={hasPermission('kams.finance.company.preview')}
@@ -320,7 +340,7 @@ export function KamsCompanyAccountPage() {
             onDecide={data.can_decide ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
           />
         </>
-      ) : selected ? <p className="text-sm text-muted">{t('common.loading')}</p> : null}
+      ) : selected ? <LoadingScreen /> : null}
 
       <Modal open={Boolean(action)} title={action ? titles[action] : ''} onClose={() => setAction(null)}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
@@ -359,6 +379,17 @@ export function KamsCompanyAccountPage() {
           <Button type="submit" className="w-full" disabled={saving || amountTooHigh}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
       </Modal>
+
+      <KamsAgentAccountModal
+        open={agentModalOpen}
+        initialMemberId={agentMemberId}
+        officeId={agentOfficeId}
+        onClose={() => {
+          setAgentModalOpen(false)
+          setAgentMemberId(null)
+          setAgentOfficeId(null)
+        }}
+      />
     </div>
   )
 }

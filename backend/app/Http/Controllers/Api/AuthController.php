@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -20,15 +21,18 @@ class AuthController extends Controller
 
     public function login(Request $request): JsonResponse
     {
-        $credentials = $request->validate([
-            'email' => ['required', 'email'],
+        $login = trim((string) ($request->input('login') ?? $request->input('email') ?? ''));
+        $request->merge(['login' => $login]);
+        $request->validate([
+            'login' => ['required', 'string'],
             'password' => ['required', 'string'],
         ]);
 
-        $user = User::query()->where('email', $credentials['email'])->first();
+        $user = $this->userByLogin($login);
 
-        if (! $user || ! Hash::check($credentials['password'], $user->password)) {
+        if (! $user || ! Hash::check((string) $request->input('password'), $user->password)) {
             throw ValidationException::withMessages([
+                'login' => [__('These credentials do not match our records.')],
                 'email' => [__('These credentials do not match our records.')],
             ]);
         }
@@ -134,7 +138,10 @@ class AuthController extends Controller
             'password' => ['required', 'confirmed', Password::min(8)],
         ]);
 
-        $request->user()->forceFill(['password' => $data['password']])->save();
+        $request->user()->forceFill([
+            'password' => $data['password'],
+            'login_password' => null,
+        ])->save();
         KamsMember::query()
             ->where('user_id', $request->user()->id)
             ->update(['login_password' => null]);
@@ -151,9 +158,37 @@ class AuthController extends Controller
         return $this->ok(null, __('Signed out.'));
     }
 
+    private function userByLogin(string $login): ?User
+    {
+        $user = User::query()->where('email', $login)->first();
+        if ($user) {
+            return $user;
+        }
+
+        $match = User::query()->where('phone', $login)->first();
+        if ($match) {
+            return $match;
+        }
+
+        $digits = preg_replace('/\D+/', '', $login) ?: '';
+        if ($digits === '') {
+            return null;
+        }
+
+        return User::query()
+            ->whereNotNull('phone')
+            ->where('phone', '!=', '')
+            ->whereRaw(
+                "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', ''), '.', ''), '/', '') = ?",
+                [$digits]
+            )
+            ->first();
+    }
+
     private function presentUser(User $user): array
     {
         $user->load(['roles.permissions', 'scopes', 'primaryCompany', 'primaryOffice']);
+        SettingsCatalog::ensure();
 
         return [
             'id' => $user->id,
@@ -175,6 +210,7 @@ class AuthController extends Controller
                 'level' => $role->level,
                 'module_slug' => $role->module_slug,
                 'company_id' => $role->pivot->company_id ?? null,
+                'office_id' => $role->pivot->office_id ?? null,
             ]),
             'assignments' => $user->roleAssignmentPayload(),
             'permissions' => $user->permissionSlugs(),
@@ -185,6 +221,7 @@ class AuthController extends Controller
             'accessible_office_ids' => $user->accessibleOfficeIds(),
             'accessible_module_slugs' => $user->accessibleModuleSlugs(),
             'last_login_at' => $user->last_login_at,
+            'features' => (object) [],
         ];
     }
 }

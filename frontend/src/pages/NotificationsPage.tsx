@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Empty } from '../components/ui'
+import { LoadingScreen } from '../components/LoadingScreen'
 import api from '../lib/api'
 
 type Notification = {
@@ -15,10 +16,13 @@ type Notification = {
 export function NotificationsPage() {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Notification[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const load = () => api.get('/notifications').then((res) => setRows(res.data.data))
+  const load = () => api.get('/notifications').then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
 
   useEffect(() => { void load() }, [])
+
+  if (loading && rows.length === 0) return <LoadingScreen />
 
   return (
     <div>

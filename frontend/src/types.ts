@@ -4,6 +4,7 @@ export type Role = {
   slug: string
   level: number
   module_slug?: string | null
+  office_scoped?: boolean
 }
 
 export type User = {
@@ -26,12 +27,20 @@ export type User = {
   accessible_module_slugs?: string[]
   assignments?: Array<{
     company_id: number | null
-    role: Role
+    role: Role | null
     office_ids: number[]
+    offices?: Array<{ office_id: number; role: Role }>
   }>
   primary_company?: { id: number; name: string } | null
   primary_office?: { id: number; name: string } | null
   last_login_at?: string | null
+  features?: Record<string, boolean>
+  account?: {
+    email?: string | null
+    phone?: string | null
+    password?: string | null
+    is_active?: boolean
+  } | null
 }
 
 export type SystemModule = {

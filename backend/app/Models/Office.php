@@ -10,7 +10,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
-    'company_id', 'country_id', 'province_id', 'city_id', 'commune_id', 'neighborhood_id',
+    'company_id', 'parent_office_id', 'creator_user_id', 'manager_user_id', 'recorded_by_user_id',
+    'country_id', 'province_id', 'city_id', 'commune_id', 'neighborhood_id',
     'name', 'code', 'type', 'address', 'phone', 'is_active',
 ])]
 class Office extends Model
@@ -43,9 +44,67 @@ class Office extends Model
         });
     }
 
+    /**
+     * @param  list<int>  $rootIds
+     * @return list<int>
+     */
+    public static function descendantIdsFor(array $rootIds): array
+    {
+        $rootIds = array_values(array_unique(array_filter(array_map('intval', $rootIds))));
+        if ($rootIds === []) {
+            return [];
+        }
+
+        $children = [];
+        foreach (static::query()->get(['id', 'parent_office_id']) as $row) {
+            if ($row->parent_office_id) {
+                $children[(int) $row->parent_office_id][] = (int) $row->id;
+            }
+        }
+
+        $found = [];
+        $queue = $rootIds;
+        while ($queue !== []) {
+            $id = array_shift($queue);
+            foreach ($children[$id] ?? [] as $child) {
+                if (! isset($found[$child])) {
+                    $found[$child] = true;
+                    $queue[] = $child;
+                }
+            }
+        }
+
+        return array_keys($found);
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
+    }
+
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_office_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_office_id');
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'creator_user_id');
+    }
+
+    public function manager(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'manager_user_id');
+    }
+
+    public function recordedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recorded_by_user_id');
     }
 
     public function country(): BelongsTo

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { cn } from '../../lib/cn'
@@ -10,11 +11,12 @@ import { initials, roleLabel } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
+import { withBusy } from '../../lib/busy'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
 type LookupCompany = { id: number; name: string; code: string }
-type LookupPerson = { id: number; company_id: number; member_code: string; full_name: string; phone?: string | null }
+type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null }
 type LookupUser = { id: number; name: string; email?: string | null; primary_company_id?: number | null }
 type LookupRole = { id: number; name: string; slug?: string; offices?: Array<{ id: number; company_id: number }> }
 type Candidate = {
@@ -49,6 +51,7 @@ type Candidate = {
     decision?: string | null
   } | null
 }
+type MemberAccount = { email?: string | null; phone?: string | null; password?: string | null; is_active?: boolean }
 type Member = {
   id: number
   company_id?: number
@@ -70,6 +73,11 @@ type Member = {
   trainer_name?: string | null
   trainer_user_id?: number | null
   trainer?: { id: number; name: string; email?: string | null } | null
+  manager_member_id?: number | null
+  assistant_manager_member_id?: number | null
+  fixed_salary?: number | null
+  manager_member?: { id: number; full_name: string } | null
+  assistant_manager?: { id: number; full_name: string } | null
   manager_name?: string | null
   rank?: string | null
   role_id?: number | null
@@ -77,8 +85,23 @@ type Member = {
   first_week_completed?: boolean
   office?: { name?: string; code?: string }
   opening_positions?: Array<{ id: number; category: string; amount: string | number; is_opening_balance: boolean }>
-  account?: { email?: string | null; password?: string | null; is_active?: boolean }
+  account?: MemberAccount
 }
+function memberAccount(value: unknown): MemberAccount {
+  if (!value || typeof value !== 'object') return {}
+  const account = value as MemberAccount
+  return {
+    email: typeof account.email === 'string' ? account.email : null,
+    phone: typeof account.phone === 'string' ? account.phone : null,
+    password: typeof account.password === 'string' ? account.password : null,
+    is_active: Boolean(account.is_active),
+  }
+}
+
+function membersFromImport(data: { rows?: Array<{ member?: Member }> } | undefined): Member[] {
+  return (data?.rows || []).map((row) => row.member).filter((member): member is Member => Boolean(member))
+}
+
 function personName(person?: { first_name?: string | null; last_name?: string | null; full_name?: string | null } | null) {
   return [person?.first_name, person?.last_name].filter(Boolean).join(' ') || person?.full_name || ''
 }
@@ -162,20 +185,22 @@ function formatDateTime(value?: string | null) {
 function AgentCredentialsCard({
   name,
   email,
+  phone,
   password,
   isActive,
   revealable = false,
 }: {
   name?: string
   email?: string | null
+  phone?: string | null
   password?: string | null
   isActive?: boolean
   revealable?: boolean
 }) {
   const { t } = useTranslation()
   const [revealed, setRevealed] = useState(!revealable)
-  const [copied, setCopied] = useState<'email' | 'password' | null>(null)
-  const copy = async (field: 'email' | 'password', value: string) => {
+  const [copied, setCopied] = useState<'email' | 'phone' | 'password' | null>(null)
+  const copy = async (field: 'email' | 'phone' | 'password', value: string) => {
     try {
       await navigator.clipboard.writeText(value)
     } catch {
@@ -188,7 +213,7 @@ function AgentCredentialsCard({
     if (!value) return '—'
     return '•'.repeat(Math.min(Math.max(value.length, 8), 18))
   }
-  const copyButton = (field: 'email' | 'password', value: string) => (
+  const copyButton = (field: 'email' | 'phone' | 'password', value: string) => (
     <button
       type="button"
       className={cn(
@@ -224,6 +249,15 @@ function AgentCredentialsCard({
         </div>
         {revealed && email ? copyButton('email', email) : null}
       </div>
+      {phone ? (
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-xs text-muted">{t('kams.phone')}</div>
+            <div className="truncate font-semibold">{revealed ? phone : mask(phone)}</div>
+          </div>
+          {revealed ? copyButton('phone', phone) : null}
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs text-muted">{t('kams.loginPassword')}</div>
@@ -367,6 +401,7 @@ export function KamsAgents() {
   const [offices, setOffices] = useState<LookupOffice[]>([])
   const [users, setUsers] = useState<LookupUser[]>([])
   const [roles, setRoles] = useState<LookupRole[]>([])
+  const [lookupMembers, setLookupMembers] = useState<LookupPerson[]>([])
   const [origin, setOrigin] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
@@ -381,6 +416,7 @@ export function KamsAgents() {
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importError, setImportError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [photoRemoved, setPhotoRemoved] = useState(false)
@@ -395,9 +431,12 @@ export function KamsAgents() {
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
 
-  const load = (term = query) => api.get('/modules/kams/members', {
-    params: { per_page: 50, ...(origin ? { origin } : {}), ...(term ? { search: term } : {}) },
-  }).then((res) => setRows(res.data.data))
+  const load = (term = query) => {
+    setLoading(true)
+    return api.get('/modules/kams/members', {
+      params: { per_page: 50, ...(origin ? { origin } : {}), ...(term ? { search: term } : {}) },
+    }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 300)
@@ -423,6 +462,7 @@ export function KamsAgents() {
       setOffices(res.data.data.offices)
       setUsers(res.data.data.users ?? [])
       setRoles(res.data.data.roles ?? [])
+      setLookupMembers(res.data.data.members ?? [])
     })
   }, [])
 
@@ -473,6 +513,9 @@ export function KamsAgents() {
       email: row.email || '',
       address: row.address || '',
       trainer_user_id: row.trainer_user_id ? String(row.trainer_user_id) : '',
+      manager_member_id: row.manager_member_id ? String(row.manager_member_id) : '',
+      assistant_manager_member_id: row.assistant_manager_member_id ? String(row.assistant_manager_member_id) : '',
+      fixed_salary: row.fixed_salary != null ? String(row.fixed_salary) : '',
       role_id: row.role_id ? String(row.role_id) : '',
       joined_on: row.joined_on ? row.joined_on.slice(0, 10) : '',
     })
@@ -503,6 +546,9 @@ export function KamsAgents() {
     if (form.birth_date) payload.append('birth_date', form.birth_date)
     if (form.address) payload.append('address', form.address)
     payload.append('trainer_user_id', form.trainer_user_id || '')
+    payload.append('manager_member_id', form.manager_member_id || '')
+    payload.append('assistant_manager_member_id', form.assistant_manager_member_id || '')
+    if (form.fixed_salary) payload.append('fixed_salary', form.fixed_salary)
     payload.append('role_id', form.role_id || '')
     if (form.joined_on) payload.append('joined_on', form.joined_on)
     if (photo) payload.append('photo', photo)
@@ -553,29 +599,24 @@ export function KamsAgents() {
     setImporting(true)
     setImportError('')
     try {
-      if (importFile) {
-        const payload = new FormData()
-        payload.append('company_id', importForm.company_id)
-        payload.append('source', importForm.source || 'excel')
-        if (importForm.source_label) payload.append('source_label', importForm.source_label)
-        payload.append('file', importFile)
-        const res = await api.post('/modules/kams/member-imports', payload)
-        const imported = ((res.data.data?.rows as Array<{ member?: Member }> | undefined) || [])
-          .map((row) => row.member)
-          .filter((member): member is Member => Boolean(member))
-        setCredentials(imported)
-      } else {
-        const res = await api.post('/modules/kams/member-imports', {
+      const res = await withBusy('import', async () => {
+        if (importFile) {
+          const payload = new FormData()
+          payload.append('company_id', importForm.company_id)
+          payload.append('source', importForm.source || 'excel')
+          if (importForm.source_label) payload.append('source_label', importForm.source_label)
+          payload.append('file', importFile)
+          return api.post('/modules/kams/member-imports', payload)
+        }
+        return api.post('/modules/kams/member-imports', {
           company_id: Number(importForm.company_id),
           source: importForm.source,
           source_label: importForm.source_label || undefined,
           rows: pasted,
         })
-        const imported = ((res.data.data?.rows as Array<{ member?: Member }> | undefined) || [])
-          .map((row) => row.member)
-          .filter((member): member is Member => Boolean(member))
-        setCredentials(imported)
-      }
+      })
+      const imported = membersFromImport(res.data.data)
+      setCredentials(imported)
       setImportOpen(false)
       resetImport()
       void load()
@@ -629,12 +670,14 @@ export function KamsAgents() {
   ]
 
   const exportAgents = async () => {
-    const res = await api.get('/modules/kams/members', { params: memberParams() })
-    const list = (res.data.data as Member[]) || []
-    downloadCsv(`agents-import-${new Date().toISOString().slice(0, 10)}.csv`, [
-      [...AGENT_IMPORT_HEADERS],
-      ...list.map(agentImportRow),
-    ])
+    await withBusy('data', async () => {
+      const res = await api.get('/modules/kams/members', { params: memberParams() })
+      const list = (res.data.data as Member[]) || []
+      downloadCsv(`agents-import-${new Date().toISOString().slice(0, 10)}.csv`, [
+        [...AGENT_IMPORT_HEADERS],
+        ...list.map(agentImportRow),
+      ])
+    })
   }
 
   const agentPrintOptions = (list: Member[]) => ({
@@ -654,8 +697,10 @@ export function KamsAgents() {
   })
 
   const loadAgentsForPrint = async () => {
-    const res = await api.get('/modules/kams/members', { params: memberParams() })
-    return (res.data.data as Member[]) || []
+    return withBusy('data', async () => {
+      const res = await api.get('/modules/kams/members', { params: memberParams() })
+      return (res.data.data as Member[]) || []
+    })
   }
 
   const printAgents = async () => {
@@ -677,6 +722,16 @@ export function KamsAgents() {
     hint: user.email || undefined,
   }))
   const selectedTrainer = trainerOptions.find((item) => item.id === form.trainer_user_id) || null
+  const memberOptions = lookupMembers
+    .filter((member) => !form.company_id || String(member.company_id) === form.company_id)
+    .map((member): SearchComboboxItem => ({
+      id: String(member.id),
+      label: member.full_name,
+      hint: member.member_code,
+    }))
+  const selectedManager = memberOptions.find((item) => item.id === form.manager_member_id) || null
+  const selectedAssistant = memberOptions.find((item) => item.id === form.assistant_manager_member_id) || null
+  const selectedRoleSlug = roles.find((role) => String(role.id) === form.role_id)?.slug
 
   return (
     <div>
@@ -798,6 +853,8 @@ export function KamsAgents() {
       </div>
 
       <Card className="overflow-hidden p-0">
+        {loading && rows.length === 0 ? <LoadingScreen /> : (
+          <>
         {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
         {rows.map((row) => (
           <div key={row.id} className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-surface/70">
@@ -853,6 +910,8 @@ export function KamsAgents() {
             </div>
           </div>
         ))}
+          </>
+        )}
       </Card>
 
       <Modal open={formOpen} title={editing ? t('kams.editAgent') : t('kams.addAgent')} onClose={() => { setFormOpen(false); resetForm() }}>
@@ -887,6 +946,12 @@ export function KamsAgents() {
             <option value="">{companySelected ? '—' : t('kams.selectCompanyFirst')}</option>
             {officeOptions.map((office) => <option key={office.id} value={office.id}>{office.name} ({office.code})</option>)}
           </Select>
+          <Select label={t('users.role')} value={form.role_id || ''} onChange={(e) => setForm({ ...form, role_id: e.target.value })}>
+            <option value="">—</option>
+            {roles.map((role) => (
+              <option key={role.id} value={role.id}>{roleLabel(t, role, form.gender)}</option>
+            ))}
+          </Select>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={t('users.firstName')} value={form.first_name || ''} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
             <Field label={t('users.lastName')} value={form.last_name || ''} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
@@ -899,12 +964,6 @@ export function KamsAgents() {
           <Field label={t('kams.phoneWhatsapp')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
           <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <Field label={t('kams.joinedOn')} type="date" value={form.joined_on || ''} onChange={(e) => setForm({ ...form, joined_on: e.target.value })} />
-          <Select label={t('users.role')} value={form.role_id || ''} onChange={(e) => setForm({ ...form, role_id: e.target.value })}>
-            <option value="">—</option>
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>{roleLabel(t, role, form.gender)}</option>
-            ))}
-          </Select>
           <SearchCombobox
             label={t('kams.trainerCoach')}
             value={selectedTrainer}
@@ -913,6 +972,25 @@ export function KamsAgents() {
             emptyLabel={t('common.empty')}
             onSelect={(item) => setForm({ ...form, trainer_user_id: item?.id || '' })}
           />
+          <SearchCombobox
+            label={t('kams.teamManager')}
+            value={selectedManager}
+            items={memberOptions}
+            placeholder={t('kams.searchUser')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({ ...form, manager_member_id: item?.id || '' })}
+          />
+          <SearchCombobox
+            label={t('kams.assistantManager')}
+            value={selectedAssistant}
+            items={memberOptions}
+            placeholder={t('kams.searchUser')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({ ...form, assistant_manager_member_id: item?.id || '' })}
+          />
+          {selectedRoleSlug === 'secretary' ? (
+            <Field label={t('kams.fixedSalary')} type="number" value={form.fixed_salary || ''} onChange={(e) => setForm({ ...form, fixed_salary: e.target.value })} />
+          ) : null}
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
@@ -958,7 +1036,7 @@ export function KamsAgents() {
             <p className="text-xs text-muted">{t('kams.pasteRowsHint')}</p>
           </label>
           {importError ? <p className="text-sm text-danger">{importError}</p> : null}
-          <Button type="submit" className="w-full" disabled={importing}>{importing ? t('common.loading') : t('kams.import')}</Button>
+          <Button type="submit" className="w-full" disabled={importing}>{importing ? t('common.importing') : t('kams.import')}</Button>
         </form>
       </Modal>
 
@@ -978,9 +1056,10 @@ export function KamsAgents() {
             <AgentCredentialsCard
               key={viewing?.id}
               revealable
-              email={typeof detail.account === 'object' && detail.account && 'email' in detail.account ? String((detail.account as { email?: string }).email || '') : ''}
-              password={typeof detail.account === 'object' && detail.account && 'password' in detail.account ? String((detail.account as { password?: string }).password || '') : ''}
-              isActive={Boolean(typeof detail.account === 'object' && detail.account && 'is_active' in detail.account && (detail.account as { is_active?: boolean }).is_active)}
+              email={memberAccount(detail.account).email}
+              phone={memberAccount(detail.account).phone || (typeof detail.phone === 'string' ? detail.phone : undefined)}
+              password={memberAccount(detail.account).password}
+              isActive={Boolean(memberAccount(detail.account).is_active)}
             />
             <div className="font-semibold">{t('kams.openingBalances')}</div>
             {((detail.opening_positions as Member['opening_positions']) || []).map((position) => (
@@ -1010,6 +1089,7 @@ export function KamsAgents() {
               key={item.id}
               name={personName(item)}
               email={item.account?.email}
+              phone={item.account?.phone || item.phone}
               password={item.account?.password}
               isActive={item.account?.is_active}
             />
@@ -1057,10 +1137,14 @@ export function KamsCandidates() {
   const [action, setAction] = useState<'interview' | 'observation' | null>(null)
   const [pickingSupervisor, setPickingSupervisor] = useState(false)
   const [credentials, setCredentials] = useState<Member[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const load = (term = query) => api.get('/modules/kams/candidates', {
-    params: { per_page: 50, ...(term ? { search: term } : {}) },
-  }).then((res) => setRows(res.data.data))
+  const load = (term = query) => {
+    setLoading(true)
+    return api.get('/modules/kams/candidates', {
+      params: { per_page: 50, ...(term ? { search: term } : {}) },
+    }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 300)
@@ -1068,9 +1152,7 @@ export function KamsCandidates() {
   }, [search])
 
   useEffect(() => {
-    void api.get('/modules/kams/candidates', {
-      params: { per_page: 50, ...(query ? { search: query } : {}) },
-    }).then((res) => setRows(res.data.data))
+    void load()
   }, [query])
 
   useEffect(() => {
@@ -1308,6 +1390,12 @@ export function KamsCandidates() {
         ) : null}
       </div>
       <div className="grid gap-3 md:grid-cols-2">
+        {loading && rows.length === 0 ? (
+          <div className="md:col-span-2">
+            <LoadingScreen />
+          </div>
+        ) : (
+          <>
         {rows.map((row) => {
           const interviewState = interviewStepState(row)
           const observationState = observationStepState(row)
@@ -1441,7 +1529,9 @@ export function KamsCandidates() {
           </Card>
           )
         })}
-        {rows.length === 0 ? <p className="text-sm text-muted">{t('common.empty')}</p> : null}
+        {rows.length === 0 ? <p className="text-sm text-muted md:col-span-2">{t('common.empty')}</p> : null}
+          </>
+        )}
       </div>
 
       <Modal open={open} title={editingId ? t('kams.editCandidate') : t('kams.newCandidate')} onClose={() => { setOpen(false); resetCandidateForm() }}>
@@ -1695,6 +1785,7 @@ export function KamsCandidates() {
             key={item.id}
             name={personName(item)}
             email={item.account?.email}
+            phone={item.account?.phone || item.phone}
             password={item.account?.password}
             isActive={item.account?.is_active}
           />

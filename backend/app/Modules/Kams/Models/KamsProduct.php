@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['company_id', 'sku', 'name', 'category', 'collection', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'stock', 'status', 'description'])]
+#[Fillable(['company_id', 'sku', 'name', 'category', 'collection', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'status', 'description'])]
 class KamsProduct extends Model
 {
     use SoftDeletes;
@@ -24,6 +24,7 @@ class KamsProduct extends Model
             'cost' => 'float',
             'avg_cost' => 'float',
             'seller_share_percent' => 'float',
+            'manager_share_percent' => 'float',
             'stock' => 'integer',
         ];
     }

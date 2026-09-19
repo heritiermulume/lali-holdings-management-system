@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Empty, Field } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { money } from '../../lib/format'
@@ -29,7 +30,7 @@ export function KamsHierarchy() {
     api.get('/modules/kams/stock/hierarchy').then((res) => setData(res.data.data))
   }, [])
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   return (
     <div className="space-y-4">
@@ -165,7 +166,7 @@ export function KamsDailyMaster() {
     <div className="space-y-4">
       <Field label={t('kams.settlementDate')} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      {!data ? <p className="text-sm text-muted">{t('common.loading')}</p> : (
+      {!data ? <LoadingScreen /> : (
         <>
           <p className="text-sm text-muted">{t('kams.dailyMasterHint')}</p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

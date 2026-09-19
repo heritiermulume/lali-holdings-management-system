@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { Badge, Card, PageHeader } from '../components/ui'
+import { LoadingScreen } from '../components/LoadingScreen'
 import api from '../lib/api'
 import type { SystemModule } from '../types'
 
@@ -17,14 +18,16 @@ const icons = {
 export function ModulesPage() {
   const { t, i18n } = useTranslation()
   const [modules, setModules] = useState<SystemModule[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.get('/modules').then((res) => setModules(res.data.data))
+    api.get('/modules').then((res) => setModules(res.data.data ?? [])).finally(() => setLoading(false))
   }, [])
 
   return (
     <div>
       <PageHeader title={t('modules.title')} subtitle={t('modules.subtitle')} />
+      {loading ? <LoadingScreen /> : (
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {modules.map((module) => {
           const Icon = icons[module.slug as keyof typeof icons] || Crown
@@ -53,6 +56,7 @@ export function ModulesPage() {
           )
         })}
       </div>
+      )}
     </div>
   )
 }

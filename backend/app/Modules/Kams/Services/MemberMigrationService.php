@@ -31,7 +31,7 @@ class MemberMigrationService
      */
     public function import(int $companyId, int $userId, string $source, ?string $sourceLabel, array $rows): KamsMemberImport
     {
-        return DB::transaction(function () use ($companyId, $userId, $source, $sourceLabel, $rows) {
+        $import = DB::transaction(function () use ($companyId, $userId, $source, $sourceLabel, $rows) {
             $import = KamsMemberImport::query()->create([
                 'company_id' => $companyId,
                 'imported_by' => $userId,
@@ -49,7 +49,7 @@ class MemberMigrationService
                 $normalized = $this->resolveLinkedRecords($this->normalizeRow($payload));
                 $issues = $this->detectIssues($companyId, $normalized);
                 $member = $this->createPendingMember($companyId, $normalized, $issues);
-                $this->accounts->provision($member);
+                $credentials = $this->accounts->provision($member);
                 $member = $member->fresh(['user']);
 
                 KamsMemberImportRow::query()->create([
@@ -62,7 +62,13 @@ class MemberMigrationService
                 ]);
 
                 $this->storeOpeningPositions($companyId, $member, $normalized);
-                $this->communications->notifyMigration($member, $issues === [] ? 'profile_verification' : 'missing_information', 'fr', implode(', ', $issues));
+                $this->communications->notifyMigration(
+                    $member,
+                    $issues === [] ? 'profile_verification' : 'missing_information',
+                    'fr',
+                    implode(', ', $issues),
+                    $credentials,
+                );
 
                 if ($issues !== []) {
                     $issueCount++;
@@ -80,8 +86,10 @@ class MemberMigrationService
                 'issues' => $issueCount,
             ]);
 
-            return $import->load('rows.member.user');
+            return $import;
         });
+
+        return $import->fresh(['rows.member.user']) ?? $import;
     }
 
     /**
@@ -160,7 +168,7 @@ class MemberMigrationService
             'rank' => ['rank', 'rang'],
             'role' => ['role', 'role_slug', 'role_name'],
             'gender' => ['gender', 'sexe'],
-            'email' => ['email', 'e_mail', 'mail'],
+            'email' => ['email', 'e_mail', 'mail', 'courriel', 'adresse_email'],
             'status' => ['status', 'statut'],
             'team_name' => ['team_name', 'equipe', 'team'],
             'consignment_balance' => ['consignment_balance', 'solde_consignation'],

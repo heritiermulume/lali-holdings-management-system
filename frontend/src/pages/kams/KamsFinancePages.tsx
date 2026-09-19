@@ -15,6 +15,7 @@ import {
   YAxis,
 } from 'recharts'
 import { Card, Empty, Select } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -39,18 +40,33 @@ type FinanceData = {
     commissions_payable: number
     guy_savings?: number
     manager_savings?: number
+    assistant_manager_savings?: number
     cash: number
     profit: number
     loss: number
     expected: number
     company_share?: number
     sold_units: number
+    compensation?: CompensationTotals
   }
+  compensation?: CompensationTotals
   series: SeriesPoint[]
   offices: OfficeFinance[]
   can_filter_offices?: boolean
   office_id?: number | null
   filter_offices?: Array<{ id: number; name: string; code: string }>
+}
+type CompensationTotals = {
+  generated: number
+  posted: number
+  accrued?: number
+  remaining: number
+  assistant_share: number
+  manager_sale: number
+  manager_office: number
+  divisionnaire_office: number
+  secretary_office: number
+  salary_paid: number
 }
 type OfficeFinance = {
   id: number
@@ -64,8 +80,18 @@ type OfficeFinance = {
   agents: number
   guy_savings: number
   manager_savings: number
+  assistant_manager_savings?: number
   commissions_payable: number
   inventory_value: number
+  compensation_generated?: number
+  compensation_posted?: number
+  compensation_remaining?: number
+  manager_sale?: number
+  assistant_share?: number
+  manager_office_share?: number
+  divisionnaire_share?: number
+  secretary_share?: number
+  salary_paid?: number
 }
 
 function parseDate(value: string) {
@@ -86,6 +112,7 @@ export function KamsFinanceWorkspace() {
         tabs={[
           { to: '/modules/kams/finance', end: true, label: t('nav.dashboard'), show: hasPermission('kams.finance.dashboard.view') },
           { to: '/modules/kams/finance/account', end: true, label: t('kams.myAccount'), show: hasPermission('kams.finance.account.view') },
+          { to: '/modules/kams/finance/accounts', end: true, label: t('kams.memberAccounts'), show: hasPermission('kams.finance.dashboard.view') },
           { to: '/modules/kams/finance/company', end: true, label: t('kams.companyAccount'), show: hasPermission('kams.finance.company.view') },
         ]}
       />
@@ -130,14 +157,26 @@ export function KamsFinanceDashboard() {
     }))
   }, [data, locale, period])
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
+  const compensation = data.compensation || data.totals.compensation
   const kpis = [
     { key: 'cashCollected', value: money(data.totals.cash), icon: Wallet },
     { key: 'profit', value: money(data.totals.profit), icon: TrendingUp },
     { key: 'loss', value: money(data.totals.loss), icon: TrendingDown },
     { key: 'commissionsPayable', value: money(data.totals.commissions_payable), icon: Landmark },
   ]
+
+  const compensationKpis = compensation ? [
+    { key: 'generated', value: money(compensation.generated) },
+    { key: 'postedShares', value: money(compensation.posted) },
+    { key: 'managerRemaining', value: money(compensation.remaining) },
+    { key: 'assistantShare', value: money(compensation.assistant_share) },
+    { key: 'managerSaleShare', value: money(compensation.manager_sale) },
+    { key: 'managerOfficeShare', value: money(compensation.manager_office) },
+    { key: 'divisionnaireShare', value: money(compensation.divisionnaire_office) },
+    { key: 'secretaryShare', value: money(compensation.secretary_office + compensation.salary_paid) },
+  ] : []
 
   return (
     <div className="space-y-6">
@@ -199,10 +238,14 @@ export function KamsFinanceDashboard() {
         })}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Card className="p-4">
           <div className="text-sm text-muted">{t('kams.guySavings')}</div>
           <div className="mt-2 text-2xl font-extrabold">{money(data.totals.guy_savings || 0)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-sm text-muted">{t('kams.assistantManagerSavings')}</div>
+          <div className="mt-2 text-2xl font-extrabold">{money(data.totals.assistant_manager_savings || 0)}</div>
         </Card>
         <Card className="p-4">
           <div className="text-sm text-muted">{t('kams.managerSavings')}</div>
@@ -217,6 +260,21 @@ export function KamsFinanceDashboard() {
           <div className="mt-2 text-2xl font-extrabold">{money(data.totals.company_share || 0)}</div>
         </Card>
       </div>
+
+      {compensationKpis.length > 0 ? (
+        <div>
+          <h3 className="mb-1 text-base font-bold">{t('kams.revenueTitle')}</h3>
+          <p className="mb-4 text-sm text-muted">{t('kams.financeCompensationHint')}</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {compensationKpis.map((item) => (
+              <Card key={item.key} className="p-4">
+                <div className="text-sm text-muted">{t(`kams.${item.key}`)}</div>
+                <div className="mt-2 text-2xl font-extrabold">{item.value}</div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <Card className="p-5">
         <div className="mb-4 font-semibold">{t('kams.cashTrend')}</div>
@@ -320,6 +378,10 @@ export function KamsFinanceDashboard() {
                       <div className="mt-1 font-bold">{money(office.guy_savings)}</div>
                     </div>
                     <div>
+                      <div className="text-xs text-muted">{t('kams.assistantManagerSavings')}</div>
+                      <div className="mt-1 font-bold">{money(office.assistant_manager_savings || 0)}</div>
+                    </div>
+                    <div>
                       <div className="text-xs text-muted">{t('kams.managerSavings')}</div>
                       <div className="mt-1 font-bold">{money(office.manager_savings)}</div>
                     </div>
@@ -330,6 +392,38 @@ export function KamsFinanceDashboard() {
                     <div>
                       <div className="text-xs text-muted">{t('kams.inventoryValue')}</div>
                       <div className="mt-1 font-bold">{money(office.inventory_value)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.generated')}</div>
+                      <div className="mt-1 font-bold">{money(office.compensation_generated || 0)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.managerSaleShare')}</div>
+                      <div className="mt-1 font-bold">{money(office.manager_sale || 0)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.assistantShare')}</div>
+                      <div className="mt-1 font-bold">{money(office.assistant_share || 0)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.managerOfficeShare')}</div>
+                      <div className="mt-1 font-bold">{money(office.manager_office_share || 0)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.divisionnaireShare')}</div>
+                      <div className="mt-1 font-bold">{money(office.divisionnaire_share || 0)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.secretaryShare')}</div>
+                      <div className="mt-1 font-bold">{money((office.secretary_share || 0) + (office.salary_paid || 0))}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.postedShares')}</div>
+                      <div className="mt-1 font-bold">{money(office.compensation_posted || 0)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted">{t('kams.managerRemaining')}</div>
+                      <div className="mt-1 font-bold">{money(office.compensation_remaining || 0)}</div>
                     </div>
                   </div>
                 ) : null}

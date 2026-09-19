@@ -17,6 +17,7 @@ use App\Modules\Kams\Models\KamsStockReceipt;
 use App\Modules\Kams\Models\KamsStockReturn;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockTransfer;
+use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Services\SavingsLedger;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Services\StockMetrics;
@@ -237,14 +238,35 @@ class KamsStockController extends Controller
         abort_unless($request->user()->canAccessOffice((int) $assignment->office_id), 403);
         $data = $request->validate([
             'collected_amount' => ['required', 'numeric', 'min:0'],
+            'deposit_surplus' => ['sometimes', 'boolean'],
             'notes' => ['nullable', 'string'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.id' => ['required', 'exists:kams_stock_assignment_items,id'],
             'items.*.quantity_returned' => ['required', 'integer', 'min:0'],
             'items.*.quantity_lost' => ['required', 'integer', 'min:0'],
         ]);
-        $settled = $this->inventory->settle($assignment, $data['items'], (float) $data['collected_amount'], $data['notes'] ?? null, $request->user()->id);
+        $settled = $this->inventory->settle(
+            $assignment,
+            $data['items'],
+            (float) $data['collected_amount'],
+            $data['notes'] ?? null,
+            $request->user()->id,
+            (bool) ($data['deposit_surplus'] ?? false),
+        );
         AuditLogger::record('update', $settled, [], $data);
+        if ($settled->getAttribute('surplus_entry')) {
+            $entryId = data_get($settled->getAttribute('surplus_entry'), 'id');
+            if ($entryId) {
+                $entry = KamsSavingsEntry::query()->find($entryId);
+                if ($entry) {
+                    AuditLogger::record('create', $entry, [], [
+                        'reason' => 'day_closing_surplus',
+                        'assignment_id' => $settled->id,
+                        'amount' => $settled->getAttribute('surplus_deposited'),
+                    ]);
+                }
+            }
+        }
 
         return $this->ok($settled);
     }
@@ -358,7 +380,7 @@ class KamsStockController extends Controller
     public function savings(Request $request, SavingsLedger $ledger): JsonResponse
     {
         $kind = $request->string('kind')->toString() ?: 'guy';
-        abort_unless(in_array($kind, ['guy', 'manager'], true), 422);
+        abort_unless(in_array($kind, ['guy', 'manager', 'assistant_manager', 'secretary', 'divisionnaire'], true), 422);
 
         return $this->ok($ledger->ledgers($this->kamsCompanyId($request), $kind));
     }

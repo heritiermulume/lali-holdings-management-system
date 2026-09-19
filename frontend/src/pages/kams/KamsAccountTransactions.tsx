@@ -7,21 +7,7 @@ import { dateTime, money } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
 
 const PAGE_SIZE = 8
-const TYPE_FILTERS = ['deposit', 'withdrawal', 'expense', 'transfer'] as const
-
-function isoDate(value: Date) {
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function monthPeriod(now = new Date()) {
-  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const from = new Date(to)
-  from.setMonth(from.getMonth() - 1)
-  return { from: isoDate(from), to: isoDate(to) }
-}
+const TYPE_FILTERS = ['deposit', 'withdrawal', 'expense', 'transfer', 'settlement', 'return', 'compensation'] as const
 
 export type LedgerActor = { id?: number | null; name?: string } | null
 export type LedgerEntry = {
@@ -51,6 +37,9 @@ function matchesType(entryType: string, filter: string) {
   if (!filter) return true
   if (filter === 'withdrawal') return entryType === 'withdrawal' || entryType === 'withdrawal_request'
   if (filter === 'deposit') return entryType === 'deposit' || entryType === 'deposit_request'
+  if (filter === 'compensation') return entryType === 'revenue_share' || entryType === 'salary' || entryType === 'compensation'
+  if (filter === 'settlement') return entryType === 'settlement'
+  if (filter === 'return') return entryType === 'return'
   return entryType === filter
 }
 
@@ -139,8 +128,8 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
   const { t } = useTranslation()
   const [type, setType] = useState('')
   const [status, setStatus] = useState('')
-  const [from, setFrom] = useState(() => monthPeriod().from)
-  const [to, setTo] = useState(() => monthPeriod().to)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
@@ -233,8 +222,7 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
     setShowAll(false)
   }, [entries])
 
-  const preset = monthPeriod()
-  const filtersActive = Boolean(type || status || from !== preset.from || to !== preset.to)
+  const filtersActive = Boolean(type || status || from || to)
 
   return (
     <Card className="p-5">

@@ -60,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     loading,
     login: async (email, password) => {
-      const { data } = await api.post('/auth/login', { email, password })
+      const { data } = await api.post('/auth/login', { login: email, email, password })
       localStorage.setItem('lhms_token', data.data.token)
       setUser(data.data.user)
       await applyLocale(i18n, data.data.user?.locale || 'fr')

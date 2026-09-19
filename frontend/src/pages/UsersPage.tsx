@@ -1,15 +1,17 @@
-import { Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { Camera, Check, Download, Eye, EyeOff, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../components/ui'
+import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { withBusy } from '../lib/busy'
 import { cn } from '../lib/cn'
 import { dateTime, initials, roleLabel } from '../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../lib/printDocument'
 
-type RoleOption = { id: number; name: string; slug?: string; module_slug?: string | null; full_access?: boolean }
+type RoleOption = { id: number; name: string; slug?: string; module_slug?: string | null; full_access?: boolean; office_scoped?: boolean }
 type Company = {
   id: number
   name: string
@@ -17,7 +19,8 @@ type Company = {
   module?: { slug: string; name: string; name_fr: string } | null
   offices?: Array<{ id: number; name: string; code: string }>
 }
-type Assignment = { company_id: number | null; role: RoleOption; office_ids: number[] }
+type OfficeRole = { office_id: number; role: RoleOption }
+type Assignment = { company_id: number | null; role: RoleOption | null; office_ids: number[]; offices?: OfficeRole[] }
 type UserRow = {
   id: number
   first_name?: string
@@ -32,8 +35,17 @@ type UserRow = {
   assignments?: Assignment[]
   primary_company?: { name: string } | null
   primary_office?: { name: string } | null
+  account?: {
+    email?: string | null
+    phone?: string | null
+    password?: string | null
+    is_active?: boolean
+  } | null
 }
-type Membership = { company_id: string; role_id: string; office_ids: number[] }
+type MembershipOffice = { office_id: number; role_id: string }
+type Membership = { company_id: string; role_id: string; offices: MembershipOffice[] }
+
+const emptyMembership = (): Membership => ({ company_id: '', role_id: '', offices: [] })
 
 const emptyForm = () => ({
   first_name: '',
@@ -42,7 +54,7 @@ const emptyForm = () => ({
   phone: '',
   is_active: true,
   platform_role_id: '',
-  memberships: [{ company_id: '', role_id: '', office_ids: [] }] as Membership[],
+  memberships: [emptyMembership()],
 })
 
 const USER_IMPORT_HEADERS = [
@@ -108,6 +120,85 @@ function PersonPhoto({
   )
 }
 
+function LoginCredentialsCard({
+  email,
+  phone,
+  password,
+}: {
+  email?: string | null
+  phone?: string | null
+  password?: string | null
+}) {
+  const { t } = useTranslation()
+  const [revealed, setRevealed] = useState(false)
+  const [copied, setCopied] = useState<'email' | 'phone' | 'password' | null>(null)
+  const copy = async (field: 'email' | 'phone' | 'password', value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+    } catch {
+      // Clipboard can be blocked in some browsers; still confirm the click.
+    }
+    setCopied(field)
+    window.setTimeout(() => setCopied((current) => (current === field ? null : current)), 1600)
+  }
+  const mask = (value?: string | null) => {
+    if (!value) return '—'
+    return '•'.repeat(Math.min(Math.max(value.length, 8), 18))
+  }
+  const copyButton = (field: 'email' | 'phone' | 'password', value: string) => (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold transition',
+        copied === field ? 'bg-lhms text-white' : 'text-lhms hover:bg-white',
+      )}
+      onClick={() => void copy(field, value)}
+    >
+      {copied === field ? <Check size={12} /> : null}
+      {copied === field ? t('common.copied') : t('common.copy')}
+    </button>
+  )
+
+  return (
+    <div className="space-y-2 rounded-xl bg-surface p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-semibold">{t('users.loginCredentials')}</div>
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-lhms"
+          onClick={() => setRevealed((open) => !open)}
+        >
+          {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+          {revealed ? t('common.hide') : t('common.show')}
+        </button>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-xs text-muted">{t('users.email')}</div>
+          <div className="truncate font-semibold">{revealed ? (email || '—') : mask(email)}</div>
+        </div>
+        {revealed && email ? copyButton('email', email) : null}
+      </div>
+      {phone ? (
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-xs text-muted">{t('users.phone')}</div>
+            <div className="truncate font-semibold">{revealed ? phone : mask(phone)}</div>
+          </div>
+          {revealed ? copyButton('phone', phone) : null}
+        </div>
+      ) : null}
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-xs text-muted">{t('users.generatedPassword')}</div>
+          <div className="truncate font-mono font-semibold">{revealed ? (password || '—') : mask(password)}</div>
+        </div>
+        {revealed && password ? copyButton('password', password) : null}
+      </div>
+    </div>
+  )
+}
+
 export function UsersPage() {
   const { t, i18n } = useTranslation()
   const { user, hasPermission } = useAuth()
@@ -138,10 +229,16 @@ export function UsersPage() {
   const [importFile, setImportFile] = useState<File | null>(null)
   const [importError, setImportError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors: Array<{ row: number; email?: string | null; message: string }> } | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
+  const photoInput = useRef<HTMLInputElement>(null)
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [photoRemoved, setPhotoRemoved] = useState(false)
+  const [photoError, setPhotoError] = useState('')
 
   const platformRoles = useMemo(() => roles.filter((role) => {
     if (!role.full_access) return false
@@ -162,7 +259,12 @@ export function UsersPage() {
     ...extra,
   })
 
-  const load = (term = query) => api.get('/users', { params: listParams(term) }).then((res) => setRows(res.data.data))
+  const load = (term = query) => {
+    setLoading(true)
+    return api.get('/users', { params: listParams(term) })
+      .then((res) => setRows(res.data.data ?? []))
+      .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 300)
@@ -195,12 +297,46 @@ export function UsersPage() {
   const assignmentLabels = (row: UserRow) => {
     const items = row.assignments ?? []
     if (!items.length) return row.roles?.[0] ? [roleLabel(t, row.roles[0])] : []
-    return items.map((item) => {
+    const officeName = (id: number) => companies.flatMap((company) => company.offices ?? []).find((office) => office.id === id)?.name
+    return items.flatMap((item) => {
+      if (!item.company_id) return item.role ? [roleLabel(t, item.role)] : []
       const company = companies.find((entry) => entry.id === item.company_id)
       const moduleName = company?.module
         ? (localeFr ? company.module.name_fr : company.module.name)
         : t('settings.rolesAllModules')
-      return `${roleLabel(t, item.role)} · ${moduleName}`
+      const labels: string[] = []
+      if (item.role) {
+        labels.push(`${roleLabel(t, item.role)} · ${moduleName}`)
+      }
+      for (const office of item.offices ?? []) {
+        labels.push(`${roleLabel(t, office.role)} · ${officeName(office.office_id) || moduleName}`)
+      }
+      return labels.length ? labels : (item.role ? [`${roleLabel(t, item.role)} · ${moduleName}`] : [])
+    })
+  }
+
+  const resetPhoto = (url?: string | null) => {
+    setPhoto(null)
+    setPhotoRemoved(false)
+    setPhotoError('')
+    setPhotoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return url || null
+    })
+  }
+
+  const pickPhoto = (file?: File | null) => {
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) {
+      setPhotoError(t('users.photoError'))
+      return
+    }
+    setPhotoError('')
+    setPhoto(file)
+    setPhotoRemoved(false)
+    setPhotoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return URL.createObjectURL(file)
     })
   }
 
@@ -208,6 +344,7 @@ export function UsersPage() {
     setEditing(null)
     setForm(emptyForm())
     setFormError('')
+    resetPhoto()
     setOpen(true)
   }
 
@@ -217,11 +354,14 @@ export function UsersPage() {
       .filter((item) => item.company_id)
       .map((item) => ({
         company_id: String(item.company_id),
-        role_id: String(item.role.id),
-        office_ids: item.office_ids ?? [],
+        role_id: item.role && item.role.office_scoped === false ? String(item.role.id) : '',
+        offices: item.offices?.length
+          ? item.offices.map((office) => ({ office_id: office.office_id, role_id: String(office.role.id) }))
+          : (item.office_ids ?? []).map((officeId) => ({ office_id: officeId, role_id: item.role ? String(item.role.id) : '' })),
       }))
     setEditing(row)
     setFormError('')
+    resetPhoto(row.avatar_url)
     setForm({
       first_name: row.first_name || row.name.split(' ')[0] || '',
       last_name: row.last_name || row.name.split(' ').slice(1).join(' '),
@@ -234,6 +374,16 @@ export function UsersPage() {
     setOpen(true)
   }
 
+  const openView = async (row: UserRow) => {
+    setViewing(row)
+    try {
+      const { data } = await api.get(`/users/${row.id}`)
+      if (data.data) setViewing(data.data)
+    } catch {
+      // Keep the list snapshot if the detail request fails.
+    }
+  }
+
   const updateMembership = (index: number, patch: Partial<Membership>) => {
     setForm((current) => ({
       ...current,
@@ -242,56 +392,113 @@ export function UsersPage() {
         const next = { ...item, ...patch }
         if (patch.company_id && patch.company_id !== item.company_id) {
           next.role_id = ''
-          next.office_ids = []
+          next.offices = []
         }
         return next
       }),
     }))
   }
 
-  const toggleOffice = (index: number, officeId: number) => {
+  const addOfficeRow = (index: number) => {
     setForm((current) => ({
       ...current,
       memberships: current.memberships.map((item, itemIndex) => {
         if (itemIndex !== index) return item
-        const office_ids = item.office_ids.includes(officeId)
-          ? item.office_ids.filter((id) => id !== officeId)
-          : [...item.office_ids, officeId]
-        return { ...item, office_ids }
+        if (item.offices.some((office) => !office.office_id)) return item
+        return { ...item, offices: [...item.offices, { office_id: 0, role_id: '' }] }
+      }),
+    }))
+  }
+
+  const updateOfficeRow = (index: number, officeIndex: number, patch: Partial<MembershipOffice>) => {
+    setForm((current) => ({
+      ...current,
+      memberships: current.memberships.map((item, itemIndex) => {
+        if (itemIndex !== index) return item
+        return {
+          ...item,
+          offices: item.offices.map((office, currentIndex) => (
+            currentIndex === officeIndex ? { ...office, ...patch } : office
+          )),
+        }
+      }),
+    }))
+  }
+
+  const removeOfficeRow = (index: number, officeIndex: number) => {
+    setForm((current) => ({
+      ...current,
+      memberships: current.memberships.map((item, itemIndex) => {
+        if (itemIndex !== index) return item
+        return { ...item, offices: item.offices.filter((_, currentIndex) => currentIndex !== officeIndex) }
       }),
     }))
   }
 
   const save = async (event: FormEvent) => {
     event.preventDefault()
-    const payload = {
-      first_name: form.first_name,
-      last_name: form.last_name,
-      email: form.email,
-      phone: form.phone || null,
-      is_active: form.is_active,
-      platform_role_id: form.platform_role_id ? Number(form.platform_role_id) : null,
-      assignments: form.platform_role_id
-        ? []
-        : form.memberships
-          .filter((item) => item.company_id && item.role_id)
-          .map((item) => ({
-            company_id: Number(item.company_id),
-            role_id: Number(item.role_id),
-            office_ids: item.office_ids,
-          })),
+    const firstName = form.first_name.trim()
+    const lastName = form.last_name.trim()
+    const email = form.email.trim()
+    if (!firstName || !lastName || !email) {
+      setFormError(t('users.requiredFields'))
+      return
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFormError(t('users.invalidEmail'))
+      return
+    }
+    if (!form.platform_role_id) {
+      if (form.memberships.some((item) => item.offices.some((office) => !office.office_id || !office.role_id))) {
+        setFormError(t('users.officeRoleRequired'))
+        return
+      }
+      const completeMemberships = form.memberships.filter((item) => (
+        item.company_id && (item.role_id || item.offices.some((office) => office.office_id && office.role_id))
+      ))
+      if (!completeMemberships.length) {
+        setFormError(t('users.membershipRequired'))
+        return
+      }
+      if (form.memberships.some((item) => item.company_id && !item.role_id && item.offices.length === 0)) {
+        setFormError(t('users.membershipRequired'))
+        return
+      }
+    }
+    const assignments = form.platform_role_id
+      ? []
+      : form.memberships
+        .filter((item) => item.company_id && (item.role_id || item.offices.some((office) => office.role_id)))
+        .map((item) => ({
+          company_id: Number(item.company_id),
+          role_id: item.role_id ? Number(item.role_id) : null,
+          offices: item.offices
+            .filter((office) => office.office_id && office.role_id)
+            .map((office) => ({ office_id: office.office_id, role_id: Number(office.role_id) })),
+        }))
+    const payload = new FormData()
+    payload.append('first_name', firstName)
+    payload.append('last_name', lastName)
+    payload.append('email', email)
+    payload.append('phone', form.phone.trim())
+    payload.append('is_active', form.is_active ? '1' : '0')
+    payload.append('platform_role_id', form.platform_role_id || '')
+    payload.append('assignments', JSON.stringify(assignments))
+    if (photo) payload.append('avatar', photo)
+    if (editing && photoRemoved && !photo) payload.append('remove_avatar', '1')
     setSaving(true)
     setFormError('')
     try {
       if (editing) {
-        await api.put(`/users/${editing.id}`, payload)
+        payload.append('_method', 'PUT')
+        await api.post(`/users/${editing.id}`, payload)
       } else {
         await api.post('/users', payload)
       }
       setOpen(false)
       setForm(emptyForm())
       setEditing(null)
+      resetPhoto()
       void load()
     } catch (error) {
       const response = (error as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } }).response?.data
@@ -316,7 +523,11 @@ export function UsersPage() {
   }
 
   const officeNames = (row: UserRow) => {
-    const ids = (row.assignments ?? []).flatMap((item) => item.office_ids)
+    const ids = (row.assignments ?? []).flatMap((item) => (
+      item.offices?.length
+        ? item.offices.map((office) => office.office_id)
+        : (item.office_ids ?? [])
+    ))
     if (!ids.length) return row.primary_office?.name || ''
     return companies
       .flatMap((company) => company.offices ?? [])
@@ -325,7 +536,7 @@ export function UsersPage() {
       .join(', ') || row.primary_office?.name || ''
   }
 
-  const platformRoleSlug = (row: UserRow) => row.assignments?.find((item) => !item.company_id)?.role.slug || ''
+  const platformRoleSlug = (row: UserRow) => row.assignments?.find((item) => !item.company_id)?.role?.slug || ''
   const membershipRole = (row: UserRow) => row.assignments?.find((item) => item.company_id)?.role
   const companyNameFor = (row: UserRow) => {
     const assignment = row.assignments?.find((item) => item.company_id)
@@ -339,7 +550,7 @@ export function UsersPage() {
     row.phone || '',
     platformRoleSlug(row),
     companyNameFor(row),
-    membershipRole(row) ? roleLabel(t, membershipRole(row)) : assignmentLabels(row).join(' / '),
+    assignmentLabels(row).join(' / ') || (membershipRole(row) ? roleLabel(t, membershipRole(row)) : ''),
     officeNames(row),
     row.is_active ? t('users.active') : t('users.inactive'),
   ]
@@ -359,7 +570,6 @@ export function UsersPage() {
   const printOptions = (list: UserRow[]) => ({
     title: t('nav.users'),
     module: t('nav.administration'),
-    subtitle: t('users.subtitle'),
     meta: [
       { label: t('common.filter'), value: [
         status === '1' ? t('users.active') : status === '0' ? t('users.inactive') : t('common.all'),
@@ -377,8 +587,10 @@ export function UsersPage() {
   })
 
   const loadUsersForPrint = async () => {
-    const res = await api.get('/users', { params: listParams(query, { per_page: 1000 }) })
-    return (res.data.data as UserRow[]) || []
+    return withBusy('data', async () => {
+      const res = await api.get('/users', { params: listParams(query, { per_page: 1000 }) })
+      return (res.data.data as UserRow[]) || []
+    })
   }
 
   const exportUsers = async () => {
@@ -392,7 +604,7 @@ export function UsersPage() {
         row.phone || '',
         platformRoleSlug(row),
         companyNameFor(row),
-        membershipRole(row)?.slug || '',
+        membershipRole(row)?.slug || assignmentLabels(row).join(' / '),
         officeNames(row),
         row.is_active ? '1' : '0',
       ]),
@@ -426,14 +638,14 @@ export function UsersPage() {
     setImporting(true)
     setImportError('')
     try {
-      let res
-      if (importFile) {
-        const payload = new FormData()
-        payload.append('file', importFile)
-        res = await api.post('/users/import', payload)
-      } else {
-        res = await api.post('/users/import', { rows: pasted })
-      }
+      const res = await withBusy('import', async () => {
+        if (importFile) {
+          const payload = new FormData()
+          payload.append('file', importFile)
+          return api.post('/users/import', payload)
+        }
+        return api.post('/users/import', { rows: pasted })
+      })
       setImportOpen(false)
       resetImport()
       setImportResult({
@@ -566,8 +778,10 @@ export function UsersPage() {
       </div>
 
       <Card className="overflow-hidden p-0">
-        {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
-        {rows.map((row) => (
+        {loading && rows.length === 0 ? <LoadingScreen /> : (
+          <>
+            {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
+            {rows.map((row) => (
           <div key={row.id} className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-surface/70">
             <PersonPhoto name={row.name} url={row.avatar_url} />
             <div className="min-w-0 flex-1">
@@ -578,7 +792,7 @@ export function UsersPage() {
               <Badge tone={row.is_active ? 'green' : 'red'}>{row.is_active ? t('users.active') : t('users.inactive')}</Badge>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <button type="button" aria-label={t('common.view')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white" onClick={() => setViewing(row)}>
+              <button type="button" aria-label={t('common.view')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white" onClick={() => void openView(row)}>
                 <Eye size={16} />
               </button>
               {canUpdate ? (
@@ -594,10 +808,47 @@ export function UsersPage() {
             </div>
           </div>
         ))}
+          </>
+        )}
       </Card>
 
-      <Modal open={open} title={editing ? t('users.edit') : t('users.create')} onClose={() => setOpen(false)}>
+      <Modal open={open} title={editing ? t('users.edit') : t('users.create')} onClose={() => { setOpen(false); resetPhoto() }}>
         <form className="space-y-3" onSubmit={(event) => void save(event)}>
+          <div className="flex flex-col items-center gap-2 pb-1">
+            <div className="relative h-24 w-24">
+              <button type="button" onClick={() => photoInput.current?.click()} aria-label={t('users.photo')} className="block h-24 w-24 overflow-hidden rounded-full p-0">
+                {photoPreview || form.first_name || form.last_name ? (
+                  <PersonPhoto name={`${form.first_name} ${form.last_name}`.trim() || t('users.create')} url={photoPreview} className="h-24 w-24 text-2xl" />
+                ) : (
+                  <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white"><Camera size={28} /></span>
+                )}
+              </button>
+              {photoPreview ? (
+                <button
+                  type="button"
+                  aria-label={t('users.removePhoto')}
+                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                  onClick={() => {
+                    setPhoto(null)
+                    setPhotoRemoved(true)
+                    setPhotoError('')
+                    setPhotoPreview((current) => {
+                      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+                      return null
+                    })
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              ) : null}
+              <button type="button" aria-label={t('users.photo')} className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md" onClick={() => photoInput.current?.click()}>
+                <Camera size={14} />
+              </button>
+            </div>
+            <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => { pickPhoto(event.target.files?.[0]); event.target.value = '' }} />
+            <p className="text-center text-xs text-muted">{t('users.photoHint')}</p>
+            {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
+          </div>
           <Field label={t('users.firstName')} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
           <Field label={t('users.lastName')} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
           <Field label={t('users.email')} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
@@ -619,7 +870,7 @@ export function UsersPage() {
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => setForm((current) => ({ ...current, memberships: [...current.memberships, { company_id: '', role_id: '', office_ids: [] }] }))}
+                onClick={() => setForm((current) => ({ ...current, memberships: [...current.memberships, emptyMembership()] }))}
               >
                 <Plus size={16} /> {t('users.addMembership')}
               </Button>
@@ -628,6 +879,8 @@ export function UsersPage() {
             {form.memberships.map((membership, index) => {
               const company = companies.find((entry) => String(entry.id) === membership.company_id)
               const companyRoles = rolesForCompany(membership.company_id)
+              const companyWideRoles = companyRoles.filter((role) => role.office_scoped === false)
+              const officeList = company?.offices ?? []
               const taken = form.memberships.map((item) => item.company_id).filter(Boolean)
               return (
                 <div key={index} className="space-y-2 rounded-2xl border border-line p-3">
@@ -652,32 +905,89 @@ export function UsersPage() {
                       </button>
                     ) : null}
                   </div>
-                  <Select
-                    label={t('users.membershipRole')}
-                    value={membership.role_id}
-                    onChange={(e) => updateMembership(index, { role_id: e.target.value })}
-                    disabled={!membership.company_id}
-                  >
-                    <option value="">—</option>
-                    {companyRoles.map((role) => <option key={role.id} value={role.id}>{roleLabel(t, role)}</option>)}
-                  </Select>
+                  {companyWideRoles.length > 0 ? (
+                    <>
+                      <Select
+                        label={t('users.membershipRole')}
+                        value={membership.role_id}
+                        onChange={(e) => updateMembership(index, { role_id: e.target.value })}
+                        disabled={!membership.company_id}
+                      >
+                        <option value="">—</option>
+                        {companyWideRoles.map((role) => <option key={role.id} value={role.id}>{roleLabel(t, role)}</option>)}
+                      </Select>
+                      <p className="text-xs text-muted">{t('users.membershipRoleHint')}</p>
+                    </>
+                  ) : null}
                   {!membership.company_id ? (
                     <p className="text-xs text-muted">{t('users.selectCompanyFirst')}</p>
                   ) : companyRoles.length === 0 ? (
                     <p className="text-xs text-muted">{t('users.noRolesForModule')}</p>
                   ) : null}
-                  <fieldset className="space-y-1">
+                  <fieldset className="space-y-2">
                     <legend className="text-sm font-medium text-ink">{t('users.offices')}</legend>
-                    <div className="max-h-32 space-y-1 overflow-auto rounded-xl border border-line p-2">
-                      {(company?.offices ?? []).length === 0 ? (
-                        <p className="px-2 py-1 text-sm text-muted">{membership.company_id ? t('common.empty') : t('users.selectCompanyFirst')}</p>
-                      ) : (company?.offices ?? []).map((office) => (
-                        <label key={office.id} className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm hover:bg-surface">
-                          <input type="checkbox" checked={membership.office_ids.includes(office.id)} onChange={() => toggleOffice(index, office.id)} />
-                          {office.name} <span className="text-muted">· {office.code}</span>
-                        </label>
-                      ))}
-                    </div>
+                    <p className="text-xs text-muted">{t('users.officesHint')}</p>
+                    {membership.offices.map((assigned, officeIndex) => {
+                      const takenOffices = membership.offices.map((office) => office.office_id).filter(Boolean)
+                      return (
+                        <div key={officeIndex} className="flex items-start gap-2 rounded-xl border border-line p-2">
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <Select
+                              label={t('users.office')}
+                              value={assigned.office_id ? String(assigned.office_id) : ''}
+                              onChange={(e) => updateOfficeRow(index, officeIndex, { office_id: Number(e.target.value) || 0 })}
+                              disabled={!membership.company_id}
+                            >
+                              <option value="">—</option>
+                              {officeList.map((office) => (
+                                <option
+                                  key={office.id}
+                                  value={office.id}
+                                  disabled={takenOffices.includes(office.id) && office.id !== assigned.office_id}
+                                >
+                                  {office.name} · {office.code}
+                                </option>
+                              ))}
+                            </Select>
+                            <Select
+                              label={t('users.officeRole')}
+                              value={assigned.role_id}
+                              onChange={(e) => updateOfficeRow(index, officeIndex, { role_id: e.target.value })}
+                              disabled={!assigned.office_id || companyRoles.length === 0}
+                            >
+                              <option value="">—</option>
+                              {companyRoles.map((role) => <option key={role.id} value={role.id}>{roleLabel(t, role)}</option>)}
+                            </Select>
+                          </div>
+                          <button
+                            type="button"
+                            className="mt-7 grid h-10 w-10 place-items-center rounded-xl text-muted hover:bg-surface"
+                            aria-label={t('common.delete')}
+                            onClick={() => removeOfficeRow(index, officeIndex)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )
+                    })}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full"
+                      disabled={!membership.company_id || officeList.length === 0 || membership.offices.some((office) => !office.office_id) || membership.offices.length >= officeList.length}
+                      onClick={() => addOfficeRow(index)}
+                    >
+                      <Plus size={16} /> {t('users.addOffice')}
+                    </Button>
+                    {!membership.company_id ? (
+                      <p className="text-xs text-muted">{t('users.selectCompanyFirst')}</p>
+                    ) : officeList.length === 0 ? (
+                      <p className="text-xs text-muted">{t('common.empty')}</p>
+                    ) : membership.offices.length >= officeList.length ? (
+                      <p className="text-xs text-muted">{t('users.allOfficesAssigned')}</p>
+                    ) : membership.offices.length === 0 ? (
+                      <p className="text-xs text-muted">{t('users.noOfficesAdded')}</p>
+                    ) : null}
                   </fieldset>
                 </div>
               )
@@ -699,9 +1009,26 @@ export function UsersPage() {
             <div>{t('users.phone')}: <strong>{viewing.phone || '—'}</strong></div>
             <div>{t('users.company')}: <strong>{companyNameFor(viewing) || '—'}</strong></div>
             <div>{t('users.office')}: <strong>{officeNames(viewing) || viewing.primary_office?.name || '—'}</strong></div>
-            <div>{t('users.role')}: <strong>{assignmentLabels(viewing).join(' · ') || '—'}</strong></div>
+            <div>
+              <div className="mb-1">{t('users.role')}</div>
+              {assignmentLabels(viewing).length ? (
+                <ul className="space-y-1">
+                  {assignmentLabels(viewing).map((label, index) => (
+                    <li key={`${label}-${index}`}><strong>{label}</strong></li>
+                  ))}
+                </ul>
+              ) : <strong>—</strong>}
+            </div>
             <div>{t('common.status')}: <Badge tone={viewing.is_active ? 'green' : 'red'}>{viewing.is_active ? t('users.active') : t('users.inactive')}</Badge></div>
             <div>{t('users.lastLogin')}: <strong>{dateTime(viewing.last_login_at, viewing.last_login_at)}</strong></div>
+            {viewing.account?.password ? (
+              <LoginCredentialsCard
+                key={viewing.id}
+                email={viewing.account.email || viewing.email}
+                phone={viewing.account.phone || viewing.phone}
+                password={viewing.account.password}
+              />
+            ) : null}
             {canUpdate ? (
               <Button className="w-full" onClick={() => { setViewing(null); openEdit(viewing) }}>{t('common.edit')}</Button>
             ) : null}
@@ -741,7 +1068,7 @@ export function UsersPage() {
             />
           </label>
           {importError ? <p className="text-sm text-danger">{importError}</p> : null}
-          <Button type="submit" className="w-full" disabled={importing}>{importing ? t('common.loading') : t('users.import')}</Button>
+          <Button type="submit" className="w-full" disabled={importing}>{importing ? t('common.importing') : t('users.import')}</Button>
         </form>
       </Modal>
 

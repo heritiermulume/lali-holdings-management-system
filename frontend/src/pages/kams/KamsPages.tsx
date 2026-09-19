@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Navigate } from 'react-router-dom'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { money } from '../../lib/format'
 import { moduleRegistry } from '../../modules/registry'
@@ -41,7 +42,7 @@ export function KamsDashboard() {
     api.get('/modules/kams/dashboard').then((res) => setData(res.data.data))
   }, [])
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   return (
     <div className="space-y-5">

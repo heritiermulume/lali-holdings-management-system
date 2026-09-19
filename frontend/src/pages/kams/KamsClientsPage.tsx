@@ -3,8 +3,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
+import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
 import { initials } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
@@ -67,15 +69,19 @@ export function KamsClients() {
   const [form, setForm] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [filterOpen, setFilterOpen] = useState(false)
   const [printMenuOpen, setPrintMenuOpen] = useState(false)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
 
-  const load = (term = query) => api.get('/modules/kams/clients', {
-    params: { per_page: 50, ...(status ? { status } : {}), ...(term ? { search: term } : {}) },
-  }).then((res) => setRows(res.data.data))
+  const load = (term = query) => {
+    setLoading(true)
+    return api.get('/modules/kams/clients', {
+      params: { per_page: 50, ...(status ? { status } : {}), ...(term ? { search: term } : {}) },
+    }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 300)
@@ -229,8 +235,10 @@ export function KamsClients() {
   })
 
   const loadClientsForPrint = async () => {
-    const res = await api.get('/modules/kams/clients', { params: clientParams() })
-    return (res.data.data as Client[]) || []
+    return withBusy('data', async () => {
+      const res = await api.get('/modules/kams/clients', { params: clientParams() })
+      return (res.data.data as Client[]) || []
+    })
   }
 
   const exportClients = async () => {
@@ -360,6 +368,8 @@ export function KamsClients() {
       </div>
 
       <Card className="overflow-hidden p-0">
+        {loading && rows.length === 0 ? <LoadingScreen /> : (
+          <>
         {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
         {rows.map((row) => (
           <div key={row.id} className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-surface/70">
@@ -390,6 +400,8 @@ export function KamsClients() {
             </div>
           </div>
         ))}
+          </>
+        )}
       </Card>
 
       <Modal open={formOpen} title={editing ? t('kams.editClient') : t('kams.addClient')} onClose={() => { setFormOpen(false); resetForm() }}>

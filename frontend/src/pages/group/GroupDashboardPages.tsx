@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, Outlet, useLocation, useParams } from 'react-router-dom'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge, Card, Empty } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { PresenceMap, type PresenceCountry } from '../../components/PresenceMap'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
@@ -39,6 +40,23 @@ type DashboardData = {
   welcome: { name: string; role?: string; company?: string }
   stats: Record<string, number>
   finances?: Record<string, number> | null
+  kams_compensation?: {
+    generated: number
+    posted: number
+    remaining: number
+    manager_sale: number
+    assistant_share: number
+    manager_office: number
+    divisionnaire_office: number
+    secretary_office: number
+    salary_paid: number
+    range?: { from: string; to: string }
+  } | null
+  kams_savings?: {
+    guy_savings: number
+    assistant_manager_savings: number
+    manager_savings: number
+  } | null
   modules: SystemModule[]
   notifications: Array<{ id: number; title: string; body: string; type: string; read_at?: string | null }>
   tasks: Array<{ id: number; title: string; priority: string; due_date?: string | null; status: string }>
@@ -63,7 +81,7 @@ export function GroupOverviewPage() {
   const { user } = useAuth()
   const { data } = useGroupDashboard()
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   const unread = data.notifications.filter((item) => !item.read_at).length
   const openTasks = data.tasks.length
@@ -131,6 +149,59 @@ export function GroupOverviewPage() {
             </Card>
           ))}
         </div>
+      ) : null}
+
+      {data.kams_savings ? (
+        <Card className="p-5">
+          <div className="mb-1 font-semibold">{t('dashboard.kamsSavings')}</div>
+          <p className="mb-4 text-sm text-muted">{t('dashboard.kamsSavingsHint')}</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {[
+              ['guy_savings', data.kams_savings.guy_savings],
+              ['assistant_manager_savings', data.kams_savings.assistant_manager_savings],
+              ['manager_savings', data.kams_savings.manager_savings],
+            ].map(([key, value]) => (
+              <div key={String(key)} className="rounded-xl bg-surface p-4">
+                <div className="text-sm text-muted">{t(`dashboard.${String(key)}`)}</div>
+                <div className="mt-2 text-xl font-extrabold text-lhms">{money(Number(value))}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4">
+            <Link to="/modules/kams/finance/accounts" className="inline-flex items-center gap-1 text-sm font-semibold text-lhms">
+              {t('dashboard.viewKamsAccounts')} <ArrowUpRight size={14} />
+            </Link>
+          </div>
+        </Card>
+      ) : null}
+
+      {data.kams_compensation ? (
+        <Card className="p-5">
+          <div className="mb-1 font-semibold">{t('dashboard.kamsCompensation')}</div>
+          <p className="mb-4 text-sm text-muted">{t('dashboard.kamsCompensationHint')}</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              ['generated', data.kams_compensation.generated],
+              ['manager_sale', data.kams_compensation.manager_sale],
+              ['assistant_share', data.kams_compensation.assistant_share],
+              ['manager_office', data.kams_compensation.manager_office],
+              ['divisionnaire_office', data.kams_compensation.divisionnaire_office],
+              ['secretary_office', data.kams_compensation.secretary_office + data.kams_compensation.salary_paid],
+              ['posted', data.kams_compensation.posted],
+              ['remaining', data.kams_compensation.remaining],
+            ].map(([key, value]) => (
+              <div key={String(key)} className="rounded-xl bg-surface p-4">
+                <div className="text-sm text-muted">{t(`dashboard.compensation.${String(key)}`)}</div>
+                <div className="mt-2 text-xl font-extrabold text-lhms">{money(Number(value))}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4">
+            <Link to="/administration/settings/finance" className="inline-flex items-center gap-1 text-sm font-semibold text-lhms">
+              {t('dashboard.viewKamsRevenue')} <ArrowUpRight size={14} />
+            </Link>
+          </div>
+        </Card>
       ) : null}
 
       <ModuleOfficePerformance />
@@ -218,7 +289,7 @@ export function GroupActionsPage() {
   const { t } = useTranslation()
   const { data } = useGroupDashboard()
 
-  if (!data) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!data) return <LoadingScreen />
 
   return (
     <div className="grid gap-6 xl:grid-cols-3">
@@ -277,7 +348,7 @@ export function GroupModuleDashboardPage() {
   const module = modules.find((entry) => entry.slug === slug)
 
   if (!slug) return <Empty>{t('common.empty')}</Empty>
-  if (!module) return <p className="text-sm text-muted">{t('common.loading')}</p>
+  if (!module) return <LoadingScreen />
   if (!canAccessModule(user, slug)) return <Empty>{t('modules.noAccess')}</Empty>
 
   if (slug === 'kams') {

@@ -12,7 +12,7 @@ trait HasLhmsPermissions
 {
     public function roles()
     {
-        return $this->belongsToMany(Role::class)->withPivot('company_id');
+        return $this->belongsToMany(Role::class)->withPivot('company_id', 'office_id');
     }
 
     public function scopes()
@@ -144,7 +144,7 @@ trait HasLhmsPermissions
 
     public function isOfficeScoped(): bool
     {
-        return $this->roles->contains(fn (Role $role) => $role->isOfficeScoped());
+        return $this->roles->contains(fn (Role $role) => $role->pivot->office_id || $role->isOfficeScoped());
     }
 
     public function accessibleOfficeIds(): array
@@ -159,6 +159,12 @@ trait HasLhmsPermissions
             $ids->push($this->primary_office_id);
         }
 
+        foreach ($this->roles as $role) {
+            if ($role->pivot->office_id) {
+                $ids->push((int) $role->pivot->office_id);
+            }
+        }
+
         $this->scopes->each(function (UserScope $scope) use ($ids) {
             if ($scope->scope_type === 'office' && $scope->scope_id) {
                 $ids->push($scope->scope_id);
@@ -166,7 +172,12 @@ trait HasLhmsPermissions
         });
 
         if ($ids->isNotEmpty()) {
-            return $ids->filter()->unique()->values()->all();
+            $assigned = $ids->filter()->unique()->values()->all();
+            if ($this->isOfficeScoped()) {
+                $assigned = array_values(array_unique(array_merge($assigned, Office::descendantIdsFor($assigned))));
+            }
+
+            return $assigned;
         }
 
         return Office::query()
@@ -189,7 +200,7 @@ trait HasLhmsPermissions
     }
 
     /**
-     * @param  list<array{role_id: int, company_id: int|null}>  $assignments
+     * @param  list<array{role_id: int, company_id: int|null, office_id?: int|null}>  $assignments
      */
     public function syncRoleAssignments(array $assignments): void
     {
@@ -202,51 +213,109 @@ trait HasLhmsPermissions
 
             $this->roles()->attach((int) $assignment['role_id'], [
                 'company_id' => $assignment['company_id'] ?? null,
+                'office_id' => $assignment['office_id'] ?? null,
             ]);
         }
 
         $this->unsetRelation('roles');
     }
 
-    public function assignCompanyRole(int $roleId, int $companyId): void
+    public function assignCompanyRole(int $roleId, int $companyId, ?int $officeId = null): void
     {
         $this->roles()->newPivotQuery()
             ->where('user_id', $this->id)
             ->where('company_id', $companyId)
             ->delete();
 
-        $this->roles()->attach($roleId, ['company_id' => $companyId]);
+        $this->roles()->attach($roleId, [
+            'company_id' => $companyId,
+            'office_id' => $officeId,
+        ]);
         $this->unsetRelation('roles');
     }
 
     /**
-     * @return list<array{company_id: int|null, role: array{id: int, name: string, slug: string, module_slug: ?string}, office_ids: list<int>}>
+     * @return list<array{
+     *   company_id: int|null,
+     *   role: array{id: int, name: string, slug: string, module_slug: ?string}|null,
+     *   office_ids: list<int>,
+     *   offices: list<array{office_id: int, role: array{id: int, name: string, slug: string, module_slug: ?string}}>
+     * }>
      */
     public function roleAssignmentPayload(): array
     {
         $this->loadMissing(['roles', 'scopes']);
-        $officeIds = $this->scopes->where('scope_type', 'office')->pluck('scope_id')->filter()->all();
+        $scopedOfficeIds = $this->scopes->where('scope_type', 'office')->pluck('scope_id')->filter()->map(fn ($id) => (int) $id)->all();
         $officesByCompany = Office::query()
-            ->whereIn('id', $officeIds ?: [0])
+            ->whereIn('id', $scopedOfficeIds ?: [0])
             ->get()
             ->groupBy('company_id');
 
-        return $this->roles->map(function (Role $role) use ($officesByCompany) {
-            $companyId = $role->pivot->company_id ? (int) $role->pivot->company_id : null;
+        $payload = [];
 
-            return [
-                'company_id' => $companyId,
-                'role' => [
-                    'id' => $role->id,
-                    'name' => $role->name,
-                    'slug' => $role->slug,
-                    'module_slug' => $role->module_slug,
-                ],
-                'office_ids' => $companyId
-                    ? ($officesByCompany->get($companyId)?->pluck('id')->map(fn ($id) => (int) $id)->values()->all() ?? [])
-                    : [],
+        foreach ($this->roles as $role) {
+            $companyId = $role->pivot->company_id ? (int) $role->pivot->company_id : null;
+            $officeId = $role->pivot->office_id ? (int) $role->pivot->office_id : null;
+            $rolePayload = [
+                'id' => $role->id,
+                'name' => $role->name,
+                'slug' => $role->slug,
+                'module_slug' => $role->module_slug,
+                'office_scoped' => $role->isOfficeScoped(),
             ];
-        })->values()->all();
+
+            if (! $companyId) {
+                $payload[] = [
+                    'company_id' => null,
+                    'role' => $rolePayload,
+                    'office_ids' => [],
+                    'offices' => [],
+                ];
+
+                continue;
+            }
+
+            $key = 'c'.$companyId;
+            if (! isset($payload[$key])) {
+                $payload[$key] = [
+                    'company_id' => $companyId,
+                    'role' => null,
+                    'office_ids' => [],
+                    'offices' => [],
+                ];
+            }
+
+            if ($officeId) {
+                $payload[$key]['offices'][] = [
+                    'office_id' => $officeId,
+                    'role' => $rolePayload,
+                ];
+                $payload[$key]['office_ids'][] = $officeId;
+            } else {
+                $payload[$key]['role'] = $rolePayload;
+            }
+        }
+
+        foreach ($payload as $key => $item) {
+            if (! is_array($item) || ($item['company_id'] ?? null) === null) {
+                continue;
+            }
+
+            if ($item['offices'] !== []) {
+                $payload[$key]['office_ids'] = array_values(array_unique($item['office_ids']));
+
+                continue;
+            }
+
+            $payload[$key]['office_ids'] = $officesByCompany
+                ->get($item['company_id'])
+                ?->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all() ?? [];
+        }
+
+        return array_values($payload);
     }
 
     /**

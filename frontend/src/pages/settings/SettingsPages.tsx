@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Navigate, Outlet, useParams } from 'react-router-dom'
 import { Button, Card, Empty, Field, Select } from '../../components/ui'
+import { LoadingScreen } from '../../components/LoadingScreen'
 import { SettingsMobileTabs } from '../../components/layout/SettingsMobileTabs'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
@@ -92,7 +93,7 @@ export function SettingsForm({
   }
 
   if (loading) {
-    return <p className="text-sm text-muted">{t('common.loading')}</p>
+    return <LoadingScreen />
   }
 
   return (
