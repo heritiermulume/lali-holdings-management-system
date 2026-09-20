@@ -186,7 +186,7 @@ function ResourcePage({
   )
 }
 
-export { KamsClients } from './KamsClientsPage'
+export { KamsClients, KamsClientsList, KamsClientsWorkspace, KamsSuppliersList } from './KamsClientsPage'
 
 export function KamsProducts() {
   const { t } = useTranslation()

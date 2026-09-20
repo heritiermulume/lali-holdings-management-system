@@ -10,6 +10,7 @@ use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockAssignment;
 use App\Modules\Kams\Models\KamsStockAssignmentItem;
+use App\Modules\Kams\Models\KamsStockAdjustment;
 use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockMovement;
 use App\Modules\Kams\Models\KamsStockReceipt;
@@ -67,7 +68,7 @@ class StockInventory
      */
     public function createReceipt(KamsDepot $warehouse, array $items, ?string $supplier, ?int $userId, ?string $notes = null): KamsStockReceipt
     {
-        abort_unless($warehouse->isWarehouse(), 422, __('Receptions are recorded at a warehouse.'));
+        abort_unless(in_array($warehouse->kind, ['warehouse', 'depot'], true), 422, __('Receptions are recorded at a warehouse or office depot.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
 
         return DB::transaction(function () use ($warehouse, $items, $supplier, $userId, $notes) {
@@ -141,7 +142,15 @@ class StockInventory
         abort_unless($to->kind === 'depot', 422, __('Transfers must arrive in an office depot.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
 
-        return DB::transaction(function () use ($from, $to, $items, $userId, $notes) {
+        $aggregated = [];
+        foreach ($items as $item) {
+            $productId = (int) $item['product_id'];
+            $quantity = (int) $item['quantity'];
+            abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
+            $aggregated[$productId] = ($aggregated[$productId] ?? 0) + $quantity;
+        }
+
+        return DB::transaction(function () use ($from, $to, $aggregated, $userId, $notes) {
             $transfer = KamsStockTransfer::query()->create([
                 'company_id' => $from->company_id,
                 'reference' => 'TR-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
@@ -154,10 +163,15 @@ class StockInventory
                 'transferred_at' => now(),
             ]);
 
-            foreach ($items as $item) {
-                $product = KamsProduct::query()->where('company_id', $from->company_id)->findOrFail($item['product_id']);
-                $quantity = (int) $item['quantity'];
-                abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
+            foreach ($aggregated as $productId => $quantity) {
+                $product = KamsProduct::query()->where('company_id', $from->company_id)->findOrFail($productId);
+                $available = $this->quantityAt($from, $product, 'available');
+                abort_unless($available >= $quantity, 422, __('Insufficient stock for :product at :location. Available: :available, requested: :requested.', [
+                    'product' => $product->name,
+                    'location' => $from->name,
+                    'available' => $available,
+                    'requested' => $quantity,
+                ]));
                 $cost = $this->unitCost($product);
                 $this->changeBalance($from, $product, -$quantity, 'available');
                 $this->changeBalance($from, $product, $quantity, 'in_transit');
@@ -171,7 +185,7 @@ class StockInventory
                 $this->syncProductStock($product);
             }
 
-            return $transfer->load(['fromDepot', 'toDepot.office', 'items.product']);
+            return $transfer->load(['fromDepot', 'toDepot.office', 'items.product', 'createdBy:id,name', 'dispatchedBy:id,name']);
         });
     }
 
@@ -195,7 +209,14 @@ class StockInventory
                 'received_by' => $userId,
             ]);
 
-            return $transfer->fresh(['fromDepot', 'toDepot.office', 'items.product']);
+            return $transfer->fresh([
+                'fromDepot',
+                'toDepot.office',
+                'items.product',
+                'createdBy:id,name',
+                'dispatchedBy:id,name',
+                'receivedBy:id,name',
+            ]);
         });
     }
 
@@ -244,6 +265,195 @@ class StockInventory
             }
 
             return $assignment->load(['member', 'office', 'depot', 'items.product']);
+        });
+    }
+
+    /**
+     * Add products/quantities to an open assignment, optionally collecting prepaid cash from prior sales.
+     *
+     * @param  list<array{product_id:int, quantity:int}>  $items
+     */
+    public function addToAssignment(
+        KamsStockAssignment $assignment,
+        array $items,
+        float $collectedAmount = 0,
+        ?int $userId = null,
+        ?string $notes = null,
+    ): KamsStockAssignment {
+        abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+        abort_unless($items !== [], 422, __('Add at least one product.'));
+        abort_unless($collectedAmount >= 0, 422, __('Collected amount must be zero or greater.'));
+
+        return DB::transaction(function () use ($assignment, $items, $collectedAmount, $userId, $notes) {
+            $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
+            abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+            $assignment->load(['member', 'items']);
+            $member = $assignment->member;
+            abort_unless($member, 422, __('The assignment has no agent.'));
+            abort_unless($member->status === 'active', 422, __('Only active agents can receive stock.'));
+
+            $depot = KamsDepot::query()->findOrFail($assignment->depot_id);
+            $seller = $this->sellerLocation($member);
+            $existingByProduct = $assignment->items->keyBy('product_id');
+            $movementNote = $notes ?: __('Top-up for assignment :ref', ['ref' => $assignment->reference]);
+
+            foreach ($items as $item) {
+                $product = KamsProduct::query()->where('company_id', $assignment->company_id)->findOrFail($item['product_id']);
+                $quantity = (int) $item['quantity'];
+                abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
+                $cost = $this->unitCost($product);
+                $this->changeBalance($depot, $product, -$quantity, 'available');
+                $this->changeBalance($seller, $product, $quantity, 'available');
+
+                $existing = $existingByProduct->get($product->id);
+                if ($existing) {
+                    $existing->update(['quantity_out' => (int) $existing->quantity_out + $quantity]);
+                } else {
+                    $created = KamsStockAssignmentItem::query()->create([
+                        'assignment_id' => $assignment->id,
+                        'product_id' => $product->id,
+                        'quantity_out' => $quantity,
+                        'unit_price' => (float) $product->price,
+                        'unit_cost' => $cost,
+                    ]);
+                    $existingByProduct->put($product->id, $created);
+                }
+
+                $this->recordMovement(
+                    $product,
+                    $quantity,
+                    'assignment',
+                    $userId,
+                    $depot->id,
+                    $seller->id,
+                    $assignment,
+                    $member->id,
+                    $movementNote,
+                    'available',
+                    $userId,
+                    $cost,
+                );
+                $this->syncProductStock($product);
+            }
+
+            $updates = [];
+            if ($collectedAmount > 0) {
+                $updates['collected_amount'] = round((float) $assignment->collected_amount + $collectedAmount, 2);
+            }
+            if ($notes) {
+                $updates['notes'] = trim(($assignment->notes ? $assignment->notes."\n" : '').$notes);
+            } elseif ($collectedAmount > 0) {
+                $cashNote = __('Prepaid cash collected: :amount', [
+                    'amount' => number_format($collectedAmount, 2, '.', ''),
+                ]);
+                $updates['notes'] = trim(($assignment->notes ? $assignment->notes."\n" : '').$cashNote);
+            }
+            if ($updates !== []) {
+                $assignment->update($updates);
+            }
+
+            return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+        });
+    }
+
+    /**
+     * Update quantities on an open assignment (absolute quantity_out per line).
+     *
+     * @param  list<array{id:int, quantity:int}>  $items
+     */
+    public function updateAssignment(
+        KamsStockAssignment $assignment,
+        array $items,
+        ?int $userId = null,
+        ?string $notes = null,
+    ): KamsStockAssignment {
+        abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+        abort_unless($items !== [], 422, __('Add at least one product.'));
+
+        return DB::transaction(function () use ($assignment, $items, $userId, $notes) {
+            $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
+            abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+            $assignment->load(['member', 'items.product']);
+            $member = $assignment->member;
+            abort_unless($member, 422, __('The assignment has no agent.'));
+
+            $depot = KamsDepot::query()->findOrFail($assignment->depot_id);
+            $seller = $this->sellerLocation($member);
+            $byId = $assignment->items->keyBy('id');
+            $seen = [];
+            $movementNote = $notes ?: __('Assignment update :ref', ['ref' => $assignment->reference]);
+
+            foreach ($items as $payload) {
+                $line = $byId->get((int) $payload['id']);
+                abort_unless($line, 422, __('Assignment line not found.'));
+                abort_unless(! in_array($line->id, $seen, true), 422, __('Duplicate assignment line.'));
+                $seen[] = $line->id;
+
+                $newQty = (int) $payload['quantity'];
+                abort_unless($newQty >= 0, 422, __('Quantity must be zero or greater.'));
+                $oldQty = (int) $line->quantity_out;
+                $delta = $newQty - $oldQty;
+                if ($delta === 0) {
+                    continue;
+                }
+
+                $product = $line->product ?: KamsProduct::query()->findOrFail($line->product_id);
+                $cost = (float) $line->unit_cost;
+                if ($delta > 0) {
+                    $this->changeBalance($depot, $product, -$delta, 'available');
+                    $this->changeBalance($seller, $product, $delta, 'available');
+                    $this->recordMovement(
+                        $product,
+                        $delta,
+                        'assignment',
+                        $userId,
+                        $depot->id,
+                        $seller->id,
+                        $assignment,
+                        $member->id,
+                        $movementNote,
+                        'available',
+                        $userId,
+                        $cost,
+                    );
+                } else {
+                    $returnQty = abs($delta);
+                    $this->changeBalance($seller, $product, -$returnQty, 'available');
+                    $this->changeBalance($depot, $product, $returnQty, 'available');
+                    $this->recordMovement(
+                        $product,
+                        $returnQty,
+                        'assignment',
+                        $userId,
+                        $seller->id,
+                        $depot->id,
+                        $assignment,
+                        $member->id,
+                        $movementNote,
+                        'available',
+                        $userId,
+                        $cost,
+                    );
+                }
+                $this->syncProductStock($product);
+
+                if ($newQty === 0) {
+                    $line->delete();
+                } else {
+                    $line->update(['quantity_out' => $newQty]);
+                }
+            }
+
+            $remaining = $assignment->items()->count();
+            abort_unless($remaining > 0, 422, __('An assignment must keep at least one product.'));
+
+            if ($notes) {
+                $assignment->update([
+                    'notes' => trim(($assignment->notes ? $assignment->notes."\n" : '').$notes),
+                ]);
+            }
+
+            return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
         });
     }
 
@@ -469,6 +679,95 @@ class StockInventory
         ]);
 
         return $commission->fresh(['member', 'sale']);
+    }
+
+    /**
+     * Traceable stock correction at a warehouse or depot.
+     * - defective: available → damaged
+     * - lost: write-off from available
+     * - found: add to available
+     */
+    public function adjust(
+        KamsDepot $location,
+        KamsProduct $product,
+        string $type,
+        int $quantity,
+        string $reason,
+        ?int $userId = null,
+    ): KamsStockAdjustment {
+        abort_unless(in_array($type, ['defective', 'lost', 'found'], true), 422, __('Unknown adjustment type.'));
+        abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
+        abort_unless(trim($reason) !== '', 422, __('A reason is required for stock adjustments.'));
+        abort_unless($location->company_id === $product->company_id, 422, __('Product and location must belong to the same company.'));
+        abort_unless(in_array($location->kind, ['warehouse', 'depot'], true), 422, __('Adjustments apply only to warehouses and office depots.'));
+
+        return DB::transaction(function () use ($location, $product, $type, $quantity, $reason, $userId) {
+            $before = $this->quantityAt($location, $product, 'available');
+
+            if ($type === 'found') {
+                $this->changeBalance($location, $product, $quantity, 'available');
+                $after = $before + $quantity;
+                $movementType = 'adjustment';
+                $condition = 'available';
+                $fromId = null;
+                $toId = $location->id;
+            } elseif ($type === 'defective') {
+                abort_unless($before >= $quantity, 422, __('Insufficient stock for :product at :location.', [
+                    'product' => $product->name,
+                    'location' => $location->name,
+                ]));
+                $this->changeBalance($location, $product, -$quantity, 'available');
+                $this->changeBalance($location, $product, $quantity, 'damaged');
+                $after = $before - $quantity;
+                $movementType = 'loss';
+                $condition = 'damaged';
+                $fromId = $location->id;
+                $toId = $location->id;
+            } else {
+                abort_unless($before >= $quantity, 422, __('Insufficient stock for :product at :location.', [
+                    'product' => $product->name,
+                    'location' => $location->name,
+                ]));
+                $this->changeBalance($location, $product, -$quantity, 'available');
+                $after = $before - $quantity;
+                $movementType = 'loss';
+                $condition = 'available';
+                $fromId = $location->id;
+                $toId = null;
+            }
+
+            $adjustment = KamsStockAdjustment::query()->create([
+                'company_id' => $location->company_id,
+                'reference' => 'AJ-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
+                'depot_id' => $location->id,
+                'product_id' => $product->id,
+                'type' => $type,
+                'quantity' => $quantity,
+                'quantity_before' => $before,
+                'quantity_after' => $after,
+                'reason' => trim($reason),
+                'created_by' => $userId,
+                'adjusted_at' => now(),
+            ]);
+
+            $this->recordMovement(
+                $product,
+                $quantity,
+                $movementType,
+                $userId,
+                $fromId,
+                $toId,
+                $adjustment,
+                null,
+                trim($reason),
+                $condition,
+                $userId,
+                $this->unitCost($product),
+            );
+            $this->syncProductStock($product);
+
+            return $adjustment->load(['depot', 'product', 'creator:id,name']);
+        });
     }
 
     public function quantityAt(KamsDepot $location, KamsProduct $product, string $condition = 'available'): int

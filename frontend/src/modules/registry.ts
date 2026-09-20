@@ -81,7 +81,7 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     items: [
       { to: '/modules/kams', labelKey: 'nav.dashboard', descriptionKey: 'kams.dashboardHint', icon: LayoutDashboard, end: true, perm: 'kams.dashboard.view' },
       { to: '/modules/kams/members', labelKey: 'kams.members', descriptionKey: 'kams.membersHint', icon: Users, perm: 'kams.members.view', anyPerm: ['kams.members.view', 'kams.recruitment.view'] },
-      { to: '/modules/kams/clients', labelKey: 'kams.clients', descriptionKey: 'kams.clientsHint', icon: Users, perm: 'kams.clients.view' },
+      { to: '/modules/kams/clients', labelKey: 'kams.clientsAndSuppliers', descriptionKey: 'kams.clientsAndSuppliersHint', icon: Users, perm: 'kams.clients.view' },
       { to: '/modules/kams/stock', labelKey: 'kams.stock', descriptionKey: 'kams.stockHint', icon: Warehouse, anyPerm: ['kams.products.view', 'kams.orders.view'] },
       { to: '/modules/kams/finance', labelKey: 'kams.finance', descriptionKey: 'kams.financeHint', icon: Landmark, anyPerm: ['kams.finance.dashboard.view', 'kams.finance.account.view', 'kams.finance.company.view'] },
       { to: '/modules/kams/campaigns', labelKey: 'kams.campaigns', descriptionKey: 'kams.campaignsHint', icon: Megaphone, perm: 'kams.campaigns.view' },

@@ -13,6 +13,14 @@ void i18n.use(initReactI18next).init({
   lng: saved,
   fallbackLng: 'en',
   interpolation: { escapeValue: false },
+}).then(() => {
+  document.documentElement.lang = i18n.language.startsWith('en') ? 'en' : 'fr'
+})
+
+i18n.on('languageChanged', (lng) => {
+  const next = lng.startsWith('en') ? 'en' : 'fr'
+  localStorage.setItem('lhms_locale', next)
+  document.documentElement.lang = next
 })
 
 export default i18n

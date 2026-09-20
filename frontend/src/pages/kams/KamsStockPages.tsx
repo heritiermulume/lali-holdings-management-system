@@ -82,12 +82,8 @@ export function KamsStockWorkspace() {
         tabs={[
           { to: '/modules/kams/stock', end: true, label: t('kams.statistics'), show: canStock || hasPermission('kams.orders.view') },
           { to: '/modules/kams/stock/warehouses', end: true, label: t('kams.warehouses'), show: canStock },
-          { to: '/modules/kams/stock/depots', end: true, label: t('kams.depot'), show: canStock },
-          { to: '/modules/kams/stock/products', end: true, label: t('kams.products'), show: canStock },
-          { to: '/modules/kams/stock/receipts', end: true, label: t('kams.receipts'), show: canStock },
-          { to: '/modules/kams/stock/transfers', end: true, label: t('kams.transfers'), show: canStock },
-          { to: '/modules/kams/stock/assignments', end: true, label: t('kams.assignments'), show: canStock },
-          { to: '/modules/kams/stock/returns', end: true, label: t('kams.returns'), show: canStock },
+          { to: '/modules/kams/stock/depots', end: true, label: t('kams.depots'), show: canStock },
+          { to: '/modules/kams/stock/assignments', label: t('kams.commercialOperations'), show: canStock },
         ]}
       />
       <Outlet />
@@ -177,7 +173,7 @@ export function KamsStockStats() {
           <div className="mt-2 text-2xl font-extrabold">{data.totals.warehouse_units}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.depot')}</div>
+          <div className="text-sm text-muted">{t('kams.depots')}</div>
           <div className="mt-2 text-2xl font-extrabold">{data.totals.depot_units}</div>
         </Card>
         <Card className="p-4">

@@ -1,5 +1,6 @@
 import { Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
@@ -10,12 +11,15 @@ import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
 import { initials } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
+import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type Office = { id: number; company_id: number; name: string; code: string; city?: { id: number; name: string } | null }
+type Location = { id: number; company_id?: number; name: string; code?: string | null }
 type Client = {
   id: number
   company_id?: number
   office_id?: number | null
+  kind?: 'client' | 'supplier'
   name: string
   email?: string | null
   phone?: string | null
@@ -24,7 +28,10 @@ type Client = {
   status: string
   notes?: string | null
   office?: { id: number; name: string; code?: string; city?: { name?: string } | null } | null
+  warehouses?: Array<{ id: number; name: string; code?: string | null }> | null
 }
+
+type PartyKind = 'client' | 'supplier'
 
 function csvCell(value: unknown) {
   return `"${String(value ?? '').replace(/"/g, '""')}"`
@@ -53,12 +60,42 @@ function toneFor(status: string): 'green' | 'amber' | 'red' | 'slate' {
 const SEGMENTS = ['retail', 'wholesale', 'distributor', 'corporate', 'other'] as const
 const STATUSES = ['prospect', 'active', 'inactive'] as const
 
-export function KamsClients() {
+export function KamsClientsWorkspace() {
+  const { t } = useTranslation()
+  const { hasPermission } = useAuth()
+  const canView = hasPermission('kams.clients.view')
+
+  return (
+    <div>
+      <KamsWorkspaceTabs
+        tabs={[
+          { to: '/modules/kams/clients', end: true, label: t('kams.clients'), show: canView },
+          { to: '/modules/kams/clients/suppliers', end: true, label: t('kams.suppliers'), show: canView },
+        ]}
+      />
+      <Outlet />
+    </div>
+  )
+}
+
+export function KamsClientsList() {
+  return <KamsPartyDirectory kind="client" />
+}
+
+export function KamsSuppliersList() {
+  return <KamsPartyDirectory kind="supplier" />
+}
+
+function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   const { t } = useTranslation()
   const { hasPermission, user } = useAuth()
+  const isSupplier = kind === 'supplier'
   const [rows, setRows] = useState<Client[]>([])
   const [offices, setOffices] = useState<Office[]>([])
+  const [warehouses, setWarehouses] = useState<Location[]>([])
   const [canChooseOffice, setCanChooseOffice] = useState(false)
+  const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<number[]>([])
+  const [assignAllWarehouses, setAssignAllWarehouses] = useState(true)
   const [status, setStatus] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
@@ -76,10 +113,22 @@ export function KamsClients() {
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
 
+  const labels = {
+    title: isSupplier ? t('kams.suppliers') : t('kams.clients'),
+    hint: isSupplier ? t('kams.suppliersHint') : t('kams.clientsPageHint'),
+    search: isSupplier ? t('kams.searchSuppliers') : t('kams.searchClients'),
+    add: isSupplier ? t('kams.addSupplier') : t('kams.addClient'),
+    edit: isSupplier ? t('kams.editSupplier') : t('kams.editClient'),
+    remove: isSupplier ? t('kams.deleteSupplier') : t('kams.deleteClient'),
+    removeConfirm: isSupplier ? 'kams.deleteSupplierConfirm' : 'kams.deleteClientConfirm',
+    required: isSupplier ? t('kams.requiredSupplierFields') : t('kams.requiredClientFields'),
+    exportPrefix: isSupplier ? 'fournisseurs' : 'clients',
+  }
+
   const load = (term = query) => {
     setLoading(true)
     return api.get('/modules/kams/clients', {
-      params: { per_page: 50, ...(status ? { status } : {}), ...(term ? { search: term } : {}) },
+      params: { per_page: 50, kind, ...(status ? { status } : {}), ...(term ? { search: term } : {}) },
     }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
   }
 
@@ -98,14 +147,28 @@ export function KamsClients() {
   }, [])
 
   useEffect(() => {
+    setSearch('')
+    setQuery('')
+    setStatus('')
+    setFormOpen(false)
+    setEditing(null)
+    setViewing(null)
+    setDeleting(null)
+  }, [kind])
+
+  useEffect(() => {
     void load()
-  }, [status, query])
+  }, [status, query, kind])
 
   useEffect(() => {
     api.get('/modules/kams/clients/lookups').then((res) => {
       const list = (res.data.data.offices || []) as Office[]
+      const warehouseList = (res.data.data.warehouses || []) as Location[]
       setOffices(list)
+      setWarehouses(warehouseList)
       setCanChooseOffice(Boolean(res.data.data.can_choose_office) || list.length > 1)
+      setSelectedWarehouseIds(warehouseList.map((row) => row.id))
+      setAssignAllWarehouses(true)
     })
   }, [])
 
@@ -113,6 +176,8 @@ export function KamsClients() {
     setEditing(null)
     setForm({})
     setFormError('')
+    setSelectedWarehouseIds(warehouses.map((row) => row.id))
+    setAssignAllWarehouses(true)
   }
 
   const assignedOfficeId = () => {
@@ -124,13 +189,23 @@ export function KamsClients() {
 
   const openCreate = () => {
     resetForm()
-    setForm({ status: 'prospect', segment: 'retail', office_id: assignedOfficeId() })
+    setForm({
+      status: isSupplier ? 'active' : 'prospect',
+      segment: 'retail',
+      office_id: assignedOfficeId(),
+    })
+    setSelectedWarehouseIds(warehouses.map((row) => row.id))
+    setAssignAllWarehouses(true)
     setFormOpen(true)
   }
 
   const openEdit = (row: Client) => {
     resetForm()
     setEditing(row)
+    const linkedIds = (row.warehouses || []).map((item) => item.id)
+    const allIds = warehouses.map((item) => item.id)
+    setSelectedWarehouseIds(linkedIds.length ? linkedIds : allIds)
+    setAssignAllWarehouses(linkedIds.length > 0 && allIds.length > 0 && linkedIds.length === allIds.length)
     setForm({
       office_id: row.office_id ? String(row.office_id) : '',
       name: row.name || '',
@@ -138,7 +213,7 @@ export function KamsClients() {
       phone: row.phone || '',
       city: row.city || '',
       segment: row.segment || 'retail',
-      status: row.status || 'prospect',
+      status: row.status || (isSupplier ? 'active' : 'prospect'),
       notes: row.notes || '',
     })
     setFormOpen(true)
@@ -147,22 +222,31 @@ export function KamsClients() {
   const submitClient = async (event: FormEvent) => {
     event.preventDefault()
     const officeId = canChooseOffice ? form.office_id : assignedOfficeId()
+    const warehouseIds = assignAllWarehouses ? warehouses.map((row) => row.id) : selectedWarehouseIds
     if (!form.name?.trim()) {
-      setFormError(t('kams.requiredClientFields'))
+      setFormError(labels.required)
       return
     }
-    if (canChooseOffice && !officeId) {
-      setFormError(t('kams.requiredClientFields'))
+    if (isSupplier) {
+      if (warehouseIds.length === 0) {
+        setFormError(t('kams.requiredSupplierWarehouse'))
+        return
+      }
+    } else if (canChooseOffice && !officeId) {
+      setFormError(labels.required)
       return
     }
     const payload = {
-      office_id: officeId ? Number(officeId) : undefined,
+      kind,
+      office_id: isSupplier ? undefined : (officeId ? Number(officeId) : undefined),
+      warehouse_ids: isSupplier ? warehouseIds : undefined,
+      assign_all_warehouses: isSupplier ? assignAllWarehouses : undefined,
       name: form.name.trim(),
       email: form.email || null,
       phone: form.phone || null,
       city: form.city || null,
-      segment: form.segment || 'retail',
-      status: form.status || 'prospect',
+      segment: isSupplier ? (form.segment || 'other') : (form.segment || 'retail'),
+      status: form.status || (isSupplier ? 'active' : 'prospect'),
       notes: form.notes || null,
     }
     setSaving(true)
@@ -194,6 +278,7 @@ export function KamsClients() {
 
   const clientParams = () => ({
     per_page: 1000,
+    kind,
     ...(status ? { status } : {}),
     ...(query ? { search: query } : {}),
   })
@@ -202,9 +287,9 @@ export function KamsClients() {
     t('org.name'),
     t('kams.email'),
     t('kams.phone'),
-    t('kams.office'),
+    isSupplier ? t('kams.warehouses') : t('kams.office'),
     t('kams.city'),
-    t('kams.segment'),
+    ...(isSupplier ? [] : [t('kams.segment')]),
     t('common.status'),
   ]
 
@@ -212,16 +297,18 @@ export function KamsClients() {
     row.name,
     row.email || '',
     row.phone || '',
-    row.office?.name || '',
+    isSupplier
+      ? ((row.warehouses || []).map((item) => item.name).join(', ') || '')
+      : (row.office?.name || ''),
     row.city || row.office?.city?.name || '',
-    t(`kams.segmentOption.${row.segment || 'other'}`, { defaultValue: row.segment || '' }),
+    ...(isSupplier ? [] : [t(`kams.segmentOption.${row.segment || 'other'}`, { defaultValue: row.segment || '' })]),
     t(`kams.status.${row.status}`, { defaultValue: row.status }),
   ]
 
   const printOptions = (list: Client[]) => ({
-    title: t('kams.clients'),
+    title: labels.title,
     module: t('kams.title'),
-    subtitle: t('kams.clientsHint'),
+    subtitle: labels.hint,
     meta: [
       { label: t('common.filter'), value: status ? t(`kams.status.${status}`) : t('common.all') },
       { label: t('common.records'), value: String(list.length) },
@@ -243,7 +330,7 @@ export function KamsClients() {
 
   const exportClients = async () => {
     const list = await loadClientsForPrint()
-    downloadCsv(`clients-${new Date().toISOString().slice(0, 10)}.csv`, [
+    downloadCsv(`${labels.exportPrefix}-${new Date().toISOString().slice(0, 10)}.csv`, [
       clientHeaders(),
       ...list.map(clientColumns),
     ])
@@ -260,17 +347,25 @@ export function KamsClients() {
     setPrintPreviewHtml(buildBrandedTableHtml(printOptions(list)))
   }
 
-  const subtitle = (row: Client) => [row.office?.name, row.phone, row.email, row.city].filter(Boolean).join(' · ') || '—'
+  const subtitle = (row: Client) => [
+    isSupplier
+      ? ((row.warehouses || []).map((item) => item.name).join(', ') || null)
+      : row.office?.name,
+    row.phone,
+    row.email,
+    row.city,
+  ].filter(Boolean).join(' · ') || '—'
 
   return (
     <div>
+      <p className="mb-4 text-sm text-muted">{labels.hint}</p>
       <div className="mb-4 flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
         <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('kams.searchClients')}
+            placeholder={labels.search}
             className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted"
           />
           <div ref={filterRef} className="relative shrink-0" onMouseDown={(event) => event.stopPropagation()}>
@@ -311,7 +406,7 @@ export function KamsClients() {
         <div className="flex shrink-0 flex-nowrap items-center gap-2">
           {hasPermission('kams.clients.create') ? (
             <Button className="shrink-0 px-3 sm:px-4" onClick={openCreate}>
-              <Plus size={16} /> {t('kams.addClient')}
+              <Plus size={16} /> {labels.add}
             </Button>
           ) : null}
           {hasPermission('kams.clients.view') ? (
@@ -404,32 +499,74 @@ export function KamsClients() {
         )}
       </Card>
 
-      <Modal open={formOpen} title={editing ? t('kams.editClient') : t('kams.addClient')} onClose={() => { setFormOpen(false); resetForm() }}>
+      <Modal open={formOpen} title={editing ? labels.edit : labels.add} onClose={() => { setFormOpen(false); resetForm() }}>
         <form className="space-y-3" onSubmit={(e) => void submitClient(e)}>
-          {canChooseOffice ? (
-          <Select label={t('kams.office')} required value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>
-            <option value="">—</option>
-            {offices.map((office) => (
-              <option key={office.id} value={office.id}>
-                {office.name}{office.city?.name ? ` · ${office.city.name}` : office.code ? ` (${office.code})` : ''}
-              </option>
-            ))}
-          </Select>
+          {isSupplier ? (
+            warehouses.length > 0 ? (
+              <div className="space-y-2 rounded-xl border border-line p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">{t('kams.warehouses')}</div>
+                  <label className="flex items-center gap-2 text-sm text-muted">
+                    <input
+                      type="checkbox"
+                      checked={assignAllWarehouses}
+                      onChange={(e) => {
+                        setAssignAllWarehouses(e.target.checked)
+                        if (e.target.checked) setSelectedWarehouseIds(warehouses.map((row) => row.id))
+                      }}
+                    />
+                    {t('kams.allWarehouses')}
+                  </label>
+                </div>
+                <div className="max-h-40 space-y-2 overflow-y-auto">
+                  {warehouses.map((warehouse) => (
+                    <label key={warehouse.id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={assignAllWarehouses || selectedWarehouseIds.includes(warehouse.id)}
+                        disabled={assignAllWarehouses}
+                        onChange={(e) => {
+                          setSelectedWarehouseIds((current) => (
+                            e.target.checked
+                              ? [...current, warehouse.id]
+                              : current.filter((id) => id !== warehouse.id)
+                          ))
+                        }}
+                      />
+                      <span>{warehouse.name}{warehouse.code ? ` (${warehouse.code})` : ''}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">{t('kams.noWarehousesYet')}</p>
+            )
+          ) : canChooseOffice ? (
+            <Select label={t('kams.office')} required value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>
+              <option value="">—</option>
+              {offices.map((office) => (
+                <option key={office.id} value={office.id}>
+                  {office.name}{office.city?.name ? ` · ${office.city.name}` : office.code ? ` (${office.code})` : ''}
+                </option>
+              ))}
+            </Select>
           ) : null}
           <Field label={t('org.name')} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={t('kams.phone')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className={cn('grid gap-3', isSupplier ? '' : 'sm:grid-cols-2')}>
             <Field label={t('kams.city')} value={form.city || ''} onChange={(e) => setForm({ ...form, city: e.target.value })} />
-            <Select label={t('kams.segment')} value={form.segment || 'retail'} onChange={(e) => setForm({ ...form, segment: e.target.value })}>
-              {SEGMENTS.map((segment) => (
-                <option key={segment} value={segment}>{t(`kams.segmentOption.${segment}`)}</option>
-              ))}
-            </Select>
+            {!isSupplier ? (
+              <Select label={t('kams.segment')} value={form.segment || 'retail'} onChange={(e) => setForm({ ...form, segment: e.target.value })}>
+                {SEGMENTS.map((segment) => (
+                  <option key={segment} value={segment}>{t(`kams.segmentOption.${segment}`)}</option>
+                ))}
+              </Select>
+            ) : null}
           </div>
-          <Select label={t('common.status')} value={form.status || 'prospect'} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+          <Select label={t('common.status')} value={form.status || (isSupplier ? 'active' : 'prospect')} onChange={(e) => setForm({ ...form, status: e.target.value })}>
             {STATUSES.map((value) => (
               <option key={value} value={value}>{t(`kams.status.${value}`)}</option>
             ))}
@@ -447,7 +584,7 @@ export function KamsClients() {
         </form>
       </Modal>
 
-      <Modal open={Boolean(viewing)} title={viewing?.name || t('kams.clients')} onClose={() => setViewing(null)}>
+      <Modal open={Boolean(viewing)} title={viewing?.name || labels.title} onClose={() => setViewing(null)}>
         {viewing ? (
           <div className="space-y-3 text-sm">
             <div className="flex justify-center pb-1">
@@ -455,19 +592,21 @@ export function KamsClients() {
                 {initials(viewing.name)}
               </span>
             </div>
-            <div>{t('kams.office')}: <strong>{viewing.office?.name || '—'}</strong></div>
+            <div>{isSupplier ? t('kams.warehouses') : t('kams.office')}: <strong>{isSupplier ? ((viewing.warehouses || []).map((item) => item.name).join(', ') || '—') : (viewing.office?.name || '—')}</strong></div>
             <div>{t('kams.email')}: <strong>{viewing.email || '—'}</strong></div>
             <div>{t('kams.phone')}: <strong>{viewing.phone || '—'}</strong></div>
             <div>{t('kams.city')}: <strong>{viewing.city || '—'}</strong></div>
-            <div>{t('kams.segment')}: <strong>{t(`kams.segmentOption.${viewing.segment || 'other'}`, { defaultValue: viewing.segment || '—' })}</strong></div>
+            {!isSupplier ? (
+              <div>{t('kams.segment')}: <strong>{t(`kams.segmentOption.${viewing.segment || 'other'}`, { defaultValue: viewing.segment || '—' })}</strong></div>
+            ) : null}
             <div>{t('common.status')}: <Badge tone={toneFor(viewing.status)}>{t(`kams.status.${viewing.status}`, { defaultValue: viewing.status })}</Badge></div>
             {viewing.notes ? <div>{t('kams.notes')}: {viewing.notes}</div> : null}
           </div>
         ) : null}
       </Modal>
 
-      <Modal open={Boolean(deleting)} title={t('kams.deleteClient')} onClose={() => setDeleting(null)}>
-        <p className="text-sm text-muted">{t('kams.deleteClientConfirm', { name: deleting?.name })}</p>
+      <Modal open={Boolean(deleting)} title={labels.remove} onClose={() => setDeleting(null)}>
+        <p className="text-sm text-muted">{t(labels.removeConfirm, { name: deleting?.name })}</p>
         <div className="mt-4 flex gap-2">
           <Button variant="secondary" className="flex-1" onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
           <Button variant="danger" className="flex-1" onClick={() => void removeClient()}>{t('common.delete')}</Button>
@@ -482,4 +621,9 @@ export function KamsClients() {
       />
     </div>
   )
+}
+
+/** @deprecated Prefer KamsClientsList / KamsSuppliersList */
+export function KamsClients() {
+  return <KamsClientsList />
 }

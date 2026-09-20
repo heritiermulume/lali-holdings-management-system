@@ -14,11 +14,13 @@ use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsOrder;
 use App\Modules\Kams\Models\KamsOrderItem;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Services\StockInventory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class KamsResourceController extends Controller
@@ -33,16 +35,30 @@ class KamsResourceController extends Controller
             ->orderBy('name')
             ->get(['id', 'company_id', 'name', 'code', 'city_id']);
 
+        $companyId = $this->kamsCompanyId($request) ?? $request->user()->primary_company_id;
+        $warehouses = KamsDepot::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('kind', 'warehouse')
+            ->where('status', 'active')
+            ->orderBy('name')
+            ->get(['id', 'company_id', 'name', 'code']);
+
         return $this->ok([
             'offices' => $offices,
+            'warehouses' => $warehouses,
             'can_choose_office' => $this->canChooseOffice($request, $offices->count()),
+            'can_choose_warehouse' => $warehouses->count() > 1 || $this->canManageWarehouses($request),
         ]);
     }
 
     public function clients(Request $request): JsonResponse
     {
         return $this->paginated(
-            $this->scoped(KamsClient::query()->with(['office:id,name,code,city_id', 'office.city:id,name']), $request)
+            $this->scoped(KamsClient::query()->with([
+                'office:id,name,code,city_id',
+                'office.city:id,name',
+                'warehouses:id,name,code',
+            ]), $request)
                 ->latest()
                 ->paginate($request->integer('per_page', 15))
         );
@@ -52,6 +68,10 @@ class KamsResourceController extends Controller
     {
         $data = $request->validate([
             'office_id' => ['nullable', 'exists:offices,id'],
+            'warehouse_ids' => ['nullable', 'array', 'min:1'],
+            'warehouse_ids.*' => ['integer', 'exists:kams_depots,id'],
+            'assign_all_warehouses' => ['nullable', 'boolean'],
+            'kind' => ['nullable', 'in:client,supplier'],
             'name' => ['required', 'string'],
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
@@ -60,11 +80,34 @@ class KamsResourceController extends Controller
             'status' => ['nullable', 'in:active,inactive,prospect'],
             'notes' => ['nullable', 'string'],
         ]);
-        $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
-        $data['office_id'] = $office->id;
-        $data['company_id'] = $office->company_id;
+        $data['kind'] = $data['kind'] ?? 'client';
+        $warehouseIds = [];
 
-        return $this->store(KamsClient::class, $data, $request);
+        if ($data['kind'] === 'supplier') {
+            $warehouses = $this->resolveSupplierWarehouses(
+                $request,
+                $data['warehouse_ids'] ?? null,
+                (bool) ($data['assign_all_warehouses'] ?? false),
+            );
+            $warehouseIds = $warehouses->pluck('id')->all();
+            $first = $warehouses->first();
+            $data['company_id'] = $first->company_id;
+            $data['office_id'] = $first->office_id ?: $this->kamsOffices($request)->value('id');
+        } else {
+            $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
+            $data['office_id'] = $office->id;
+            $data['company_id'] = $office->company_id;
+        }
+
+        unset($data['warehouse_ids'], $data['assign_all_warehouses']);
+        $this->assertCompany($request, (int) $data['company_id']);
+        $client = KamsClient::query()->create($data);
+        if ($data['kind'] === 'supplier') {
+            $client->warehouses()->sync($warehouseIds);
+        }
+        AuditLogger::record('create', $client, [], $data + ['warehouse_ids' => $warehouseIds]);
+
+        return $this->created($client->load(['office', 'warehouses']));
     }
 
     public function updateClient(Request $request, KamsClient $client): JsonResponse
@@ -73,6 +116,10 @@ class KamsResourceController extends Controller
 
         $data = $request->validate([
             'office_id' => ['nullable', 'exists:offices,id'],
+            'warehouse_ids' => ['nullable', 'array', 'min:1'],
+            'warehouse_ids.*' => ['integer', 'exists:kams_depots,id'],
+            'assign_all_warehouses' => ['nullable', 'boolean'],
+            'kind' => ['nullable', 'in:client,supplier'],
             'name' => ['sometimes', 'string'],
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
@@ -82,15 +129,39 @@ class KamsResourceController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
-        if ($this->canChooseOffice($request)) {
+        $kind = $data['kind'] ?? $client->kind ?? 'client';
+        $warehouseIds = null;
+
+        if ($kind === 'supplier') {
+            if (array_key_exists('warehouse_ids', $data) || $request->boolean('assign_all_warehouses') || $request->exists('warehouse_ids')) {
+                $warehouses = $this->resolveSupplierWarehouses(
+                    $request,
+                    $data['warehouse_ids'] ?? $client->warehouses()->pluck('kams_depots.id')->all(),
+                    (bool) ($data['assign_all_warehouses'] ?? false),
+                );
+                $warehouseIds = $warehouses->pluck('id')->all();
+                $first = $warehouses->first();
+                $data['company_id'] = $first->company_id;
+                $data['office_id'] = $first->office_id
+                    ?: ($client->office_id ?: $this->kamsOffices($request)->value('id'));
+            }
+        } elseif ($this->canChooseOffice($request)) {
             $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
             $data['office_id'] = $office->id;
             $data['company_id'] = $office->company_id;
+            $warehouseIds = [];
         } else {
             unset($data['office_id']);
         }
 
-        return $this->update($client, $data, $request);
+        unset($data['warehouse_ids'], $data['assign_all_warehouses']);
+        $client->fill($data)->save();
+        if ($warehouseIds !== null) {
+            $client->warehouses()->sync($warehouseIds);
+        }
+        AuditLogger::record('update', $client, [], $data + ['warehouse_ids' => $warehouseIds]);
+
+        return $this->ok($client->fresh(['office', 'warehouses']));
     }
 
     public function destroyClient(Request $request, KamsClient $client): JsonResponse
@@ -106,7 +177,7 @@ class KamsResourceController extends Controller
                     'office:id,name,code,city_id',
                     'office.city:id,name',
                     'province:id,name,name_fr',
-                    'balances.product:id,name,sku,price,cost',
+                    'balances.product:id,name,sku,price,cost,field_price,manager_price,company_price,description,image_path,stock',
                 ]),
                 $request
             )->latest()->paginate($request->integer('per_page', 50))
@@ -202,12 +273,31 @@ class KamsResourceController extends Controller
             'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'warehouse_id' => ['nullable', 'exists:kams_depots,id'],
+            'warehouse_ids' => ['nullable', 'array'],
+            'warehouse_ids.*' => ['integer', 'exists:kams_depots,id'],
+            'assign_all_warehouses' => ['nullable', 'boolean'],
             'status' => ['nullable', 'in:active,draft,archived'],
             'description' => ['nullable', 'string'],
+            'image' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
+            'depot_ids' => ['nullable', 'array'],
+            'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
+            'assign_all_depots' => ['nullable', 'boolean'],
         ]);
         $initial = (int) ($data['stock'] ?? 0);
         $warehouseId = $data['warehouse_id'] ?? null;
-        unset($data['stock'], $data['warehouse_id']);
+        $warehouseIds = $data['warehouse_ids'] ?? null;
+        $assignAllWarehouses = (bool) ($data['assign_all_warehouses'] ?? false);
+        $depotIds = $data['depot_ids'] ?? null;
+        $assignAll = (bool) ($data['assign_all_depots'] ?? false);
+        unset(
+            $data['stock'],
+            $data['warehouse_id'],
+            $data['warehouse_ids'],
+            $data['assign_all_warehouses'],
+            $data['depot_ids'],
+            $data['assign_all_depots'],
+            $data['image']
+        );
         $data['cost'] = $data['company_price'] ?? $data['cost'] ?? round(((float) $data['price']) * 0.6, 2);
         $data['field_price'] = $data['field_price'] ?? $data['price'];
         $data['company_price'] = $data['company_price'] ?? $data['cost'];
@@ -218,16 +308,34 @@ class KamsResourceController extends Controller
         $data['stock'] = 0;
         $data['status'] = $data['status'] ?? 'active';
 
+        if ($path = $this->storeProductImage($request)) {
+            $data['image_path'] = $path;
+        }
+
         $this->assertCompany($request, (int) $data['company_id']);
         $product = KamsProduct::query()->create($data);
         AuditLogger::record('create', $product, [], $data);
 
+        if ($assignAllWarehouses || $warehouseIds !== null) {
+            $this->syncProductWarehouses(
+                $product,
+                $assignAllWarehouses ? null : array_map('intval', $warehouseIds ?? []),
+                $assignAllWarehouses
+            );
+        }
+
         if ($initial > 0) {
-            $warehouse = $warehouseId
-                ? KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->findOrFail($warehouseId)
+            $receiveWarehouseId = $warehouseId
+                ?: (is_array($warehouseIds) && $warehouseIds !== [] ? (int) $warehouseIds[0] : null);
+            $warehouse = $receiveWarehouseId
+                ? KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->findOrFail($receiveWarehouseId)
                 : KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->first();
             abort_unless($warehouse, 422, __('Create a regional warehouse before receiving stock.'));
             $inventory->receive($warehouse, $product, $initial, $request->user()->id);
+        }
+
+        if ($assignAll || $depotIds !== null) {
+            $this->syncProductDepots($product, $assignAll ? null : array_map('intval', $depotIds ?? []), $assignAll);
         }
 
         return $this->created($product->fresh('balances.depot'));
@@ -235,7 +343,9 @@ class KamsResourceController extends Controller
 
     public function updateProduct(Request $request, KamsProduct $product): JsonResponse
     {
-        return $this->update($product, $request->validate([
+        $this->assertCompany($request, (int) $product->company_id);
+
+        $data = $request->validate([
             'sku' => ['nullable', 'string'],
             'name' => ['sometimes', 'string'],
             'category' => ['nullable', 'string'],
@@ -249,12 +359,136 @@ class KamsResourceController extends Controller
             'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', 'in:active,draft,archived'],
             'description' => ['nullable', 'string'],
-        ]), $request);
+            'image' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
+            'remove_image' => ['nullable', 'boolean'],
+            'warehouse_ids' => ['nullable', 'array'],
+            'warehouse_ids.*' => ['integer', 'exists:kams_depots,id'],
+            'assign_all_warehouses' => ['nullable', 'boolean'],
+            'depot_ids' => ['nullable', 'array'],
+            'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
+            'assign_all_depots' => ['nullable', 'boolean'],
+        ]);
+
+        $warehouseIds = array_key_exists('warehouse_ids', $data) ? $data['warehouse_ids'] : null;
+        $assignAllWarehouses = array_key_exists('assign_all_warehouses', $data) ? (bool) $data['assign_all_warehouses'] : null;
+        $depotIds = array_key_exists('depot_ids', $data) ? $data['depot_ids'] : null;
+        $assignAll = array_key_exists('assign_all_depots', $data) ? (bool) $data['assign_all_depots'] : null;
+        $removeImage = (bool) ($data['remove_image'] ?? false);
+        unset(
+            $data['warehouse_ids'],
+            $data['assign_all_warehouses'],
+            $data['depot_ids'],
+            $data['assign_all_depots'],
+            $data['image'],
+            $data['remove_image']
+        );
+
+        if ($request->has('field_price') || $request->has('price')) {
+            $field = (float) ($data['field_price'] ?? $data['price'] ?? $product->field_price ?? $product->price);
+            $data['field_price'] = $field;
+            $data['price'] = $field;
+        }
+        if (array_key_exists('company_price', $data) || array_key_exists('cost', $data)) {
+            $companyPrice = $data['company_price'] ?? $data['cost'] ?? $product->company_price ?? $product->cost;
+            $data['company_price'] = $companyPrice;
+            $data['cost'] = $companyPrice;
+        }
+
+        if ($path = $this->storeProductImage($request)) {
+            if ($product->image_path) {
+                Storage::disk('public')->delete($product->image_path);
+            }
+            $data['image_path'] = $path;
+        } elseif ($removeImage && $product->image_path) {
+            Storage::disk('public')->delete($product->image_path);
+            $data['image_path'] = null;
+        }
+
+        $product->fill($data)->save();
+        AuditLogger::record('update', $product, [], $data);
+
+        if ($assignAllWarehouses === true || $warehouseIds !== null) {
+            $this->syncProductWarehouses(
+                $product,
+                $assignAllWarehouses ? null : array_map('intval', $warehouseIds ?? []),
+                (bool) $assignAllWarehouses
+            );
+        }
+
+        if ($assignAll === true || $depotIds !== null) {
+            $this->syncProductDepots($product, $assignAll ? null : array_map('intval', $depotIds ?? []), (bool) $assignAll);
+        }
+
+        return $this->ok($product->fresh('balances.depot'));
     }
 
     public function destroyProduct(Request $request, KamsProduct $product): JsonResponse
     {
+        $this->assertCompany($request, (int) $product->company_id);
+        if ($product->image_path) {
+            Storage::disk('public')->delete($product->image_path);
+        }
+
         return $this->destroy($product, $request);
+    }
+
+    private function storeProductImage(Request $request): ?string
+    {
+        $image = $request->file('image');
+
+        return $image?->store('kams/products', 'public');
+    }
+
+    /**
+     * @param  list<int>|null  $locationIds
+     */
+    private function syncProductLocations(KamsProduct $product, string $kind, ?array $locationIds, bool $assignAll = false): void
+    {
+        $query = KamsDepot::query()
+            ->where('company_id', $product->company_id)
+            ->where('kind', $kind);
+
+        if (! $assignAll) {
+            $query->whereIn('id', $locationIds ?: [0]);
+        }
+
+        $locations = $query->get(['id', 'company_id']);
+        $selectedIds = $locations->pluck('id')->all();
+
+        foreach ($locations as $location) {
+            KamsStockBalance::query()->firstOrCreate(
+                ['depot_id' => $location->id, 'product_id' => $product->id, 'condition' => 'available'],
+                ['company_id' => $product->company_id, 'quantity' => 0]
+            );
+        }
+
+        $removable = KamsStockBalance::query()
+            ->where('product_id', $product->id)
+            ->where('condition', 'available')
+            ->where('quantity', 0)
+            ->whereHas('depot', fn ($q) => $q->where('kind', $kind));
+
+        if ($selectedIds) {
+            $removable->whereNotIn('depot_id', $selectedIds);
+        }
+
+        $removable->delete();
+    }
+
+    /**
+     * @param  list<int>|null  $warehouseIds
+     */
+    private function syncProductWarehouses(KamsProduct $product, ?array $warehouseIds, bool $assignAll = false): void
+    {
+        $this->syncProductLocations($product, 'warehouse', $warehouseIds, $assignAll);
+    }
+
+    /**
+     * @param  list<int>|null  $depotIds
+     */
+    private function syncProductDepots(KamsProduct $product, ?array $depotIds, bool $assignAll = false): void
+    {
+        $this->syncProductLocations($product, 'depot', $depotIds, $assignAll);
     }
 
     public function orders(Request $request): JsonResponse
@@ -381,6 +615,12 @@ class KamsResourceController extends Controller
             $query->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
         }
 
+        if ($table === 'kams_clients') {
+            $kind = $request->filled('kind') ? $request->string('kind')->toString() : 'client';
+            abort_unless(in_array($kind, ['client', 'supplier'], true), 422);
+            $query->where('kind', $kind);
+        }
+
         if ($table === 'kams_depots') {
             if ($request->filled('kind')) {
                 $query->where('kind', $request->string('kind')->toString());
@@ -446,5 +686,30 @@ class KamsResourceController extends Controller
         AuditLogger::record('delete', $model);
 
         return $this->ok(null, __('Deleted.'));
+    }
+
+    private function resolveSupplierWarehouses(Request $request, mixed $warehouseIds, bool $assignAll = false): \Illuminate\Support\Collection
+    {
+        $companyId = $this->kamsCompanyId($request) ?? $request->user()->primary_company_id;
+        $warehouses = KamsDepot::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('kind', 'warehouse')
+            ->where('status', 'active')
+            ->orderBy('name')
+            ->get();
+
+        abort_unless($warehouses->isNotEmpty(), 422, __('Create a regional warehouse before adding suppliers.'));
+
+        if ($assignAll || $warehouses->count() === 1) {
+            return $warehouses;
+        }
+
+        $ids = collect($warehouseIds ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        abort_unless($ids->isNotEmpty(), 422, __('Select at least one warehouse.'));
+
+        $selected = $warehouses->whereIn('id', $ids)->values();
+        abort_unless($selected->count() === $ids->count(), 422, __('One or more selected warehouses are invalid.'));
+
+        return $selected;
     }
 }

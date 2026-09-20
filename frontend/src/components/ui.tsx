@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/cn'
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
@@ -29,11 +30,60 @@ export function Button({
   )
 }
 
+function applyInputValidityMessage(
+  el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
+  t: (key: string, options?: Record<string, string>) => string,
+) {
+  if (el.validity.valid) {
+    el.setCustomValidity('')
+    return
+  }
+  if (el.validity.valueMissing) {
+    el.setCustomValidity(t('validation.required'))
+    return
+  }
+  if (el.validity.rangeOverflow) {
+    el.setCustomValidity(t('validation.max', { max: 'max' in el ? String(el.max) : '' }))
+    return
+  }
+  if (el.validity.rangeUnderflow) {
+    el.setCustomValidity(t('validation.min', { min: 'min' in el ? String(el.min) : '' }))
+    return
+  }
+  if (el.validity.stepMismatch) {
+    el.setCustomValidity(t('validation.step'))
+    return
+  }
+  if (el.validity.typeMismatch) {
+    el.setCustomValidity(t('validation.type'))
+    return
+  }
+  if (el.validity.tooShort) {
+    const minLength = 'minLength' in el ? String(el.minLength) : ''
+    el.setCustomValidity(t('validation.tooShort', { min: minLength }))
+    return
+  }
+  if (el.validity.tooLong) {
+    const maxLength = 'maxLength' in el ? String(el.maxLength) : ''
+    el.setCustomValidity(t('validation.tooLong', { max: maxLength }))
+    return
+  }
+  if (el.validity.patternMismatch) {
+    el.setCustomValidity(t('validation.pattern'))
+    return
+  }
+  el.setCustomValidity(t('validation.invalid'))
+}
+
 export function Field({
   label,
   className,
+  onInvalid,
+  onInput,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { label: string }) {
+  const { t } = useTranslation()
+
   return (
     <label className="block space-y-1.5">
       <span className="text-sm font-medium text-ink">
@@ -47,6 +97,14 @@ export function Field({
           className,
         )}
         {...props}
+        onInvalid={(event) => {
+          applyInputValidityMessage(event.currentTarget, t)
+          onInvalid?.(event)
+        }}
+        onInput={(event) => {
+          event.currentTarget.setCustomValidity('')
+          onInput?.(event)
+        }}
       />
     </label>
   )
@@ -56,8 +114,12 @@ export function Select({
   label,
   children,
   className,
+  onInvalid,
+  onChange,
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; children: ReactNode }) {
+  const { t } = useTranslation()
+
   return (
     <label className="block space-y-1.5">
       <span className="text-sm font-medium text-ink">
@@ -71,6 +133,14 @@ export function Select({
           className,
         )}
         {...props}
+        onInvalid={(event) => {
+          applyInputValidityMessage(event.currentTarget, t)
+          onInvalid?.(event)
+        }}
+        onChange={(event) => {
+          event.currentTarget.setCustomValidity('')
+          onChange?.(event)
+        }}
       >
         {children}
       </select>
@@ -118,18 +188,19 @@ export function Modal({
   onClose: () => void
   size?: 'default' | 'lg'
 }) {
+  const { t } = useTranslation()
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-6">
-      <button className="absolute inset-0" aria-label="Close" onClick={onClose} />
+      <button className="absolute inset-0" aria-label={t('common.close')} onClick={onClose} />
       <div className={cn(
         'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl',
         size === 'lg' ? 'max-w-3xl' : 'max-w-lg',
       )}>
         <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-3 pt-5 sm:px-6 sm:pt-6">
           <h2 className="min-w-0 text-lg font-bold">{title}</h2>
-          <button type="button" onClick={onClose} className="shrink-0 text-sm text-muted" aria-label="Close">✕</button>
+          <button type="button" onClick={onClose} className="shrink-0 text-sm text-muted" aria-label={t('common.close')}>✕</button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-5 pb-5 sm:px-6 sm:pb-6">
           {children}

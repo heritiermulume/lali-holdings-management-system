@@ -4,15 +4,18 @@ namespace App\Modules\Kams\Models;
 
 use App\Models\Company;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['company_id', 'sku', 'name', 'category', 'collection', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'status', 'description'])]
+#[Fillable(['company_id', 'sku', 'name', 'category', 'collection', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'status', 'description', 'image_path'])]
 class KamsProduct extends Model
 {
     use SoftDeletes;
+
+    protected $appends = ['image_url'];
 
     protected function casts(): array
     {
@@ -27,6 +30,11 @@ class KamsProduct extends Model
             'manager_share_percent' => 'float',
             'stock' => 'integer',
         ];
+    }
+
+    protected function imageUrl(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->image_path ? '/storage/'.$this->image_path : null);
     }
 
     public function fieldPrice(): float

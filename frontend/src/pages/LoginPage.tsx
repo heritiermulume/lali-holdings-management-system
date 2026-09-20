@@ -17,6 +17,7 @@ export function LoginPage() {
   useEffect(() => {
     api.get('/public/bootstrap').then((res) => {
       const locale = res.data.data?.default_locale === 'en' ? 'en' : 'fr'
+      localStorage.setItem('lhms_locale', locale)
       void i18n.changeLanguage(locale)
     }).catch(() => undefined)
   }, [i18n])
@@ -68,7 +69,14 @@ export function LoginPage() {
           </Button>
           <div className="flex items-center justify-between text-sm text-muted">
             <span>{t('auth.hint')}</span>
-            <button type="button" onClick={() => void i18n.changeLanguage(i18n.language.startsWith('fr') ? 'en' : 'fr')}>
+            <button
+              type="button"
+              onClick={() => {
+                const next = i18n.language.startsWith('fr') ? 'en' : 'fr'
+                localStorage.setItem('lhms_locale', next)
+                void i18n.changeLanguage(next)
+              }}
+            >
               {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
             </button>
           </div>

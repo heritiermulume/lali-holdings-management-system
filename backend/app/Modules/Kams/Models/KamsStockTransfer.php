@@ -41,4 +41,14 @@ class KamsStockTransfer extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    public function dispatchedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'dispatched_by');
+    }
+
+    public function receivedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'received_by');
+    }
 }

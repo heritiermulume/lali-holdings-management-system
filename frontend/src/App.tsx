@@ -18,11 +18,13 @@ import { UsersPage } from './pages/UsersPage'
 import { GroupSettingsPage, ModuleSettingsPage, SettingsHome, SettingsWorkspace } from './pages/settings/SettingsPages'
 import { FinanceSettingsPage } from './pages/settings/FinanceSettingsPage'
 import { RolesSettingsPage } from './pages/settings/RolesSettingsPage'
-import { KamsCampaigns, KamsClients, KamsEntry } from './pages/kams/KamsPages'
+import { KamsCampaigns, KamsEntry } from './pages/kams/KamsPages'
 import { KamsAgents, KamsCandidates, KamsMembersWorkspace, KamsRecruitmentDashboard } from './pages/kams/KamsRecruitmentPages'
-import { KamsAssignments, KamsTransfers } from './pages/kams/KamsStockFlows'
-import { KamsReceipts, KamsReturns } from './pages/kams/KamsStockCommerce'
-import { KamsDepots, KamsStockProducts, KamsWarehouses } from './pages/kams/KamsStockLocations'
+import { KamsClientsList, KamsClientsWorkspace, KamsSuppliersList } from './pages/kams/KamsClientsPage'
+import { KamsAssignments, KamsAssignmentsWorkspace } from './pages/kams/KamsStockFlows'
+import { KamsAssignmentReports } from './pages/kams/KamsAssignmentReports'
+import { KamsDepots, KamsWarehouses } from './pages/kams/KamsStockLocations'
+import { KamsWarehouseMovements } from './pages/kams/KamsWarehouseMovements'
 import { KamsStockStats, KamsStockWorkspace } from './pages/kams/KamsStockPages'
 import { KamsAccountPage } from './pages/kams/KamsAccountPage'
 import { KamsCompanyAccountPage } from './pages/kams/KamsCompanyAccountPage'
@@ -99,17 +101,25 @@ export default function App() {
           <Route path="candidates" element={<Navigate to="/modules/kams/members/recruitment" replace />} />
           <Route path="migration" element={<Navigate to="/modules/kams/members/agents" replace />} />
           <Route path="communications" element={<Navigate to="/modules/kams/members" replace />} />
-          <Route path="clients" element={<RequirePermission perm="kams.clients.view"><KamsClients /></RequirePermission>} />
+          <Route path="clients" element={<RequirePermission perm="kams.clients.view"><KamsClientsWorkspace /></RequirePermission>}>
+            <Route index element={<KamsClientsList />} />
+            <Route path="suppliers" element={<KamsSuppliersList />} />
+          </Route>
           <Route path="stock" element={<RequirePermission anyPerm={['kams.products.view', 'kams.orders.view']}><KamsStockWorkspace /></RequirePermission>}>
             <Route index element={<KamsStockStats />} />
             <Route path="warehouses" element={<RequirePermission perm="kams.products.view"><KamsWarehouses /></RequirePermission>} />
+            <Route path="warehouses/:warehouseId/movements" element={<RequirePermission perm="kams.products.view"><KamsWarehouseMovements /></RequirePermission>} />
             <Route path="depots" element={<RequirePermission perm="kams.products.view"><KamsDepots /></RequirePermission>} />
-            <Route path="products" element={<RequirePermission perm="kams.products.view"><KamsStockProducts /></RequirePermission>} />
-            <Route path="transfers" element={<RequirePermission perm="kams.products.view"><KamsTransfers /></RequirePermission>} />
-            <Route path="receipts" element={<RequirePermission perm="kams.products.view"><KamsReceipts /></RequirePermission>} />
-            <Route path="assignments" element={<RequirePermission perm="kams.products.view"><KamsAssignments /></RequirePermission>} />
+            <Route path="depots/:depotId/movements" element={<RequirePermission perm="kams.products.view"><KamsWarehouseMovements /></RequirePermission>} />
+            <Route path="products" element={<Navigate to="/modules/kams/stock/warehouses" replace />} />
+            <Route path="transfers" element={<Navigate to="/modules/kams/stock/warehouses" replace />} />
+            <Route path="receipts" element={<Navigate to="/modules/kams/stock/warehouses" replace />} />
+            <Route path="assignments" element={<RequirePermission perm="kams.products.view"><KamsAssignmentsWorkspace /></RequirePermission>}>
+              <Route index element={<KamsAssignments />} />
+              <Route path="reports" element={<KamsAssignmentReports />} />
+            </Route>
             <Route path="sales" element={<Navigate to="/modules/kams/stock/assignments" replace />} />
-            <Route path="returns" element={<RequirePermission perm="kams.products.view"><KamsReturns /></RequirePermission>} />
+            <Route path="returns" element={<Navigate to="/modules/kams/stock" replace />} />
             <Route path="commissions" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="savings" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="daily" element={<Navigate to="/modules/kams/finance" replace />} />
@@ -128,7 +138,7 @@ export default function App() {
             <Route path="daily" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="hierarchy" element={<Navigate to="/modules/kams/finance" replace />} />
           </Route>
-          <Route path="products" element={<Navigate to="/modules/kams/stock/products" replace />} />
+          <Route path="products" element={<Navigate to="/modules/kams/stock/warehouses" replace />} />
           <Route path="orders" element={<Navigate to="/modules/kams/finance" replace />} />
           <Route path="campaigns" element={<RequirePermission perm="kams.campaigns.view"><KamsCampaigns /></RequirePermission>} />
         </Route>

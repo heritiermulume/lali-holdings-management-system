@@ -3,6 +3,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { cn } from '../../lib/cn'
 import { dateTime, money } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
 
@@ -54,17 +55,26 @@ function ledgerType(entry: LedgerEntry) {
 export function KamsTransactionsPrintMenu({
   onPreview,
   onPrint,
+  onPreviewSimplified,
+  onPrintSimplified,
   canPreview = true,
   canPrint = true,
+  className,
+  buttonClassName,
 }: {
   onPreview: () => void
   onPrint: () => void
+  onPreviewSimplified?: () => void
+  onPrintSimplified?: () => void
   canPreview?: boolean
   canPrint?: boolean
+  className?: string
+  buttonClassName?: string
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const hasSimplified = Boolean(onPreviewSimplified || onPrintSimplified)
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -74,20 +84,24 @@ export function KamsTransactionsPrintMenu({
     return () => document.removeEventListener('click', onClick)
   }, [])
 
-  if (!canPreview && !canPrint) return null
+  if (!canPreview && !canPrint && !hasSimplified) return null
 
   return (
-    <div ref={menuRef} className="relative">
+    <div ref={menuRef} className={cn('relative', className)} onMouseDown={(event) => event.stopPropagation()}>
       <Button
         variant="secondary"
+        className={buttonClassName}
         aria-label={t('common.print')}
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={(event) => {
+          event.stopPropagation()
+          setOpen((value) => !value)
+        }}
       >
         <Printer size={16} /> {t('common.print')}
       </Button>
       {open ? (
-        <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
+        <div className={cn('absolute right-0 z-30 mt-1 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl', hasSimplified ? 'w-60' : 'w-48')}>
           {canPreview ? (
             <button
               type="button"
@@ -110,6 +124,30 @@ export function KamsTransactionsPrintMenu({
               }}
             >
               <Printer size={16} className="text-lhms" /> {t('common.print')}
+            </button>
+          ) : null}
+          {onPreviewSimplified ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
+              onClick={() => {
+                setOpen(false)
+                onPreviewSimplified()
+              }}
+            >
+              <Eye size={16} className="text-lhms" /> {t('kams.previewSimplifiedReport')}
+            </button>
+          ) : null}
+          {onPrintSimplified ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
+              onClick={() => {
+                setOpen(false)
+                onPrintSimplified()
+              }}
+            >
+              <Printer size={16} className="text-lhms" /> {t('kams.simplifiedReport')}
             </button>
           ) : null}
         </div>
