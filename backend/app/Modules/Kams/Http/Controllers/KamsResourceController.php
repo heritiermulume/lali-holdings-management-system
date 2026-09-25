@@ -223,6 +223,12 @@ class KamsResourceController extends Controller
     {
         $this->assertCompany($request, (int) $depot->company_id);
 
+        if ($depot->kind === 'warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+        } elseif ($depot->office_id) {
+            abort_unless($request->user()->canAccessOffice((int) $depot->office_id), 403);
+        }
+
         $data = $request->validate([
             'office_id' => ['nullable', 'exists:offices,id'],
             'name' => ['sometimes', 'string'],
@@ -231,10 +237,20 @@ class KamsResourceController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
-        if ($this->canChooseOffice($request)) {
-            $office = $this->resolveClientOffice($request, $data['office_id'] ?? null);
+        if ($depot->kind === 'depot' && array_key_exists('office_id', $data) && $data['office_id'] !== null && $this->canChooseOffice($request)) {
+            $office = $this->resolveClientOffice($request, $data['office_id']);
+            abort_if(
+                KamsDepot::query()
+                    ->where('office_id', $office->id)
+                    ->where('kind', 'depot')
+                    ->whereKeyNot($depot->id)
+                    ->exists(),
+                422,
+                __('This office already has a depot.')
+            );
             $data['office_id'] = $office->id;
             $data['company_id'] = $office->company_id;
+            $data['province_id'] = $office->province_id;
         } else {
             unset($data['office_id']);
         }
@@ -682,8 +698,9 @@ class KamsResourceController extends Controller
     private function destroy(Model $model, Request $request): JsonResponse
     {
         $this->assertCompany($request, (int) $model->company_id);
+        $snapshot = $model->toArray();
         $model->delete();
-        AuditLogger::record('delete', $model);
+        AuditLogger::record('delete', $model, $snapshot);
 
         return $this->ok(null, __('Deleted.'));
     }

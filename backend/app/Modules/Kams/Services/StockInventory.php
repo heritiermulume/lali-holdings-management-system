@@ -648,6 +648,12 @@ class StockInventory
                 } elseif ($return->type === 'depot_to_warehouse' && $return->from_depot_id && $return->to_depot_id) {
                     $from = KamsDepot::query()->findOrFail($return->from_depot_id);
                     $to = KamsDepot::query()->findOrFail($return->to_depot_id);
+                    abort_unless($from->kind === 'depot', 422, __('Returns of this type must leave an office depot.'));
+                    abort_unless($to->isWarehouse(), 422, __('Returns of this type must arrive in a warehouse.'));
+                    abort_unless($this->quantityAt($from, $line->product, 'available') >= (int) $line->quantity, 422, __('Insufficient stock for :product at :location.', [
+                        'product' => $line->product->name,
+                        'location' => $from->name,
+                    ]));
                     $this->changeBalance($from, $line->product, -$line->quantity, 'available');
                     $this->changeBalance($to, $line->product, $line->quantity, 'available');
                     $this->recordMovement($line->product, $line->quantity, 'return', $userId, $from->id, $to->id, $return, null, $return->reason, 'available', $userId, (float) $line->unit_cost);
@@ -667,6 +673,66 @@ class StockInventory
 
             return $return->fresh(['items.product', 'member', 'fromDepot', 'toDepot', 'sale']);
         });
+    }
+
+    /**
+     * Move available stock from an office depot back to a regional warehouse.
+     *
+     * @param  list<array{product_id:int, quantity:int}>  $items
+     */
+    public function returnToWarehouse(
+        KamsDepot $from,
+        KamsDepot $to,
+        array $items,
+        ?int $userId = null,
+        ?string $notes = null,
+    ): KamsStockReturn {
+        abort_unless($from->kind === 'depot', 422, __('Returns of this type must leave an office depot.'));
+        abort_unless($to->isWarehouse(), 422, __('Returns of this type must arrive in a warehouse.'));
+        abort_unless($from->company_id === $to->company_id, 422, __('Locations must belong to the same company.'));
+        abort_unless($items !== [], 422, __('Add at least one product.'));
+
+        $return = $this->createReturn(
+            'depot_to_warehouse',
+            $items,
+            null,
+            null,
+            $from,
+            $to,
+            'available',
+            $notes ?: __('Returned to warehouse'),
+            $userId,
+        );
+
+        return $this->acceptReturn($return, (int) $userId);
+    }
+
+    public function resolveReturnWarehouse(KamsDepot $depot, ?int $productId = null): ?KamsDepot
+    {
+        abort_unless($depot->kind === 'depot', 422, __('Returns of this type must leave an office depot.'));
+
+        if ($productId) {
+            $sourceId = KamsStockMovement::query()
+                ->where('to_depot_id', $depot->id)
+                ->where('product_id', $productId)
+                ->whereNotNull('from_depot_id')
+                ->whereIn('type', ['transfer', 'receipt', 'return'])
+                ->latest('id')
+                ->value('from_depot_id');
+            if ($sourceId) {
+                $source = KamsDepot::query()->whereKey($sourceId)->where('kind', 'warehouse')->first();
+                if ($source) {
+                    return $source;
+                }
+            }
+        }
+
+        return KamsDepot::query()
+            ->where('company_id', $depot->company_id)
+            ->where('kind', 'warehouse')
+            ->when($depot->province_id, fn ($q) => $q->orderByRaw('case when province_id = ? then 0 else 1 end', [$depot->province_id]))
+            ->orderBy('name')
+            ->first();
     }
 
     public function payCommission(KamsSellerCommission $commission, float $amount): KamsSellerCommission

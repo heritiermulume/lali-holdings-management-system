@@ -476,6 +476,7 @@ export function KamsWarehouses() {
                               <button
                                 type="button"
                                 aria-label={t('kams.replenishStock')}
+                                title={t('kams.replenishStock')}
                                 className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                 onClick={() => item.product && openReplenish(row, item.product)}
                               >
@@ -486,6 +487,7 @@ export function KamsWarehouses() {
                               <button
                                 type="button"
                                 aria-label={t('kams.transferStock')}
+                                title={t('kams.transferStock')}
                                 className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                 onClick={() => item.product && openTransfer(row, item.product, item.quantity)}
                               >
@@ -496,6 +498,7 @@ export function KamsWarehouses() {
                               <button
                                 type="button"
                                 aria-label={t('common.edit')}
+                                title={t('common.edit')}
                                 className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                 onClick={() => {
                                   const catalog = products.find((product) => product.id === item.product?.id) || item.product
@@ -509,6 +512,7 @@ export function KamsWarehouses() {
                               <button
                                 type="button"
                                 aria-label={t('common.delete')}
+                                title={t('common.delete')}
                                 className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white"
                                 onClick={() => { setProductError(''); setDeletingProduct(item.product || null) }}
                               >
@@ -894,13 +898,14 @@ export function KamsWarehouses() {
 }
 
 export function KamsDepots() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { hasPermission, user } = useAuth()
   const navigate = useNavigate()
   const [rows, setRows] = useState<Location[]>([])
   const [lookups, setLookups] = useState<Lookups | null>(null)
   const [openDepotIds, setOpenDepotIds] = useState<number[]>([])
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState<Location | null>(null)
   const [receiveOpen, setReceiveOpen] = useState(false)
   const [receiveTarget, setReceiveTarget] = useState<Location | null>(null)
   const [receiveForm, setReceiveForm] = useState<Record<string, string>>({})
@@ -909,12 +914,16 @@ export function KamsDepots() {
   const [infoAdjustments, setInfoAdjustments] = useState<Adjustment[]>([])
   const [supplyTarget, setSupplyTarget] = useState<{ depot: Location; product: Product } | null>(null)
   const [adjustTarget, setAdjustTarget] = useState<{ location: Location; product: Product; quantity: number } | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<{ location: Location; product: Product; quantity: number } | null>(null)
   const [supplyForm, setSupplyForm] = useState<Record<string, string>>({})
   const [adjustForm, setAdjustForm] = useState<Record<string, string>>({})
+  const [removeForm, setRemoveForm] = useState<Record<string, string>>({})
   const [form, setForm] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
   const [supplyError, setSupplyError] = useState('')
   const [adjustError, setAdjustError] = useState('')
+  const [removeError, setRemoveError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const load = () => api.get('/modules/kams/depots', { params: { kind: 'depot', per_page: 50 } }).then((res) => setRows(res.data.data))
 
@@ -934,24 +943,60 @@ export function KamsDepots() {
     setOpenDepotIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   }
 
+  const openCreate = () => {
+    setEditing(null)
+    setForm({ office_id: assignedOfficeId() })
+    setError('')
+    setOpen(true)
+  }
+
+  const openEdit = (depot: Location) => {
+    setEditing(depot)
+    setForm({
+      name: depot.name || '',
+      code: depot.code || '',
+      office_id: depot.office_id ? String(depot.office_id) : assignedOfficeId(),
+      notes: depot.notes || '',
+      status: depot.status || 'active',
+    })
+    setError('')
+    setOpen(true)
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (!form.name?.trim()) {
+      setError(t('kams.requiredDepotFields'))
+      return
+    }
     setError('')
+    setSaving(true)
     try {
-      await api.post('/modules/kams/depots', {
-        kind: 'depot',
-        name: form.name,
+      const payload = {
+        name: form.name.trim(),
         code: form.code || null,
-        office_id: Number(lookups?.can_choose_office ? form.office_id : assignedOfficeId()),
         notes: form.notes || null,
-        status: 'active',
-      })
+        status: form.status || 'active',
+        ...(lookups?.can_choose_office ? { office_id: Number(form.office_id || assignedOfficeId()) } : {}),
+      }
+      if (editing) {
+        await api.put(`/modules/kams/depots/${editing.id}`, payload)
+      } else {
+        await api.post('/modules/kams/depots', {
+          kind: 'depot',
+          ...payload,
+          office_id: Number(lookups?.can_choose_office ? form.office_id : assignedOfficeId()),
+        })
+      }
       setOpen(false)
+      setEditing(null)
       setForm({})
       void load()
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -974,6 +1019,25 @@ export function KamsDepots() {
     })
     setReceiveError('')
     setReceiveOpen(true)
+  }
+
+  const preferredWarehouseId = (depot: Location) => {
+    const warehouses = lookups?.warehouses || []
+    if (warehouses.length === 0) return ''
+    if (depot.province_id) {
+      const regional = warehouses.find((warehouse) => warehouse.province_id === depot.province_id)
+      if (regional) return String(regional.id)
+    }
+    return String(warehouses[0].id)
+  }
+
+  const openRemove = (depot: Location, product: Product, quantity: number) => {
+    setRemoveTarget({ location: depot, product, quantity })
+    setRemoveForm({
+      warehouse_id: preferredWarehouseId(depot),
+      quantity: String(quantity || 1),
+    })
+    setRemoveError('')
   }
 
   const submitReceive = async (event: FormEvent) => {
@@ -1047,27 +1111,62 @@ export function KamsDepots() {
     }
   }
 
+  const submitRemove = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!removeTarget) return
+    const quantity = Number(removeForm.quantity)
+    const warehouseId = removeForm.warehouse_id || preferredWarehouseId(removeTarget.location)
+    if (!warehouseId) {
+      setRemoveError(t('kams.noWarehousesYet'))
+      return
+    }
+    if (!quantity || quantity < 1 || quantity > removeTarget.quantity) {
+      setRemoveError(t('validation.required'))
+      return
+    }
+    setRemoveError('')
+    setSaving(true)
+    try {
+      await api.post('/modules/kams/stock/returns', {
+        type: 'depot_to_warehouse',
+        from_depot_id: removeTarget.location.id,
+        to_depot_id: Number(warehouseId),
+        condition: 'available',
+        reason: t('kams.removeFromDepot'),
+        items: [{ product_id: removeTarget.product.id, quantity }],
+      })
+      setRemoveTarget(null)
+      setRemoveForm({})
+      void load()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setRemoveError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">{t('kams.depotsHint')}</p>
         {hasPermission('kams.products.create') ? (
-          <Button className="shrink-0 self-end sm:self-auto" onClick={() => { setForm({ office_id: assignedOfficeId() }); setError(''); setOpen(true) }}>{t('kams.addDepot')}</Button>
+          <Button className="shrink-0 self-end sm:self-auto" onClick={openCreate}>{t('kams.addDepot')}</Button>
         ) : null}
       </div>
       <div className="grid gap-3">
         {rows.map((row) => {
-          const open = openDepotIds.includes(row.id)
-          const products = (row.balances || []).filter((item) => (item.condition || 'available') === 'available' && item.product)
+          const isOpen = openDepotIds.includes(row.id)
+          const products = (row.balances || []).filter((item) => (item.condition || 'available') === 'available' && item.product && item.quantity > 0)
           return (
             <Card key={row.id} className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => toggleDepot(row.id)}
-                aria-expanded={open}
-                className="flex w-full items-start justify-between gap-3 p-5 text-left"
-              >
-                <div className="flex min-w-0 items-start gap-3">
+              <div className="flex w-full items-start justify-between gap-3 p-5">
+                <button
+                  type="button"
+                  onClick={() => toggleDepot(row.id)}
+                  aria-expanded={isOpen}
+                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                >
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lhms-soft text-lhms">
                     <Home size={16} />
                   </span>
@@ -1078,13 +1177,32 @@ export function KamsDepots() {
                       {products.length} {t('kams.products').toLowerCase()}
                     </div>
                   </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
+                </button>
+                <div className="flex shrink-0 items-center gap-1">
                   <Badge tone={row.status === 'active' ? 'green' : 'slate'}>{locationUnits(row)}</Badge>
-                  <ChevronDown size={18} className={cn('text-muted transition', open ? 'rotate-0' : '-rotate-90')} />
+                  {hasPermission('kams.products.update') ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.editDepot')}
+                      title={t('kams.editDepot')}
+                      className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface"
+                      onClick={() => openEdit(row)}
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={isOpen ? t('common.close') : t('common.view')}
+                    title={isOpen ? t('common.close') : t('common.view')}
+                    className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-surface"
+                    onClick={() => toggleDepot(row.id)}
+                  >
+                    <ChevronDown size={18} className={cn('transition', isOpen ? 'rotate-0' : '-rotate-90')} />
+                  </button>
                 </div>
-              </button>
-              {open ? (
+              </div>
+              {isOpen ? (
                 <div className="border-t border-line bg-surface px-5 py-4">
                   {products.length === 0 ? (
                     <p className="text-sm text-muted">{t('common.empty')}</p>
@@ -1110,6 +1228,7 @@ export function KamsDepots() {
                             <button
                               type="button"
                               aria-label={t('kams.productInfo')}
+                              title={t('kams.productInfo')}
                               className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                               onClick={() => item.product && openInfo(row, item.product, item.quantity)}
                             >
@@ -1120,6 +1239,7 @@ export function KamsDepots() {
                                 <button
                                   type="button"
                                   aria-label={t('kams.supplyStock')}
+                                  title={t('kams.supplyStock')}
                                   className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                   onClick={() => {
                                     if (!item.product) return
@@ -1136,6 +1256,7 @@ export function KamsDepots() {
                                 <button
                                   type="button"
                                   aria-label={t('kams.adjustStock')}
+                                  title={t('kams.adjustStock')}
                                   className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                   onClick={() => {
                                     if (!item.product) return
@@ -1146,6 +1267,17 @@ export function KamsDepots() {
                                 >
                                   <Scale size={16} />
                                 </button>
+                                {item.product && item.quantity > 0 ? (
+                                  <button
+                                    type="button"
+                                    aria-label={t('kams.removeFromDepot')}
+                                    title={t('kams.removeFromDepot')}
+                                    className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white"
+                                    onClick={() => item.product && openRemove(row, item.product, item.quantity)}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                ) : null}
                               </>
                             ) : null}
                           </div>
@@ -1182,19 +1314,95 @@ export function KamsDepots() {
       </div>
       {rows.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
 
-      <Modal open={open} title={t('kams.newDepot')} onClose={() => setOpen(false)}>
+      <Modal
+        open={open}
+        title={editing ? t('kams.editDepot') : t('kams.newDepot')}
+        onClose={() => { setOpen(false); setEditing(null); setForm({}); setError('') }}
+      >
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           {lookups?.can_choose_office ? (
-            <Select label={t('kams.office')} value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>
+            <Select
+              label={t('kams.office')}
+              value={form.office_id || ''}
+              disabled={Boolean(editing)}
+              onChange={(e) => setForm({ ...form, office_id: e.target.value })}
+            >
               <option value="">—</option>
               {(lookups.offices || []).map((office) => <option key={office.id} value={office.id}>{office.name}</option>)}
             </Select>
           ) : null}
           <Field label={t('org.name')} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <Field label={t('kams.depotCode')} value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-          <Button type="submit" className="w-full">{t('common.save')}</Button>
+          {editing ? (
+            <Select label={t('common.status')} value={form.status || 'active'} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <option value="active">{t('kams.status.active')}</option>
+              <option value="inactive">{t('kams.status.inactive')}</option>
+            </Select>
+          ) : null}
+          <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(removeTarget)}
+        title={t('kams.removeFromDepotTitle')}
+        onClose={() => { setRemoveTarget(null); setRemoveForm({}); setRemoveError('') }}
+      >
+        {removeTarget ? (
+          <form className="space-y-3" onSubmit={(e) => void submitRemove(e)}>
+            {removeError ? <p className="text-sm text-red-600">{removeError}</p> : null}
+            <p className="text-sm text-muted">
+              {t('kams.removeFromDepotConfirm', {
+                product: removeTarget.product.name,
+                depot: removeTarget.location.name,
+              })}
+            </p>
+            <p className="text-xs text-muted">{t('kams.removeFromDepotHint')}</p>
+            <SearchCombobox
+              label={t('kams.warehouse')}
+              value={
+                removeForm.warehouse_id
+                  ? (() => {
+                      const warehouse = (lookups?.warehouses || []).find((item) => String(item.id) === removeForm.warehouse_id)
+                      return warehouse
+                        ? {
+                            id: String(warehouse.id),
+                            label: warehouse.name,
+                            hint: [warehouse.code, warehouse.province ? (i18n.language.startsWith('fr') ? warehouse.province.name_fr || warehouse.province.name : warehouse.province.name) : null].filter(Boolean).join(' · ') || undefined,
+                          }
+                        : null
+                    })()
+                  : null
+              }
+              items={(lookups?.warehouses || []).map((warehouse): SearchComboboxItem => ({
+                id: String(warehouse.id),
+                label: warehouse.name,
+                hint: [warehouse.code, warehouse.province ? (i18n.language.startsWith('fr') ? warehouse.province.name_fr || warehouse.province.name : warehouse.province.name) : null].filter(Boolean).join(' · ') || undefined,
+              }))}
+              placeholder={t('kams.searchWarehouse')}
+              emptyLabel={t('common.empty')}
+              onSelect={(item) => setRemoveForm({ ...removeForm, warehouse_id: item?.id ?? '' })}
+            />
+            <Field
+              label={t('kams.quantity')}
+              type="number"
+              min="1"
+              max={removeTarget.quantity}
+              value={removeForm.quantity || ''}
+              onChange={(e) => setRemoveForm({ ...removeForm, quantity: e.target.value })}
+              required
+            />
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" className="flex-1" onClick={() => { setRemoveTarget(null); setRemoveForm({}); setRemoveError('') }}>
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" variant="danger" className="flex-1" disabled={saving}>
+                {saving ? t('common.loading') : t('kams.removeFromDepot')}
+              </Button>
+            </div>
+          </form>
+        ) : null}
       </Modal>
 
       <Modal

@@ -57,7 +57,6 @@ type RecapData = {
   interview_results: CountRow[]
   observation_decisions: CountRow[]
   sources: CountRow[]
-  members: Record<string, number>
 }
 
 const COLORS = ['#094924', '#2d8a5a', '#c9a227', '#1d4ed8', '#c81e1e', '#7c3aed', '#0f766e']
@@ -263,31 +262,13 @@ export function KamsRecruitmentDashboard() {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className="grid gap-6 xl:grid-cols-2">
         <PieCard
           title={t('kams.sourcesBreakdown')}
           rows={data.sources}
           label={sourceLabel}
           empty={t('common.empty')}
         />
-        <Card className="p-5">
-          <div className="mb-4 font-semibold">{t('kams.membersSnapshot')}</div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {[
-              ['total', data.members.total],
-              ['newMembers', data.members.new_recruit],
-              ['migratedMembers', data.members.migrated],
-              ['activeMembers', data.members.active],
-              ['verified', data.members.verified],
-              ['pendingVerification', data.members.pending_verification],
-            ].map(([key, value]) => (
-              <div key={key} className="rounded-xl bg-surface p-4">
-                <div className="text-sm text-muted">{t(`kams.${key}`)}</div>
-                <div className="mt-2 text-2xl font-extrabold">{value}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
       </div>
     </div>
   )

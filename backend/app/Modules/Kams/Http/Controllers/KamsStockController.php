@@ -5,9 +5,11 @@ namespace App\Modules\Kams\Http\Controllers;
 use App\Core\Support\AuditLogger;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\Province;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsClient;
+use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
@@ -25,6 +27,7 @@ use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Services\StockMetrics;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class KamsStockController extends Controller
 {
@@ -593,6 +596,7 @@ class KamsStockController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:kams_products,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'auto_accept' => ['nullable', 'boolean'],
         ]);
         $member = isset($data['member_id']) ? KamsMember::query()->findOrFail($data['member_id']) : null;
         $sale = isset($data['sale_id']) ? KamsStockSale::query()->findOrFail($data['sale_id']) : null;
@@ -600,6 +604,30 @@ class KamsStockController extends Controller
         $to = isset($data['to_depot_id']) ? KamsDepot::query()->findOrFail($data['to_depot_id']) : null;
         $companyId = $member?->company_id ?? $sale?->company_id ?? $from?->company_id ?? $to?->company_id;
         $this->assertCompany($request, (int) $companyId);
+
+        if ($data['type'] === 'depot_to_warehouse') {
+            abort_unless($from && $from->kind === 'depot', 422, __('Returns of this type must leave an office depot.'));
+            if (! $to) {
+                $productId = (int) ($data['items'][0]['product_id'] ?? 0);
+                $to = $this->inventory->resolveReturnWarehouse($from, $productId ?: null);
+            }
+            abort_unless($to && $to->isWarehouse(), 422, __('Returns of this type must arrive in a warehouse.'));
+            if ($from->office_id) {
+                abort_unless($request->user()->canAccessOffice((int) $from->office_id), 403);
+            }
+
+            $returned = $this->inventory->returnToWarehouse(
+                $from,
+                $to,
+                $data['items'],
+                $request->user()->id,
+                $data['reason'] ?? null,
+            );
+            AuditLogger::record('create', $returned, [], $data);
+
+            return $this->created($returned);
+        }
+
         $return = $this->inventory->createReturn(
             $data['type'],
             $data['items'],
@@ -612,6 +640,12 @@ class KamsStockController extends Controller
             $request->user()->id,
         );
         AuditLogger::record('create', $return, [], $data);
+
+        $autoAccept = array_key_exists('auto_accept', $data) ? (bool) $data['auto_accept'] : false;
+        if ($autoAccept && $return->status === 'requested') {
+            $return = $this->inventory->acceptReturn($return, $request->user()->id);
+            AuditLogger::record('update', $return, [], ['status' => $return->status, 'auto_accept' => true]);
+        }
 
         return $this->created($return);
     }
@@ -868,5 +902,411 @@ class KamsStockController extends Controller
         AuditLogger::record('create', $closed, [], $data);
 
         return $this->ok($closed);
+    }
+
+    public function journal(Request $request): JsonResponse
+    {
+        $types = [
+            KamsStockAssignment::class,
+            KamsStockTransfer::class,
+            KamsStockReceipt::class,
+            KamsStockReturn::class,
+            KamsStockAdjustment::class,
+            KamsStockSale::class,
+            KamsProduct::class,
+            KamsDepot::class,
+            KamsDailySettlement::class,
+            KamsSellerCommission::class,
+            KamsSavingsEntry::class,
+        ];
+
+        $query = AuditLog::query()
+            ->with('user:id,name,email')
+            ->whereIn('auditable_type', $types)
+            ->latest();
+
+        if ($action = $request->string('action')->toString()) {
+            $query->where('action', $action);
+        }
+
+        if ($from = $request->string('from')->toString()) {
+            $query->whereDate('created_at', '>=', $from);
+        }
+
+        if ($to = $request->string('to')->toString()) {
+            $query->whereDate('created_at', '<=', $to);
+        }
+
+        if ($search = $request->string('search')->toString()) {
+            $query->where(function ($q) use ($search) {
+                $q->where('action', 'like', "%{$search}%")
+                    ->orWhere('auditable_type', 'like', "%{$search}%")
+                    ->orWhereHas('user', fn ($user) => $user->where('name', 'like', "%{$search}%"))
+                    ->orWhere('new_values', 'like', "%{$search}%")
+                    ->orWhere('old_values', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = min(max($request->integer('per_page', 20), 1), 40);
+        $paginator = $query->paginate($perPage);
+        $lookups = $this->journalLookups($paginator->getCollection());
+        $paginator->setCollection(
+            $paginator->getCollection()->map(fn (AuditLog $log) => $this->presentJournalEntry($log, $lookups))
+        );
+
+        return $this->paginated($paginator);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, AuditLog>  $logs
+     * @return array{
+     *     assignments: \Illuminate\Support\Collection<int|string, string>,
+     *     transfers: \Illuminate\Support\Collection<int|string, string>,
+     *     receipts: \Illuminate\Support\Collection<int|string, string>,
+     *     returns: \Illuminate\Support\Collection<int|string, string>,
+     *     sales: \Illuminate\Support\Collection<int|string, string>,
+     *     products: \Illuminate\Support\Collection<int|string, string>,
+     *     depots: \Illuminate\Support\Collection<int|string, string>,
+     *     members: \Illuminate\Support\Collection<int|string, string>,
+     *     offices: \Illuminate\Support\Collection<int|string, string>
+     * }
+     */
+    private function journalLookups($logs): array
+    {
+        $idsByEntity = [
+            'KamsStockAssignment' => [],
+            'KamsStockTransfer' => [],
+            'KamsStockReceipt' => [],
+            'KamsStockReturn' => [],
+            'KamsStockSale' => [],
+            'KamsProduct' => [],
+            'KamsDepot' => [],
+        ];
+        $memberIds = [];
+        $depotIds = [];
+        $officeIds = [];
+
+        foreach ($logs as $log) {
+            $entity = class_basename($log->auditable_type);
+            $new = is_array($log->new_values) ? $log->new_values : [];
+            $old = is_array($log->old_values) ? $log->old_values : [];
+
+            if ($log->auditable_id && isset($idsByEntity[$entity])) {
+                $idsByEntity[$entity][] = (int) $log->auditable_id;
+            }
+
+            if (! empty($new['member_id'])) {
+                $memberIds[] = (int) $new['member_id'];
+            }
+            foreach (['from_depot_id', 'to_depot_id'] as $key) {
+                if (! empty($new[$key])) {
+                    $depotIds[] = (int) $new[$key];
+                }
+            }
+            foreach ([$new['office_id'] ?? null, $old['office_id'] ?? null] as $officeId) {
+                if ($officeId) {
+                    $officeIds[] = (int) $officeId;
+                }
+            }
+        }
+
+        return [
+            'assignments' => KamsStockAssignment::query()
+                ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockAssignment'])))
+                ->pluck('reference', 'id'),
+            'transfers' => KamsStockTransfer::query()
+                ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockTransfer'])))
+                ->pluck('reference', 'id'),
+            'receipts' => KamsStockReceipt::query()
+                ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockReceipt'])))
+                ->pluck('reference', 'id'),
+            'returns' => KamsStockReturn::query()
+                ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockReturn'])))
+                ->pluck('reference', 'id'),
+            'sales' => KamsStockSale::query()
+                ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockSale'])))
+                ->pluck('reference', 'id'),
+            'products' => KamsProduct::query()
+                ->whereIn('id', array_values(array_unique($idsByEntity['KamsProduct'])))
+                ->pluck('name', 'id'),
+            'depots' => KamsDepot::query()
+                ->whereIn('id', array_values(array_unique([
+                    ...$idsByEntity['KamsDepot'],
+                    ...$depotIds,
+                ])))
+                ->pluck('name', 'id'),
+            'members' => KamsMember::query()
+                ->whereIn('id', array_values(array_unique($memberIds)))
+                ->get(['id', 'full_name', 'member_code'])
+                ->mapWithKeys(fn (KamsMember $member) => [
+                    $member->id => trim(($member->full_name ?? '').' · '.($member->member_code ?? '')),
+                ]),
+            'offices' => \App\Models\Office::query()
+                ->whereIn('id', array_values(array_unique($officeIds)))
+                ->pluck('name', 'id'),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $lookups
+     * @return array<string, mixed>
+     */
+    private function presentJournalEntry(AuditLog $log, array $lookups = []): array
+    {
+        $entity = class_basename($log->auditable_type);
+        $new = is_array($log->new_values) ? $log->new_values : [];
+        $old = is_array($log->old_values) ? $log->old_values : [];
+        $event = $this->journalEventKey($log->action, $entity, $old, $new);
+
+        return [
+            'id' => $log->id,
+            'action' => $log->action,
+            'event' => $event,
+            'entity' => $entity,
+            'auditable_id' => $log->auditable_id,
+            'subject' => $this->journalSubject($entity, $old, $new, $log->auditable_id, $lookups),
+            'details' => $this->journalDetails($entity, $old, $new, $lookups),
+            'created_at' => $log->created_at?->toIso8601String(),
+            'ip_address' => $log->ip_address,
+            'user' => $log->user ? [
+                'id' => $log->user->id,
+                'name' => $log->user->name,
+                'email' => $log->user->email,
+            ] : null,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $old
+     * @param  array<string, mixed>  $new
+     */
+    private function journalEventKey(string $action, string $entity, array $old, array $new): string
+    {
+        if ($entity === 'KamsStockAssignment') {
+            if ($action === 'create') {
+                return 'assignment_create';
+            }
+            if (array_key_exists('quantity_returned', data_get($new, 'items.0', []))
+                || array_key_exists('collected_amount', $new) && array_key_exists('items', $new)
+                    && collect($new['items'] ?? [])->contains(fn ($item) => is_array($item) && (
+                        array_key_exists('quantity_returned', $item) || array_key_exists('quantity_lost', $item)
+                    ))) {
+                return 'assignment_settle';
+            }
+            if (collect($new['items'] ?? [])->contains(fn ($item) => is_array($item) && array_key_exists('product_id', $item))) {
+                return 'assignment_add_items';
+            }
+            if (collect($new['items'] ?? [])->contains(fn ($item) => is_array($item) && (
+                array_key_exists('quantity', $item) && (int) ($item['quantity'] ?? -1) === 0
+            ))) {
+                return 'assignment_remove_product';
+            }
+
+            return 'assignment_update';
+        }
+
+        if ($entity === 'KamsStockTransfer') {
+            if (($new['status'] ?? null) === 'received' || ($new['auto_receive'] ?? false)) {
+                return 'transfer_receive';
+            }
+
+            return $action === 'create' ? 'transfer_create' : 'transfer_update';
+        }
+
+        if ($entity === 'KamsStockReceipt') {
+            if (($new['status'] ?? null) === 'received') {
+                return 'receipt_validate';
+            }
+            if (($new['status'] ?? null) === 'cancelled') {
+                return 'receipt_cancel';
+            }
+
+            return $action === 'create' ? 'receipt_create' : 'receipt_update';
+        }
+
+        if ($entity === 'KamsStockReturn') {
+            if (array_key_exists('status', $new) || ($new['auto_accept'] ?? false)) {
+                return 'return_accept';
+            }
+
+            return $action === 'create' ? 'return_create' : 'return_update';
+        }
+
+        if ($entity === 'KamsStockAdjustment') {
+            return $action === 'create' ? 'adjustment_create' : 'adjustment_update';
+        }
+
+        if ($entity === 'KamsProduct') {
+            if (array_key_exists('warehouse_ids', $new) || array_key_exists('depot_ids', $new)
+                || array_key_exists('assign_all_warehouses', $new) || array_key_exists('assign_all_depots', $new)) {
+                return $action === 'create' ? 'product_create_assign' : 'product_reassign';
+            }
+
+            return match ($action) {
+                'create' => 'product_create',
+                'delete' => 'product_delete',
+                default => 'product_update',
+            };
+        }
+
+        if ($entity === 'KamsDepot') {
+            if (array_key_exists('office_id', $new) || array_key_exists('office_id', $old)) {
+                return $action === 'create' ? 'depot_create' : 'depot_office_change';
+            }
+            $kind = $new['kind'] ?? $old['kind'] ?? null;
+
+            return match ($action) {
+                'create' => ($kind === 'warehouse' ? 'warehouse_create' : 'depot_create'),
+                'delete' => ($kind === 'warehouse' ? 'warehouse_delete' : 'depot_delete'),
+                default => ($kind === 'warehouse' ? 'warehouse_update' : 'depot_update'),
+            };
+        }
+
+        if ($entity === 'KamsDailySettlement') {
+            return 'daily_settlement_close';
+        }
+
+        if ($entity === 'KamsSellerCommission') {
+            return 'commission_pay';
+        }
+
+        if ($entity === 'KamsSavingsEntry') {
+            return ($new['reason'] ?? null) === 'day_closing_surplus' ? 'surplus_deposit' : 'savings_entry';
+        }
+
+        if ($entity === 'KamsStockSale') {
+            return $action === 'create' ? 'sale_create' : 'sale_update';
+        }
+
+        return $action;
+    }
+
+    /**
+     * @param  array<string, mixed>  $old
+     * @param  array<string, mixed>  $new
+     * @param  array<string, mixed>  $lookups
+     */
+    private function journalSubject(string $entity, array $old, array $new, mixed $auditableId, array $lookups = []): string
+    {
+        foreach (['reference', 'name', 'sku', 'code'] as $key) {
+            $value = $new[$key] ?? $old[$key] ?? null;
+            if (is_string($value) && $value !== '' && ! preg_match('/^#\d+$/', $value)) {
+                return $value;
+            }
+        }
+
+        if (! $auditableId) {
+            return '';
+        }
+
+        $map = match ($entity) {
+            'KamsStockAssignment' => $lookups['assignments'] ?? null,
+            'KamsStockTransfer' => $lookups['transfers'] ?? null,
+            'KamsStockReceipt' => $lookups['receipts'] ?? null,
+            'KamsStockReturn' => $lookups['returns'] ?? null,
+            'KamsStockSale' => $lookups['sales'] ?? null,
+            'KamsProduct' => $lookups['products'] ?? null,
+            'KamsDepot' => $lookups['depots'] ?? null,
+            default => null,
+        };
+
+        $resolved = $map[(int) $auditableId] ?? null;
+
+        return is_string($resolved) && $resolved !== '' ? $resolved : '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $old
+     * @param  array<string, mixed>  $new
+     * @param  array<string, mixed>  $lookups
+     * @return list<string>
+     */
+    private function journalDetails(string $entity, array $old, array $new, array $lookups = []): array
+    {
+        $details = [];
+        $depots = $lookups['depots'] ?? collect();
+        $members = $lookups['members'] ?? collect();
+        $offices = $lookups['offices'] ?? collect();
+
+        if ($entity === 'KamsStockAssignment') {
+            $itemCount = count($new['items'] ?? []);
+            if ($itemCount > 0) {
+                $details[] = $itemCount.' item(s)';
+            }
+            if (array_key_exists('collected_amount', $new)) {
+                $details[] = 'collected: '.$new['collected_amount'];
+            }
+            if (! empty($new['member_id'])) {
+                $memberLabel = $members[(int) $new['member_id']] ?? null;
+                if (is_string($memberLabel) && $memberLabel !== '') {
+                    $details[] = $memberLabel;
+                }
+            }
+            $removed = collect($new['items'] ?? [])
+                ->filter(fn ($item) => is_array($item) && array_key_exists('quantity', $item) && (int) $item['quantity'] === 0)
+                ->count();
+            if ($removed > 0) {
+                $details[] = 'removed: '.$removed;
+            }
+        }
+
+        if ($entity === 'KamsStockTransfer') {
+            $from = $depots[(int) ($new['from_depot_id'] ?? 0)] ?? null;
+            $to = $depots[(int) ($new['to_depot_id'] ?? 0)] ?? null;
+            if ($from || $to) {
+                $details[] = trim(($from ?? '?').' → '.($to ?? '?'));
+            }
+            if (($new['status'] ?? null) === 'received') {
+                $details[] = 'received';
+            }
+            $itemCount = count($new['items'] ?? []);
+            if ($itemCount > 0) {
+                $details[] = $itemCount.' item(s)';
+            }
+        }
+
+        if ($entity === 'KamsProduct') {
+            foreach (['warehouse_ids', 'depot_ids'] as $key) {
+                if (array_key_exists($key, $new) && is_array($new[$key])) {
+                    $details[] = Str::of($key)->replace('_ids', '')->toString().': '.count($new[$key]);
+                }
+            }
+            if (! empty($new['assign_all_warehouses'])) {
+                $details[] = 'all warehouses';
+            }
+            if (! empty($new['assign_all_depots'])) {
+                $details[] = 'all depots';
+            }
+        }
+
+        if ($entity === 'KamsDepot') {
+            $officeId = $new['office_id'] ?? null;
+            $previousOfficeId = $old['office_id'] ?? null;
+            if ($officeId) {
+                $officeName = $offices[(int) $officeId] ?? null;
+                if (is_string($officeName) && $officeName !== '') {
+                    $details[] = 'office: '.$officeName;
+                }
+            }
+            if ($previousOfficeId && (int) $previousOfficeId !== (int) $officeId) {
+                $previousName = $offices[(int) $previousOfficeId] ?? null;
+                if (is_string($previousName) && $previousName !== '') {
+                    $details[] = 'from office: '.$previousName;
+                }
+            }
+            if (! empty($new['kind'])) {
+                $details[] = (string) $new['kind'];
+            }
+        }
+
+        if ($entity === 'KamsSavingsEntry' && array_key_exists('amount', $new)) {
+            $details[] = 'amount: '.$new['amount'];
+        }
+
+        if ($entity === 'KamsStockAdjustment' && array_key_exists('quantity', $new)) {
+            $details[] = 'qty: '.$new['quantity'];
+        }
+
+        return array_values(array_filter($details, fn ($line) => is_string($line) && $line !== ''));
     }
 }

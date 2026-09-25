@@ -1164,6 +1164,15 @@ export function KamsCandidates() {
     })
   }, [])
 
+  const resolveKamsCompanyId = (list = companies) => {
+    if (list.length === 0) return ''
+    const primary = user?.primary_company?.id
+    if (primary && list.some((company) => company.id === primary)) return String(primary)
+    const kams = list.find((company) => company.code === 'KAMS')
+    if (kams) return String(kams.id)
+    return String(list[0].id)
+  }
+
   const resetCandidateForm = () => {
     setEditingId(null)
     setForm({})
@@ -1177,11 +1186,17 @@ export function KamsCandidates() {
     setFormError('')
   }
 
+  const openCreate = () => {
+    resetCandidateForm()
+    setForm({ company_id: resolveKamsCompanyId() })
+    setOpen(true)
+  }
+
   const openEdit = (row: Candidate) => {
     resetCandidateForm()
     setEditingId(row.id)
     setForm({
-      company_id: row.company_id ? String(row.company_id) : '',
+      company_id: row.company_id ? String(row.company_id) : resolveKamsCompanyId(),
       office_id: row.office_id ? String(row.office_id) : '',
       first_name: row.first_name || '',
       last_name: row.last_name || '',
@@ -1197,6 +1212,11 @@ export function KamsCandidates() {
     setPhotoPreview(row.photo_url || null)
     setOpen(true)
   }
+
+  useEffect(() => {
+    if (!open || editingId || form.company_id || companies.length === 0) return
+    setForm((current) => (current.company_id ? current : { ...current, company_id: resolveKamsCompanyId() }))
+  }, [open, editingId, form.company_id, companies, user?.primary_company?.id])
 
   const pickPhoto = (file?: File) => {
     if (!file) return
@@ -1225,13 +1245,14 @@ export function KamsCandidates() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!form.first_name?.trim() || !form.last_name?.trim() || !form.gender || !form.phone?.trim() || !form.source) {
+    const companyId = form.company_id || resolveKamsCompanyId()
+    if (!form.first_name?.trim() || !form.last_name?.trim() || !form.gender || !form.phone?.trim() || !form.source || !companyId) {
       setFormError(t('kams.requiredFields'))
       return
     }
 
     const payload = new FormData()
-    payload.append('company_id', form.company_id)
+    payload.append('company_id', companyId)
     if (form.office_id) payload.append('office_id', form.office_id)
     payload.append('first_name', form.first_name.trim())
     payload.append('last_name', form.last_name.trim())
@@ -1340,7 +1361,14 @@ export function KamsCandidates() {
     }
   }
 
-  const officeOptions = offices.filter((office) => String(office.company_id) === form.company_id)
+  const officeOptions = offices
+    .filter((office) => String(office.company_id) === form.company_id)
+    .map((office): SearchComboboxItem => ({
+      id: String(office.id),
+      label: office.name,
+      hint: office.code,
+    }))
+  const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
   const peopleOptions = people
     .filter((person) => !form.company_id || String(person.company_id) === form.company_id)
     .map((person): SearchComboboxItem => ({
@@ -1384,7 +1412,7 @@ export function KamsCandidates() {
           />
         </label>
         {canCreate ? (
-          <Button onClick={() => { resetCandidateForm(); setOpen(true) }} className="shrink-0">
+          <Button onClick={openCreate} className="shrink-0">
             <Plus size={16} /> {t('kams.newCandidate')}
           </Button>
         ) : null}
@@ -1584,25 +1612,15 @@ export function KamsCandidates() {
             <p className="text-center text-xs text-muted">{t('kams.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
-          <Select label={t('users.company')} required disabled={Boolean(editingId)} value={form.company_id || ''} onChange={(e) => setForm({
-            ...form,
-            company_id: e.target.value,
-            office_id: '',
-            guardian_member_id: '',
-            sponsor_member_id: '',
-          })}>
-            <option value="">—</option>
-            {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-          </Select>
-          <Select
+          <SearchCombobox
             label={t('kams.office')}
-            value={form.office_id || ''}
+            value={selectedOffice}
+            items={officeOptions}
             disabled={!companySelected}
-            onChange={(e) => setForm({ ...form, office_id: e.target.value })}
-          >
-            <option value="">{companySelected ? '—' : t('kams.selectCompanyFirst')}</option>
-            {officeOptions.map((office) => <option key={office.id} value={office.id}>{office.name} ({office.code})</option>)}
-          </Select>
+            placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
+          />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={t('users.firstName')} value={form.first_name || ''} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
             <Field label={t('users.lastName')} value={form.last_name || ''} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />

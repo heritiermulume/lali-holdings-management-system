@@ -28,6 +28,7 @@ Route::post('stock/transfers', [KamsStockController::class, 'storeTransfer'])->m
 Route::post('stock/transfers/{transfer}/receive', [KamsStockController::class, 'receiveTransfer'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::get('stock/assignments', [KamsStockController::class, 'assignments'])->middleware(EnsurePermission::class.':kams.products.view');
 Route::get('stock/assignments/report', [KamsStockController::class, 'assignmentsReport'])->middleware(EnsurePermission::class.':kams.products.view');
+Route::get('stock/journal', [KamsStockController::class, 'journal'])->middleware(EnsurePermission::class.':kams.products.view');
 Route::post('stock/assignments', [KamsStockController::class, 'storeAssignment'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::post('stock/assignments/{assignment}/items', [KamsStockController::class, 'addAssignmentItems'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::put('stock/assignments/{assignment}', [KamsStockController::class, 'updateAssignment'])->middleware(EnsurePermission::class.':kams.products.update');

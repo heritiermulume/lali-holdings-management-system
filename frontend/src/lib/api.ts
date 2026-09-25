@@ -26,7 +26,7 @@ function busyKindFor(config: BusyConfig): BusyKind | null {
   const perPage = Number(config.params?.per_page)
   if (Number.isFinite(perPage) && perPage >= 200) return 'data'
 
-  if (/(?:^|\/)dashboard(?:\/|$)|\/stock\/hierarchy|\/module-performance|\/finance\/account|\/revenue\/|\/modules\/kams\/finance|\/finance(?:\?|$|\/)/.test(url)) {
+  if (/(?:^|\/)dashboard(?:\/|$)|\/stock\/hierarchy|\/stock\/journal|\/module-performance|\/finance\/account|\/revenue\/|\/modules\/kams\/finance|\/finance(?:\?|$|\/)/.test(url)) {
     return 'data'
   }
 

@@ -302,6 +302,7 @@ export function KamsAssignmentsWorkspace() {
         tabs={[
           { to: '/modules/kams/stock/assignments', end: true, label: t('kams.assignments'), show: canView },
           { to: '/modules/kams/stock/assignments/reports', end: true, label: t('kams.assignmentReports'), show: canView },
+          { to: '/modules/kams/stock/assignments/journal', end: true, label: t('kams.stockJournal'), show: canView },
         ]}
       />
       <Outlet />

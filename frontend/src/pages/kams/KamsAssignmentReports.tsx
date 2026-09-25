@@ -11,7 +11,7 @@ import { buildBrandedDocumentHtml, printHtml } from '../../lib/printDocument'
 import { KamsTransactionsPrintMenu } from './KamsAccountTransactions'
 
 type Period = 'day' | 'week' | 'month' | 'custom'
-type DaySort = 'name' | 'code' | 'amount' | 'due' | 'quantity' | 'profit' | 'reference'
+type DaySort = 'name' | 'code' | 'amount' | 'due' | 'quantity' | 'reference'
 
 type Product = {
   id: number
@@ -137,7 +137,7 @@ function assignmentSoldUnits(row: Assignment) {
   return (row.items || []).reduce((sum, item) => sum + soldQty(item), 0)
 }
 
-const DAY_SORTS: DaySort[] = ['name', 'code', 'amount', 'due', 'quantity', 'profit', 'reference']
+const DAY_SORTS: DaySort[] = ['name', 'code', 'amount', 'due', 'quantity', 'reference']
 
 function sortAssignments(rows: Assignment[], sort: DaySort) {
   const list = [...rows]
@@ -148,7 +148,6 @@ function sortAssignments(rows: Assignment[], sort: DaySort) {
     if (sort === 'amount') return Number(right.collected_amount || 0) - Number(left.collected_amount || 0)
     if (sort === 'due') return Number(right.expected_amount || 0) - Number(left.expected_amount || 0)
     if (sort === 'quantity') return assignmentSoldUnits(right) - assignmentSoldUnits(left)
-    if (sort === 'profit') return Number(right.profit_amount || 0) - Number(left.profit_amount || 0)
     return cmpText(left.reference || '', right.reference || '')
   })
   return list
@@ -252,15 +251,13 @@ export function KamsAssignmentReports() {
   })
 
   const totalsHtml = (totals: DayTotals) => `
-    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 14px;">
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.assignments'))}: <b>${totals.assignments}</b></div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px;">
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.agents'))}: <b>${totals.agents}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.assignments'))}: <b>${totals.assignments}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.sold'))}: <b>${totals.sold_units}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.amountDue'))}: <b>${escapeHtml(money(totals.expected_amount))}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.cashCollected'))}: <b>${escapeHtml(money(totals.collected_amount))}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.sold'))}: <b>${totals.sold_units}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.returned'))}: <b>${totals.returned_units}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.profit'))}: <b>${escapeHtml(money(totals.profit_amount))}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.loss'))}: <b>${escapeHtml(money(totals.loss_amount))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.shortfall'))}: <b>${escapeHtml(money(totals.shortfall))}</b></div>
     </div>
   `
 
@@ -288,8 +285,6 @@ export function KamsAssignmentReports() {
             <div>${escapeHtml(t('kams.sold'))}: <b>${assignmentSoldUnits(row)}</b></div>
             <div>${escapeHtml(t('kams.amountDue'))}: <b>${escapeHtml(money(row.expected_amount))}</b></div>
             <div>${escapeHtml(t('kams.cashCollected'))}: <b>${escapeHtml(money(row.collected_amount))}</b></div>
-            <div>${escapeHtml(t('kams.profit'))}: <b>${escapeHtml(money(row.profit_amount))}</b></div>
-            <div>${escapeHtml(t('kams.loss'))}: <b>${escapeHtml(money(row.loss_amount))}</b></div>
           </div>
         </div>
         <table>
@@ -326,8 +321,6 @@ export function KamsAssignmentReports() {
                   <th style="text-align:right;">${escapeHtml(t('kams.sold'))}</th>
                   <th style="text-align:right;">${escapeHtml(t('kams.amountDue'))}</th>
                   <th style="text-align:right;">${escapeHtml(t('kams.cashCollected'))}</th>
-                  <th style="text-align:right;">${escapeHtml(t('kams.profit'))}</th>
-                  <th style="text-align:right;">${escapeHtml(t('kams.loss'))}</th>
                 </tr>
               </thead>
               <tbody>
@@ -338,8 +331,6 @@ export function KamsAssignmentReports() {
                     <td style="text-align:right;">${assignmentSoldUnits(row)}</td>
                     <td style="text-align:right;">${escapeHtml(money(row.expected_amount))}</td>
                     <td style="text-align:right;">${escapeHtml(money(row.collected_amount))}</td>
-                    <td style="text-align:right;">${escapeHtml(money(row.profit_amount))}</td>
-                    <td style="text-align:right;">${escapeHtml(money(row.loss_amount))}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -503,19 +494,13 @@ export function KamsAssignmentReports() {
       </div>
 
       {totals ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="p-4 text-sm">{t('kams.assignments')}: <b>{totals.assignments}</b></Card>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Card className="p-4 text-sm">{t('kams.agents')}: <b>{totals.agents}</b></Card>
+          <Card className="p-4 text-sm">{t('kams.assignments')}: <b>{totals.assignments}</b></Card>
+          <Card className="p-4 text-sm">{t('kams.sold')}: <b>{totals.sold_units}</b></Card>
           <Card className="p-4 text-sm">{t('kams.amountDue')}: <b>{money(totals.expected_amount)}</b></Card>
           <Card className="p-4 text-sm">{t('kams.cashCollected')}: <b>{money(totals.collected_amount)}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.sold')}: <b>{totals.sold_units}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.profit')}: <b>{money(totals.profit_amount)}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.loss')}: <b>{money(totals.loss_amount)}</b></Card>
-          <Card className="p-4 text-sm">
-            {totals.surplus > 0
-              ? <>{t('kams.surplus')}: <b>{money(totals.surplus)}</b></>
-              : <>{t('kams.shortfall')}: <b>{money(totals.shortfall)}</b></>}
-          </Card>
+          <Card className="p-4 text-sm">{t('kams.shortfall')}: <b>{money(totals.shortfall)}</b></Card>
         </div>
       ) : null}
 
@@ -572,11 +557,9 @@ export function KamsAssignmentReports() {
               {expanded ? (
                 <div className="space-y-3 border-t border-line bg-surface px-5 py-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div className="grid flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                    <div className="grid flex-1 gap-2 sm:grid-cols-2 text-sm">
                       <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.sold')}: <b>{day.totals.sold_units}</b></div>
                       <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.returned')}: <b>{day.totals.returned_units}</b></div>
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.profit')}: <b>{money(day.totals.profit_amount)}</b></div>
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.loss')}: <b>{money(day.totals.loss_amount)}</b></div>
                     </div>
                     <div className="w-full sm:w-56">
                       <Select
@@ -621,12 +604,10 @@ export function KamsAssignmentReports() {
                         </button>
                         {open ? (
                           <div className="border-t border-line px-4 py-3">
-                            <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+                            <div className="mb-3 grid gap-2 sm:grid-cols-3 text-sm">
                               <div>{t('kams.sold')}: <b>{assignmentSoldUnits(row)}</b></div>
                               <div>{t('kams.amountDue')}: <b>{money(row.expected_amount)}</b></div>
                               <div>{t('kams.cashCollected')}: <b>{money(row.collected_amount)}</b></div>
-                              <div>{t('kams.profit')}: <b>{money(row.profit_amount)}</b></div>
-                              <div>{t('kams.loss')}: <b>{money(row.loss_amount)}</b></div>
                             </div>
                             <div className="overflow-hidden rounded-xl border border-line">
                               <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 border-b border-line bg-[#f4faf5] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted">

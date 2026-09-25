@@ -1,4 +1,4 @@
-import { AlertTriangle, Package, TrendingUp, Users } from 'lucide-react'
+import { AlertTriangle, Package, PackageCheck, Store, TrendingUp, Truck } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -121,8 +121,15 @@ export function KamsStockStats() {
   const kpis = [
     { key: 'availableStock', value: data.totals.units, icon: Package },
     { key: 'soldUnits', value: data.totals.sold_units, icon: TrendingUp },
-    { key: 'activeSellers', value: data.totals.active_sellers, icon: Users },
-    { key: 'openAssignments', value: data.totals.open_assignments, icon: Package },
+    { key: 'openAssignments', value: data.totals.open_assignments, icon: PackageCheck },
+    { key: 'depots', value: data.totals.depot_units, icon: Store },
+    { key: 'withAgents', value: data.totals.with_agents, icon: Package },
+    {
+      key: 'inTransit',
+      value: data.totals.in_transit,
+      icon: Truck,
+      hint: `${t('kams.quarantine')}: ${data.totals.quarantine}`,
+    },
   ]
 
   return (
@@ -130,7 +137,6 @@ export function KamsStockStats() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-lg font-bold">{t('kams.statistics')}</h2>
-          <p className="mt-1 text-sm text-muted">{t('kams.stockOpsHint')}</p>
           <p className="mt-1 text-xs text-muted">
             {t('kams.periodRange', {
               from: parseDate(data.range.from).toLocaleDateString(locale),
@@ -152,39 +158,22 @@ export function KamsStockStats() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {kpis.map((item) => {
           const Icon = item.icon
           return (
-            <Card key={item.key} className="p-4">
+            <Card key={item.key} className="flex min-h-[118px] flex-col p-4">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm text-muted">{t(`kams.${item.key}`)}</span>
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-lhms-soft text-lhms"><Icon size={16} /></span>
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lhms-soft text-lhms"><Icon size={16} /></span>
               </div>
               <div className="mt-3 text-3xl font-extrabold">{item.value}</div>
+              <div className="mt-auto min-h-4 pt-1 text-xs text-muted">
+                {'hint' in item && item.hint ? item.hint : null}
+              </div>
             </Card>
           )
         })}
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.warehouses')}</div>
-          <div className="mt-2 text-2xl font-extrabold">{data.totals.warehouse_units}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.depots')}</div>
-          <div className="mt-2 text-2xl font-extrabold">{data.totals.depot_units}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.withAgents')}</div>
-          <div className="mt-2 text-2xl font-extrabold">{data.totals.with_agents}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.inTransit')}</div>
-          <div className="mt-2 text-2xl font-extrabold">{data.totals.in_transit}</div>
-          <div className="mt-1 text-xs text-muted">{t('kams.quarantine')}: {data.totals.quarantine}</div>
-        </Card>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">

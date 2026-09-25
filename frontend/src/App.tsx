@@ -23,6 +23,7 @@ import { KamsAgents, KamsCandidates, KamsMembersWorkspace, KamsRecruitmentDashbo
 import { KamsClientsList, KamsClientsWorkspace, KamsSuppliersList } from './pages/kams/KamsClientsPage'
 import { KamsAssignments, KamsAssignmentsWorkspace } from './pages/kams/KamsStockFlows'
 import { KamsAssignmentReports } from './pages/kams/KamsAssignmentReports'
+import { KamsStockJournal } from './pages/kams/KamsStockJournal'
 import { KamsDepots, KamsWarehouses } from './pages/kams/KamsStockLocations'
 import { KamsWarehouseMovements } from './pages/kams/KamsWarehouseMovements'
 import { KamsStockStats, KamsStockWorkspace } from './pages/kams/KamsStockPages'
@@ -117,6 +118,7 @@ export default function App() {
             <Route path="assignments" element={<RequirePermission perm="kams.products.view"><KamsAssignmentsWorkspace /></RequirePermission>}>
               <Route index element={<KamsAssignments />} />
               <Route path="reports" element={<KamsAssignmentReports />} />
+              <Route path="journal" element={<KamsStockJournal />} />
             </Route>
             <Route path="sales" element={<Navigate to="/modules/kams/stock/assignments" replace />} />
             <Route path="returns" element={<Navigate to="/modules/kams/stock" replace />} />

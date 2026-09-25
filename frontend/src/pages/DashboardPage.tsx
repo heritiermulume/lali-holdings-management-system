@@ -1,5 +1,4 @@
 import {
-  Bell,
   Building2,
   Crown,
   LayoutDashboard,
@@ -47,10 +46,6 @@ const adminApps: DockApp[] = [
   { to: '/administration/users', key: 'users', icon: Users, perm: 'users.view', tint: 'bg-[linear-gradient(145deg,#818cf8,#3730a3)]' },
   { to: '/administration/audit', key: 'audit', icon: ScrollText, perm: 'audit.view', tint: 'bg-[linear-gradient(145deg,#94a3b8,#334155)]' },
   { to: '/administration/settings', key: 'settings', icon: Settings, anyPerm: SETTINGS_PERMS, tint: 'bg-[linear-gradient(145deg,#cbd5e1,#475569)]' },
-]
-
-const dockApps: DockApp[] = [
-  { to: '/notifications', key: 'notifications', icon: Bell, perm: 'notifications.view', tint: 'bg-[linear-gradient(145deg,#fb7185,#be123c)]' },
 ]
 
 function AppIcon({
@@ -107,7 +102,7 @@ export function DashboardPage() {
   )
 
   const admin = adminApps.filter(canSeeApp)
-  const dock = dockApps.filter(canSeeApp)
+  const canAdmin = admin.length > 0
   const q = query.trim().toLowerCase()
   const searchedAdmin = q
     ? admin.filter((app) => {
@@ -139,27 +134,27 @@ export function DashboardPage() {
       <div className="pointer-events-none absolute -left-24 top-24 h-72 w-72 rounded-full bg-lime/20 blur-3xl" />
       <div className="pointer-events-none absolute -right-16 bottom-32 h-80 w-80 rounded-full bg-white/5 blur-3xl" />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 pb-8 pt-8 sm:pt-12">
-        <div className="text-center text-white">
-          <p className="text-xs font-semibold tracking-[0.32em] text-white/55">LALI HOLDINGS</p>
-          <h1 className="mt-3 text-3xl font-extrabold sm:text-4xl">
-            {t(greetingKey())}, {user?.first_name?.trim()}
-          </h1>
-          <p className="mt-2 text-sm text-white/70">{t('dashboard.launcher')}</p>
-        </div>
+      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 py-8">
+        <div className="flex flex-1 flex-col items-center justify-center">
+          <div className="w-full text-center text-white">
+            <p className="text-xs font-semibold tracking-[0.32em] text-white/55">LALI HOLDINGS</p>
+            <h1 className="mt-3 text-3xl font-extrabold sm:text-4xl">
+              {t(greetingKey())}, {user?.first_name?.trim()}
+            </h1>
+            <p className="mt-2 text-sm text-white/70">{t('dashboard.launcher')}</p>
+          </div>
 
-        <label className="mx-auto mt-7 flex w-full max-w-md items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2.5 text-white backdrop-blur-xl">
-          <Search size={16} className="text-white/60" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('dashboard.searchApps')}
-            className="w-full bg-transparent text-sm outline-none placeholder:text-white/45"
-          />
-        </label>
+          <label className="mx-auto mt-7 flex w-full max-w-md items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2.5 text-white backdrop-blur-xl">
+            <Search size={16} className="text-white/60" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('dashboard.searchApps')}
+              className="w-full bg-transparent text-sm outline-none placeholder:text-white/45"
+            />
+          </label>
 
-        <div className="mt-10 flex flex-1 items-start justify-center">
-          <div className="grid grid-cols-3 justify-items-center gap-x-4 gap-y-8 sm:grid-cols-4 sm:gap-x-8 sm:gap-y-10 md:grid-cols-5 lg:grid-cols-6">
+          <div className="mt-10 flex w-full flex-wrap items-start justify-center gap-x-4 gap-y-8 sm:gap-x-8 sm:gap-y-10">
             {searchedAdmin.map((app) => (
               <AppIcon
                 key={app.to}
@@ -187,45 +182,18 @@ export function DashboardPage() {
           </div>
         </div>
 
-        {admin.length > 0 || dock.length > 0 ? (
-          <div className="relative mx-auto mt-8 flex max-w-full items-end justify-center">
-            <div className="relative z-30 flex items-end gap-3 overflow-x-auto rounded-[28px] border border-white/15 bg-white/12 px-3 py-3 shadow-[0_20px_50px_rgba(0,0,0,0.28)] backdrop-blur-2xl sm:gap-4 sm:px-4">
-              {admin.length > 0 ? (
-                <Link
-                  to="/administration"
-                  title={t('nav.administration')}
-                  className="group flex w-16 flex-col items-center sm:w-[72px]"
-                >
-                  <span className="grid h-12 w-12 place-items-center rounded-[16px] bg-[linear-gradient(145deg,#64748b,#1e293b)] text-white shadow-[0_10px_20px_rgba(0,0,0,0.28)] transition duration-200 group-hover:-translate-y-1 group-hover:scale-110 sm:h-14 sm:w-14 sm:rounded-[18px]">
-                    <Shield size={24} strokeWidth={1.7} />
-                  </span>
-                  <span className="mt-1.5 line-clamp-1 text-center text-[10px] font-medium text-white/80 sm:text-[11px]">
-                    {t('nav.administration')}
-                  </span>
-                </Link>
-              ) : null}
-              {dock.map((app) => {
-                const Icon = app.icon
-                return (
-                  <Link
-                    key={app.to}
-                    to={app.to}
-                    title={t(`nav.${app.key}`)}
-                    className="group flex w-16 flex-col items-center sm:w-[72px]"
-                  >
-                    <span className={cn(
-                      'grid h-12 w-12 place-items-center rounded-[16px] text-white shadow-[0_10px_20px_rgba(0,0,0,0.28)] transition duration-200 group-hover:-translate-y-1 group-hover:scale-110 sm:h-14 sm:w-14 sm:rounded-[18px]',
-                      app.tint,
-                    )}>
-                      <Icon size={24} strokeWidth={1.7} />
-                    </span>
-                    <span className="mt-1.5 line-clamp-1 text-center text-[10px] font-medium text-white/80 sm:text-[11px]">
-                      {t(`nav.${app.key}`)}
-                    </span>
-                  </Link>
-                )
-              })}
-            </div>
+        {canAdmin ? (
+          <div className="flex justify-center pb-2">
+            <Link
+              to="/administration"
+              title={t('nav.administration')}
+              className="group inline-flex items-center gap-2.5 rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-white/90 backdrop-blur-sm transition duration-200 hover:border-white/35 hover:bg-white/10 hover:text-white"
+            >
+              <span className="grid h-8 w-8 place-items-center rounded-full border border-white/25 bg-white/10 text-white/90 transition group-hover:border-white/40 group-hover:bg-white/15">
+                <Shield size={16} strokeWidth={1.8} />
+              </span>
+              <span className="text-sm font-medium tracking-wide">{t('nav.administration')}</span>
+            </Link>
           </div>
         ) : null}
       </div>

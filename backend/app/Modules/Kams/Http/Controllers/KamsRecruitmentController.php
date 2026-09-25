@@ -50,6 +50,7 @@ class KamsRecruitmentController extends Controller
         $companyIds = $request->user()->accessibleCompanyIds();
 
         $companies = Company::query()
+            ->whereHas('module', fn ($q) => $q->where('slug', 'kams'))
             ->when(! $request->user()->isGroupAdmin(), fn ($q) => $q->whereIn('id', $companyIds ?: [0]))
             ->orderBy('name')
             ->get(['id', 'name', 'code']);
