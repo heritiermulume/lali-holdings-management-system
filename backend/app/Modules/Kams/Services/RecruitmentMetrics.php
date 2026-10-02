@@ -9,6 +9,7 @@ use App\Modules\Kams\Models\KamsMemberImportRow;
 use App\Modules\Kams\Models\KamsObservationDay;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Support\Collection;
 
 class RecruitmentMetrics
@@ -18,15 +19,26 @@ class RecruitmentMetrics
      *
      * @return array<string, mixed>
      */
-    public function recap(string $groupBy = 'week', ?int $companyId = null, ?int $officeId = null): array
+    public function recap(string $groupBy = 'week', ?int $companyId = null, int|array|null $officeId = null, ?string $from = null, ?string $to = null): array
     {
-        $groupBy = in_array($groupBy, ['day', 'week', 'month'], true) ? $groupBy : 'week';
-        $end = now()->endOfDay();
-        [$start, $series] = match ($groupBy) {
-            'day' => $this->buildBuckets($end, 14, 'day'),
-            'week' => $this->buildBuckets($end, 8, 'week'),
-            'month' => $this->buildBuckets($end, 12, 'month'),
-        };
+        $groupBy = in_array($groupBy, ['day', 'week', 'month', 'custom'], true) ? $groupBy : 'week';
+        if ($groupBy === 'custom' && $from && $to) {
+            $start = Carbon::parse($from)->startOfDay();
+            $end = Carbon::parse($to)->endOfDay();
+            if ($end->gt(now())) {
+                $end = now()->endOfDay();
+            }
+            [$bucketMode, $series] = $this->seriesBetween($start, $end);
+        } else {
+            $groupBy = $groupBy === 'custom' ? 'week' : $groupBy;
+            $today = now();
+            [$start, $end] = match ($groupBy) {
+                'day' => [$today->copy()->startOfDay(), $today->copy()->endOfDay()],
+                'month' => [$today->copy()->startOfMonth()->startOfDay(), $today->copy()->endOfMonth()->endOfDay()],
+                default => [$today->copy()->startOfWeek(Carbon::MONDAY)->startOfDay(), $today->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay()],
+            };
+            [$bucketMode, $series] = $this->seriesBetween($start, $end);
+        }
 
         $candidates = $this->scoped(KamsCandidate::query(), $companyId, $officeId);
         $interviews = $this->scoped(KamsInterview::query(), $companyId, $officeId);
@@ -51,7 +63,7 @@ class RecruitmentMetrics
             ->get(['joined_on', 'status']);
 
         foreach ($applied as $row) {
-            $bucket = $this->bucketFor($row->applied_at, $groupBy, $series);
+            $bucket = $this->bucketFor($row->applied_at, $bucketMode, $series);
             if ($bucket === null) {
                 continue;
             }
@@ -59,7 +71,7 @@ class RecruitmentMetrics
         }
 
         foreach ($interviewRows as $row) {
-            $bucket = $this->bucketFor($row->interview_date, $groupBy, $series);
+            $bucket = $this->bucketFor($row->interview_date, $bucketMode, $series);
             if ($bucket === null) {
                 continue;
             }
@@ -76,7 +88,7 @@ class RecruitmentMetrics
         }
 
         foreach ($observationRows as $row) {
-            $bucket = $this->bucketFor($row->observation_date, $groupBy, $series);
+            $bucket = $this->bucketFor($row->observation_date, $bucketMode, $series);
             if ($bucket === null) {
                 continue;
             }
@@ -93,7 +105,7 @@ class RecruitmentMetrics
         }
 
         foreach ($newMembers as $row) {
-            $bucket = $this->bucketFor($row->joined_on, $groupBy, $series);
+            $bucket = $this->bucketFor($row->joined_on, $bucketMode, $series);
             if ($bucket === null) {
                 continue;
             }
@@ -143,30 +155,37 @@ class RecruitmentMetrics
     /**
      * @return array{recruitment: array<string, float|int>, migration: array<string, int>}
      */
-    public function summarize(?int $companyId = null, ?int $officeId = null): array
+    public function summarize(?int $companyId = null, int|array|null $officeId = null, ?string $from = null, ?string $to = null): array
     {
+        $officeIds = $this->officeIds($officeId);
         $candidates = KamsCandidate::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($officeId, fn ($q) => $q->where('office_id', $officeId));
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds));
+        $applied = (clone $candidates)
+            ->when($from && $to, fn ($q) => $q->whereBetween('applied_at', [$from.' 00:00:00', $to.' 23:59:59']));
         $members = KamsMember::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($officeId, fn ($q) => $q->where('office_id', $officeId));
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds));
 
-        $applications = (clone $candidates)->count();
-        $approved = (clone $members)->where('origin', 'new_recruit')->whereIn('status', ['active', 'verified'])->count();
+        $applications = (clone $applied)->count();
+        $approved = (clone $members)
+            ->where('origin', 'new_recruit')
+            ->whereIn('status', ['active', 'verified'])
+            ->when($from && $to, fn ($q) => $q->whereBetween('joined_on', [$from, $to]))
+            ->count();
         $migrated = (clone $members)->where('origin', 'migrated');
 
         return [
             'recruitment' => [
                 'applications' => $applications,
-                'under_review' => (clone $candidates)->where('status', 'under_review')->count(),
-                'shortlisted' => (clone $candidates)->where('status', 'shortlisted')->count(),
-                'interviews' => KamsInterview::query()->whereIn('candidate_id', (clone $candidates)->select('id'))->count(),
-                'observations' => KamsObservationDay::query()->whereIn('candidate_id', (clone $candidates)->select('id'))->count(),
+                'under_review' => (clone $applied)->where('status', 'under_review')->count(),
+                'shortlisted' => (clone $applied)->where('status', 'shortlisted')->count(),
+                'interviews' => $this->datedCount(KamsInterview::query()->whereIn('candidate_id', (clone $candidates)->select('id')), 'interview_date', $from, $to),
+                'observations' => $this->datedCount(KamsObservationDay::query()->whereIn('candidate_id', (clone $candidates)->select('id')), 'observation_date', $from, $to),
                 'approved' => $approved,
-                'rejected' => (clone $candidates)->where('status', 'rejected')->count(),
-                'abandoned' => (clone $candidates)->where('status', 'abandoned')->count(),
-                'on_hold' => (clone $candidates)->where('status', 'on_hold')->count(),
+                'rejected' => (clone $applied)->where('status', 'rejected')->count(),
+                'abandoned' => (clone $applied)->where('status', 'abandoned')->count(),
+                'on_hold' => (clone $applied)->where('status', 'on_hold')->count(),
                 'conversion_rate' => $applications > 0 ? round(($approved / $applications) * 100, 1) : 0,
             ],
             'migration' => [
@@ -188,11 +207,172 @@ class RecruitmentMetrics
         ];
     }
 
-    private function scoped(Builder $query, ?int $companyId, ?int $officeId): Builder
+    /**
+     * @return list<array{from: string, to: string, applications: int, interviews: int, observations: int, approved: int}>
+     */
+    public function trend(?int $companyId, int|array|null $officeId, string $from, string $to): array
+    {
+        $start = Carbon::parse($from)->startOfDay();
+        $end = Carbon::parse($to)->startOfDay();
+        $span = $start->diffInDays($end) + 1;
+        $bucket = $span > 120 ? 'month' : ($span > 31 ? 'week' : 'day');
+        $series = [];
+        $cursor = $start->copy();
+
+        while ($cursor->lte($end)) {
+            if ($bucket === 'month') {
+                $bucketFrom = $cursor->copy()->startOfMonth()->lt($start) ? $start->copy() : $cursor->copy()->startOfMonth();
+                $bucketTo = $cursor->copy()->endOfMonth()->startOfDay();
+                $cursor = $cursor->copy()->addMonth()->startOfMonth();
+            } elseif ($bucket === 'week') {
+                $weekStart = $cursor->copy()->startOfWeek(Carbon::MONDAY);
+                $bucketFrom = $weekStart->lt($start) ? $start->copy() : $weekStart;
+                $bucketTo = $cursor->copy()->endOfWeek(Carbon::SUNDAY)->startOfDay();
+                $cursor = $bucketTo->copy()->addDay();
+            } else {
+                $bucketFrom = $cursor->copy();
+                $bucketTo = $cursor->copy();
+                $cursor = $cursor->copy()->addDay();
+            }
+            if ($bucketTo->gt($end)) {
+                $bucketTo = $end->copy();
+            }
+
+            $series[$bucketFrom->toDateString()] = [
+                'from' => $bucketFrom->toDateString(),
+                'to' => $bucketTo->toDateString(),
+                'applications' => 0,
+                'interviews' => 0,
+                'observations' => 0,
+                'approved' => 0,
+            ];
+        }
+
+        $place = function (mixed $date, string $field) use (&$series): void {
+            if (! $date) {
+                return;
+            }
+            $day = Carbon::parse($date)->toDateString();
+            foreach ($series as $key => $row) {
+                if ($day >= $row['from'] && $day <= $row['to']) {
+                    $series[$key][$field]++;
+
+                    return;
+                }
+            }
+        };
+
+        $candidates = $this->scoped(KamsCandidate::query(), $companyId, $officeId)
+            ->whereBetween('applied_at', [$from.' 00:00:00', $to.' 23:59:59'])
+            ->get(['applied_at']);
+        foreach ($candidates as $row) {
+            $place($row->applied_at, 'applications');
+        }
+
+        $interviews = KamsInterview::query()
+            ->whereIn('candidate_id', $this->scoped(KamsCandidate::query(), $companyId, $officeId)->select('id'))
+            ->whereBetween('interview_date', [$from, $to])
+            ->get(['interview_date']);
+        foreach ($interviews as $row) {
+            $place($row->interview_date, 'interviews');
+        }
+
+        $observations = KamsObservationDay::query()
+            ->whereIn('candidate_id', $this->scoped(KamsCandidate::query(), $companyId, $officeId)->select('id'))
+            ->whereBetween('observation_date', [$from, $to])
+            ->get(['observation_date']);
+        foreach ($observations as $row) {
+            $place($row->observation_date, 'observations');
+        }
+
+        $approved = $this->scoped(KamsMember::query(), $companyId, $officeId)
+            ->where('origin', 'new_recruit')
+            ->whereIn('status', ['active', 'verified'])
+            ->whereBetween('joined_on', [$from, $to])
+            ->get(['joined_on']);
+        foreach ($approved as $row) {
+            $place($row->joined_on, 'approved');
+        }
+
+        return array_values($series);
+    }
+
+    private function datedCount(EloquentBuilder $query, string $column, ?string $from, ?string $to): int
     {
         return $query
+            ->when($from && $to, fn ($q) => $q->whereBetween($column, [$from, $to]))
+            ->count();
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function officeIds(int|array|null $officeId): array
+    {
+        if ($officeId === null) {
+            return [];
+        }
+
+        $ids = is_array($officeId) ? $officeId : [$officeId];
+
+        return array_values(array_filter(array_map('intval', $ids)));
+    }
+
+    private function scoped(Builder $query, ?int $companyId, int|array|null $officeId): Builder
+    {
+        $officeIds = $this->officeIds($officeId);
+
+        return $query
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($officeId, fn ($q) => $q->where('office_id', $officeId));
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds));
+    }
+
+    /**
+     * @return array{0: string, 1: array<string, array<string, mixed>>}
+     */
+    private function seriesBetween(Carbon $start, Carbon $end): array
+    {
+        $span = $start->copy()->startOfDay()->diffInDays($end->copy()->startOfDay()) + 1;
+        $mode = $span > 120 ? 'month' : ($span > 31 ? 'week' : 'day');
+        $series = [];
+        $cursor = $start->copy()->startOfDay();
+        $limit = $end->copy()->startOfDay();
+
+        while ($cursor->lte($limit)) {
+            if ($mode === 'month') {
+                $bucketFrom = $cursor->copy()->startOfMonth()->lt($start) ? $start->copy() : $cursor->copy()->startOfMonth();
+                $bucketTo = $cursor->copy()->endOfMonth()->startOfDay();
+                $cursor = $cursor->copy()->addMonth()->startOfMonth();
+            } elseif ($mode === 'week') {
+                $weekStart = $cursor->copy()->startOfWeek(Carbon::MONDAY);
+                $bucketFrom = $weekStart->lt($start) ? $start->copy() : $weekStart;
+                $bucketTo = $cursor->copy()->endOfWeek(Carbon::SUNDAY)->startOfDay();
+                $cursor = $bucketTo->copy()->addDay();
+            } else {
+                $bucketFrom = $cursor->copy();
+                $bucketTo = $cursor->copy();
+                $cursor = $cursor->copy()->addDay();
+            }
+            if ($bucketTo->gt($limit)) {
+                $bucketTo = $limit->copy();
+            }
+            $key = $this->bucketKey($bucketFrom, $mode);
+            $series[$key] = [
+                'key' => $key,
+                'from' => $bucketFrom->toDateString(),
+                'to' => $bucketTo->toDateString(),
+                'applications' => 0,
+                'interviews' => 0,
+                'observations' => 0,
+                'approved' => 0,
+                'rejected' => 0,
+                'on_hold' => 0,
+                'abandoned' => 0,
+                'new_members' => 0,
+            ];
+        }
+
+        return [$mode, $series];
     }
 
     /**

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Package } from 'lucide-react'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
@@ -9,6 +10,7 @@ import { cn } from '../../lib/cn'
 import { money } from '../../lib/format'
 import { buildBrandedDocumentHtml, printHtml } from '../../lib/printDocument'
 import { KamsTransactionsPrintMenu } from './KamsAccountTransactions'
+import type { OperationsOfficeFilter } from './KamsStockFlows'
 
 type Period = 'day' | 'week' | 'month' | 'custom'
 type DaySort = 'name' | 'code' | 'amount' | 'due' | 'quantity' | 'reference'
@@ -40,7 +42,7 @@ type Assignment = {
   collected_amount: number
   profit_amount: number
   loss_amount: number
-  member?: { full_name: string; member_code: string } | null
+  member?: { full_name: string; member_code: string; phone?: string | null } | null
   office?: { name: string } | null
   items?: AssignmentItem[]
 }
@@ -92,18 +94,20 @@ function startOfWeekMonday(value: Date) {
 }
 
 function presetRange(period: Exclude<Period, 'custom'>, now = new Date()) {
-  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   if (period === 'day') {
-    const from = new Date(to)
-    from.setDate(from.getDate() - 13)
-    return { from: isoDate(from), to: isoDate(to) }
+    const day = isoDate(today)
+    return { from: day, to: day }
   }
   if (period === 'month') {
-    return { from: isoDate(new Date(to.getFullYear(), to.getMonth() - 11, 1)), to: isoDate(to) }
+    const start = new Date(today.getFullYear(), today.getMonth(), 1)
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+    return { from: isoDate(start), to: isoDate(end) }
   }
-  const from = startOfWeekMonday(to)
-  from.setDate(from.getDate() - 49)
-  return { from: isoDate(from), to: isoDate(to) }
+  const start = startOfWeekMonday(today)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return { from: isoDate(start), to: isoDate(end) }
 }
 
 function formatDay(value: string, locale: string) {
@@ -130,7 +134,7 @@ function soldQty(item: AssignmentItem) {
 }
 
 function agentLabel(row: Assignment) {
-  return [row.member?.full_name, row.member?.member_code].filter(Boolean).join(' · ') || row.reference
+  return row.member?.full_name || row.reference
 }
 
 function assignmentSoldUnits(row: Assignment) {
@@ -156,13 +160,12 @@ function sortAssignments(rows: Assignment[], sort: DaySort) {
 export function KamsAssignmentReports() {
   const { t, i18n } = useTranslation()
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
-  const initial = useMemo(() => presetRange('week'), [])
+  const initial = useMemo(() => presetRange('day'), [])
   const today = useMemo(() => isoDate(new Date()), [])
-  const [period, setPeriod] = useState<Period>('week')
-  const [lastPreset, setLastPreset] = useState<Exclude<Period, 'custom'>>('week')
+  const [period, setPeriod] = useState<Period>('day')
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
-  const [officeId, setOfficeId] = useState('')
+  const { officeId } = useOutletContext<OperationsOfficeFilter>()
   const [data, setData] = useState<ReportPayload | null>(null)
   const [expandedDays, setExpandedDays] = useState<string[]>([])
   const [expandedAssignments, setExpandedAssignments] = useState<number[]>([])
@@ -170,6 +173,7 @@ export function KamsAssignmentReports() {
   const [loading, setLoading] = useState(true)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const [printPreviewTitle, setPrintPreviewTitle] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   useEffect(() => {
     if (!from || !to) return
@@ -186,7 +190,7 @@ export function KamsAssignmentReports() {
       if (!active) return
       const payload = res.data.data as ReportPayload
       setData(payload)
-      setExpandedDays((payload.days || []).slice(0, 3).map((day) => day.date))
+      setExpandedDays([])
     }).catch(() => {
       if (active) {
         setData({
@@ -221,7 +225,6 @@ export function KamsAssignmentReports() {
 
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)
-    setLastPreset(item)
     setPeriod(item)
     setFrom(next.from)
     setTo(next.to)
@@ -257,7 +260,7 @@ export function KamsAssignmentReports() {
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.sold'))}: <b>${totals.sold_units}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.amountDue'))}: <b>${escapeHtml(money(totals.expected_amount))}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.cashCollected'))}: <b>${escapeHtml(money(totals.collected_amount))}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.shortfall'))}: <b>${escapeHtml(money(totals.shortfall))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.shortfall'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.shortfall))}</b></div>
     </div>
   `
 
@@ -279,7 +282,7 @@ export function KamsAssignmentReports() {
         <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;">
           <div>
             <div style="font-weight:700;font-size:13px;">${escapeHtml(agentLabel(row))}</div>
-            <div style="color:#5d6b62;font-size:11px;">${escapeHtml(row.reference)}${row.office?.name ? ` · ${escapeHtml(row.office.name)}` : ''}</div>
+            <div style="color:#5d6b62;font-size:11px;">${escapeHtml([row.member?.phone, row.office?.name].filter(Boolean).join(' · '))}</div>
           </div>
           <div style="text-align:right;font-size:11px;line-height:1.5;">
             <div>${escapeHtml(t('kams.sold'))}: <b>${assignmentSoldUnits(row)}</b></div>
@@ -346,8 +349,8 @@ export function KamsAssignmentReports() {
   const buildDaysHtml = (days: DayReport[], title: string, subtitle?: string, simplified = false) => {
     if (!data) return ''
     const periodLabel = t('kams.periodRange', {
-      from: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
-      to: new Date(`${data.range.to}T12:00:00`).toLocaleDateString(locale),
+      start: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
+      end: new Date(`${data.range.to}T12:00:00`).toLocaleDateString(locale),
     })
     return buildBrandedDocumentHtml({
       title,
@@ -394,94 +397,26 @@ export function KamsAssignmentReports() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <div className="font-semibold">{t('kams.assignmentReports')}</div>
-          <p className="mt-1 text-sm text-muted">{t('kams.assignmentReportsHint')}</p>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
           {data ? (
-            <p className="mt-1 text-xs text-muted">
+            <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
               {t('kams.periodRange', {
-                from: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
-                to: new Date(`${data.range.to}T12:00:00`).toLocaleDateString(locale),
+                start: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
+                end: new Date(`${data.range.to}T12:00:00`).toLocaleDateString(locale),
               })}
-              {' · '}
-              {officeScopeLabel}
             </p>
-          ) : null}
-        </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
-          {data?.can_filter_offices ? (
-            <Select
-              className="w-full sm:min-w-[14rem] sm:w-64"
-              label={t('kams.filterOffice')}
-              value={officeId}
-              onChange={(e) => setOfficeId(e.target.value)}
+          ) : <span />}
+          <div className="flex shrink-0 items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((open) => !open)}
+              className={cn('shrink-0 rounded-full px-2.5 py-2 text-xs font-semibold sm:px-3 sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
             >
-              <option value="">{t('kams.allOffices')}</option>
-              {(data.filter_offices || []).map((office) => (
-                <option key={office.id} value={office.id}>
-                  {office.name}{office.code ? ` · ${office.code}` : ''}
-                </option>
-              ))}
-            </Select>
-          ) : null}
-          <div className="flex flex-wrap items-end gap-2 sm:justify-end">
-            {period === 'custom' ? (
-              <>
-                <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
-                  <Field
-                    className="min-w-0 max-w-full"
-                    label={t('kams.dateFrom')}
-                    type="date"
-                    value={from}
-                    max={to || today}
-                    onChange={(event) => setFrom(event.target.value)}
-                  />
-                  <Field
-                    className="min-w-0 max-w-full"
-                    label={t('kams.dateTo')}
-                    type="date"
-                    value={to}
-                    min={from}
-                    max={today}
-                    onChange={(event) => setTo(event.target.value)}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => applyPreset(lastPreset)}
-                  className="min-h-11 shrink-0 rounded-full bg-white px-4 text-sm font-semibold text-lhms"
-                >
-                  {t('dashboard.presetPeriod')}
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="flex w-full rounded-full bg-white p-1 sm:w-auto">
-                  {(['day', 'week', 'month'] as const).map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => applyPreset(item)}
-                      className={cn(
-                        'min-h-10 flex-1 rounded-full px-4 text-sm font-semibold sm:flex-none',
-                        period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
-                      )}
-                    >
-                      {t(`kams.period.${item}`)}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setPeriod('custom')}
-                  className="min-h-10 shrink-0 rounded-full bg-white px-4 text-sm font-semibold text-lhms"
-                >
-                  {t('dashboard.customPeriod')}
-                </button>
-              </>
-            )}
+              {filtersOpen ? t('common.hide') : t('common.filter')}
+            </button>
             <KamsTransactionsPrintMenu
+              buttonClassName="px-2.5 sm:px-4"
               canPreview={canPrint}
               canPrint={canPrint}
               onPreview={() => data && previewDays(data.days.map(sortedDay), allTitle, allSubtitle)}
@@ -491,16 +426,75 @@ export function KamsAssignmentReports() {
             />
           </div>
         </div>
+        {filtersOpen ? (
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:items-end">
+            <div className="flex w-full min-w-0 overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+              {(['day', 'week', 'month'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => applyPreset(item)}
+                  className={cn(
+                    'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
+                    period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
+                  )}
+                >
+                  {t(`kams.period.${item}`)}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPeriod('custom')}
+                className={cn(
+                  'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
+                  period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
+                )}
+              >
+                {t('dashboard.customPeriod')}
+              </button>
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                <Field
+                  className="min-w-0 max-w-full"
+                  label={t('kams.dateFrom')}
+                  type="date"
+                  value={from}
+                  max={to || today}
+                  onChange={(event) => setFrom(event.target.value)}
+                />
+                <Field
+                  className="min-w-0 max-w-full"
+                  label={t('kams.dateTo')}
+                  type="date"
+                  value={to}
+                  min={from}
+                  max={today}
+                  onChange={(event) => setTo(event.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {totals ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <Card className="p-4 text-sm">{t('kams.agents')}: <b>{totals.agents}</b></Card>
           <Card className="p-4 text-sm">{t('kams.assignments')}: <b>{totals.assignments}</b></Card>
           <Card className="p-4 text-sm">{t('kams.sold')}: <b>{totals.sold_units}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.amountDue')}: <b>{money(totals.expected_amount)}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.cashCollected')}: <b>{money(totals.collected_amount)}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.shortfall')}: <b>{money(totals.shortfall)}</b></Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.amountDue')}:</span>
+            <b>{money(totals.expected_amount)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.cashCollected')}:</span>
+            <b>{money(totals.collected_amount)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.shortfall')}:</span>
+            <b>{money(totals.shortfall)}</b>
+          </Card>
         </div>
       ) : null}
 
@@ -509,7 +503,7 @@ export function KamsAssignmentReports() {
           const expanded = expandedDays.includes(day.date)
           return (
             <Card key={day.date} className="overflow-hidden">
-              <div className="flex items-start gap-3 p-5">
+              <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:p-5">
                 <button
                   type="button"
                   onClick={() => toggleDay(day.date)}
@@ -518,7 +512,7 @@ export function KamsAssignmentReports() {
                 >
                   <div className="min-w-0">
                     <div className="font-semibold capitalize">{formatDay(day.date, locale)}</div>
-                    <div className="mt-1 text-sm text-muted">
+                    <div className="mt-1 text-xs text-muted sm:text-sm">
                       {day.totals.assignments} {t('kams.assignments').toLowerCase()}
                       {' · '}
                       {day.totals.agents} {t('kams.agents').toLowerCase()}
@@ -534,8 +528,9 @@ export function KamsAssignmentReports() {
                   </div>
                 </button>
                 <KamsTransactionsPrintMenu
-                  className="shrink-0"
-                  buttonClassName="min-h-11"
+                  iconOnly
+                  className="shrink-0 self-end sm:self-auto"
+                  buttonClassName="h-11 w-11 px-0"
                   onPreview={() => {
                     const sorted = sortedDay(day)
                     previewDays([sorted], dayTitle(day), allSubtitle)
@@ -555,9 +550,9 @@ export function KamsAssignmentReports() {
                 />
               </div>
               {expanded ? (
-                <div className="space-y-3 border-t border-line bg-surface px-5 py-4">
+                <div className="space-y-3 border-t border-line bg-surface px-4 py-4 sm:px-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div className="grid flex-1 gap-2 sm:grid-cols-2 text-sm">
+                    <div className="grid flex-1 grid-cols-2 gap-2 text-sm">
                       <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.sold')}: <b>{day.totals.sold_units}</b></div>
                       <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.returned')}: <b>{day.totals.returned_units}</b></div>
                     </div>
@@ -585,12 +580,13 @@ export function KamsAssignmentReports() {
                         >
                           <div className="min-w-0">
                             <div className="font-semibold">{agentLabel(row)}</div>
-                            <div className="text-sm text-muted">
-                              {row.reference}
-                              {row.office?.name ? ` · ${row.office.name}` : ''}
-                            </div>
+                            {row.member?.phone || row.office?.name ? (
+                              <div className="text-sm text-muted">
+                                {[row.member?.phone, row.office?.name].filter(Boolean).join(' · ')}
+                              </div>
+                            ) : null}
                           </div>
-                          <div className="flex shrink-0 items-center gap-3 text-sm">
+                          <div className="flex shrink-0 flex-col items-end gap-1 text-xs sm:flex-row sm:items-center sm:gap-3 sm:text-sm">
                             <div className="text-right">
                               <div className="text-[11px] uppercase tracking-wide text-muted">{t('kams.sold')}</div>
                               <div className="font-semibold tabular-nums text-lhms">{assignmentSoldUnits(row)}</div>
@@ -609,17 +605,17 @@ export function KamsAssignmentReports() {
                               <div>{t('kams.amountDue')}: <b>{money(row.expected_amount)}</b></div>
                               <div>{t('kams.cashCollected')}: <b>{money(row.collected_amount)}</b></div>
                             </div>
-                            <div className="overflow-hidden rounded-xl border border-line">
-                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 border-b border-line bg-[#f4faf5] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                                <span>{t('kams.product')}</span>
-                                <span className="text-right">{t('kams.quantity')}</span>
-                                <span className="text-right">{t('kams.sold')}</span>
-                                <span className="text-right">{t('kams.salePrice')}</span>
-                              </div>
-                              <div className="divide-y divide-line">
+                            <div className="overflow-x-auto rounded-xl border border-line">
+                              <div className="grid min-w-full grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_7rem]">
+                                <div className="col-span-4 grid grid-cols-subgrid items-end gap-x-2 border-b border-line bg-[#f4faf5] px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                                  <span>{t('kams.product')}</span>
+                                  <span className="text-right">{t('kams.quantity')}</span>
+                                  <span className="text-right">{t('kams.sold')}</span>
+                                  <span className="text-right">{t('kams.salePrice')}</span>
+                                </div>
                                 {(row.items || []).map((item) => (
-                                  <div key={item.id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 px-4 py-3 text-sm">
-                                    <div className="flex min-w-0 items-center gap-3">
+                                  <div key={item.id} className="col-span-4 grid grid-cols-subgrid items-center gap-x-2 border-t border-line px-3 py-3 text-sm">
+                                    <div className="flex min-w-0 items-center gap-2">
                                       <span className="grid h-10 w-10 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
                                         {item.product?.image_url ? (
                                           <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />

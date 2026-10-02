@@ -1,4 +1,4 @@
-import { AlertTriangle, Package, PackageCheck, Store, TrendingUp, Truck } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -12,14 +12,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Card, Empty } from '../../components/ui'
+import { Card, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
-type Period = 'day' | 'week' | 'month'
+type Period = 'day' | 'week' | 'month' | 'custom'
 type SeriesPoint = {
   key: string
   from: string
@@ -61,10 +61,19 @@ type StockData = {
   alerts: Array<{ tone: string; key: string; count: number }>
   recommendations: Array<{ key: string; product?: string; from?: string; to?: string; quantity?: number; agent?: string }>
   low_stock: Array<{ product?: string; sku?: string; location?: string; kind?: string; quantity: number }>
+  can_filter_offices?: boolean
+  filter_offices?: Array<{ id: number; name: string; code?: string }>
 }
 
 function parseDate(value: string) {
   return new Date(`${value}T12:00:00`)
+}
+
+function isoDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function formatDay(value: string, locale: string) {
@@ -94,86 +103,121 @@ export function KamsStockWorkspace() {
 export function KamsStockStats() {
   const { t, i18n } = useTranslation()
   const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const today = isoDate(new Date())
   const [period, setPeriod] = useState<Period>('week')
+  const [from, setFrom] = useState(today)
+  const [to, setTo] = useState(today)
+  const [officeId, setOfficeId] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [data, setData] = useState<StockData | null>(null)
 
   useEffect(() => {
     let active = true
-    api.get('/modules/kams/stock/dashboard', { params: { group_by: period } })
-      .then((res) => { if (active) setData(res.data.data) })
+    if (period === 'custom' && (!from || !to)) return () => { active = false }
+    api.get('/modules/kams/stock/dashboard', {
+      params: {
+        group_by: period,
+        office_id: officeId || undefined,
+        from: period === 'custom' ? from : undefined,
+        to: period === 'custom' ? to : undefined,
+      },
+    }).then((res) => { if (active) setData(res.data.data) })
     return () => { active = false }
-  }, [period])
+  }, [period, from, to, officeId])
 
   const chartData = useMemo(() => {
     if (!data) return []
     return data.series.map((row) => ({
       ...row,
-      label: period === 'day'
+      label: row.from === row.to
         ? formatDay(row.from, locale)
-        : period === 'month'
-          ? parseDate(row.from).toLocaleDateString(locale, { month: 'short', year: 'numeric' })
-          : `${formatDay(row.from, locale)} – ${formatDay(row.to, locale)}`,
+        : `${formatDay(row.from, locale)} – ${formatDay(row.to, locale)}`,
     }))
-  }, [data, locale, period])
+  }, [data, locale])
 
   if (!data) return <LoadingScreen />
 
   const kpis = [
-    { key: 'availableStock', value: data.totals.units, icon: Package },
-    { key: 'soldUnits', value: data.totals.sold_units, icon: TrendingUp },
-    { key: 'openAssignments', value: data.totals.open_assignments, icon: PackageCheck },
-    { key: 'depots', value: data.totals.depot_units, icon: Store },
-    { key: 'withAgents', value: data.totals.with_agents, icon: Package },
-    {
-      key: 'inTransit',
-      value: data.totals.in_transit,
-      icon: Truck,
-      hint: `${t('kams.quarantine')}: ${data.totals.quarantine}`,
-    },
+    { key: 'availableStock', value: data.totals.units },
+    { key: 'soldUnits', value: data.totals.sold_units },
+    { key: 'openAssignments', value: data.totals.open_assignments },
+    { key: 'depots', value: data.totals.depot_units },
+    { key: 'withAgents', value: data.totals.with_agents },
+    { key: 'inTransit', value: data.totals.in_transit, hint: `${t('kams.quarantine')}: ${data.totals.quarantine}` },
   ]
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-lg font-bold">{t('kams.statistics')}</h2>
-          <p className="mt-1 text-xs text-muted">
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
             {t('kams.periodRange', {
-              from: parseDate(data.range.from).toLocaleDateString(locale),
-              to: parseDate(data.range.to).toLocaleDateString(locale),
+              start: parseDate(data.range.from).toLocaleDateString(locale),
+              end: parseDate(data.range.to).toLocaleDateString(locale),
             })}
           </p>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
         </div>
-        <div className="flex rounded-full bg-white p-1">
-          {(['day', 'week', 'month'] as Period[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setPeriod(item)}
-              className={cn('min-h-10 rounded-full px-4 text-sm font-semibold', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-            >
-              {t(`kams.period.${item}`)}
-            </button>
-          ))}
-        </div>
+        {filtersOpen ? (
+          <div className="flex w-full flex-col gap-3 sm:items-end">
+            {data.can_filter_offices ? (
+              <Select
+                className="w-full min-w-0 sm:w-72"
+                label={t('kams.filterOffice')}
+                value={officeId}
+                onChange={(e) => setOfficeId(e.target.value)}
+              >
+                <option value="">{t('kams.allOffices')}</option>
+                {(data.filter_offices || []).map((office) => (
+                  <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+                ))}
+              </Select>
+            ) : null}
+            <div className="flex flex-col gap-2 sm:items-end">
+            <div className="flex w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+              {(['day', 'week', 'month'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPeriod(item)}
+                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                >
+                  {t(`kams.period.${item}`)}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPeriod('custom')}
+                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t('dashboard.customPeriod')}
+              </button>
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
+                <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
+              </div>
+            ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {kpis.map((item) => {
-          const Icon = item.icon
-          return (
-            <Card key={item.key} className="flex min-h-[118px] flex-col p-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-muted">{t(`kams.${item.key}`)}</span>
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-lhms-soft text-lhms"><Icon size={16} /></span>
-              </div>
-              <div className="mt-3 text-3xl font-extrabold">{item.value}</div>
-              <div className="mt-auto min-h-4 pt-1 text-xs text-muted">
-                {'hint' in item && item.hint ? item.hint : null}
-              </div>
-            </Card>
-          )
-        })}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+        {kpis.map((item) => (
+          <Card key={item.key} className="min-w-0 p-4 sm:p-5">
+            <div className="text-xs text-muted sm:text-sm">{t(`kams.${item.key}`)}</div>
+            <div className="mt-2 text-2xl font-extrabold sm:mt-3 sm:text-3xl">{item.value}</div>
+            {'hint' in item && item.hint ? <div className="mt-1 text-xs text-muted">{item.hint}</div> : null}
+          </Card>
+        ))}
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -213,14 +257,14 @@ export function KamsStockStats() {
         </Card>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="mb-4 font-semibold">{t('kams.stockActivity')}</div>
-        <div className="h-80">
+        <div className="h-64 sm:h-72">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
-              <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis width={36} allowDecimals={false} tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend />
               <Area type="monotone" dataKey="transfers" name={t('kams.transfers')} stroke="#094924" fill="#09492422" />

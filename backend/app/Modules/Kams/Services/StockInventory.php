@@ -887,7 +887,15 @@ class StockInventory
                 $returned = (int) ($payload['quantity_returned'] ?? 0);
                 $lost = (int) ($payload['quantity_lost'] ?? 0);
                 abort_unless($returned >= 0 && $lost >= 0, 422, __('Quantities must be zero or greater.'));
-                abort_unless($returned + $lost <= $line->quantity_out, 422, __('Returned and lost quantities exceed assigned stock.'));
+                $productName = $line->product?->name ?: (string) $line->product_id;
+                abort_unless(
+                    $returned + $lost <= (int) $line->quantity_out,
+                    422,
+                    __('Pour :product, restitués et perdus dépassent la quantité sortie (:out). Vendus, restitués et perdus doivent correspondre à la quantité sortie.', [
+                        'product' => $productName,
+                        'out' => (int) $line->quantity_out,
+                    ]),
+                );
                 $sold = max(0, $line->quantity_out - $returned - $lost);
                 $line->update([
                     'quantity_returned' => $returned,
@@ -914,6 +922,13 @@ class StockInventory
             $expectedAmount = round($expectedAmount, 2);
             $profitAmount = round($profitAmount, 2);
             $lossAmount = round($lossAmount, 2);
+            abort_unless(
+                round($collectedAmount, 2) + 0.001 >= $expectedAmount,
+                422,
+                __('L\'argent collecté doit être égal au montant dû (:due), ou supérieur pour épargner le surplus.', [
+                    'due' => number_format($expectedAmount, 2, '.', ''),
+                ]),
+            );
             $surplus = round(max(0, $collectedAmount - $expectedAmount), 2);
             $salePayment = min($collectedAmount, $expectedAmount);
 
@@ -929,7 +944,7 @@ class StockInventory
             }
 
             $surplusEntry = null;
-            if ($depositSurplus && $surplus > 0 && $userId) {
+            if ($surplus > 0 && $userId) {
                 abort_unless($member, 422, __('The assignment has no agent.'));
                 $surplusEntry = $this->savings->depositDayClosingSurplus(
                     $member,

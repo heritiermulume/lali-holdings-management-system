@@ -24,6 +24,7 @@ use App\Modules\Kams\Services\KamsIdentityService;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\MemberRegistrationService;
 use App\Modules\Kams\Services\RecruitmentCommunicationService;
+use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Services\RecruitmentMetrics;
 use App\Modules\Kams\Support\PersonName;
 use Illuminate\Database\Eloquent\Builder;
@@ -33,6 +34,7 @@ use Illuminate\Support\Carbon;
 
 class KamsRecruitmentController extends Controller
 {
+    use ResolvesKamsOffices;
     use RespondsWithJson;
 
     public function __construct(
@@ -56,6 +58,8 @@ class KamsRecruitmentController extends Controller
             ->get(['id', 'name', 'code']);
 
         $offices = Office::query()
+            ->where('is_active', true)
+            ->whereHas('company.module', fn ($q) => $q->where('slug', 'kams'))
             ->when(! $request->user()->isGroupAdmin(), function ($q) use ($request, $companyIds) {
                 $officeIds = $request->user()->accessibleOfficeIds();
                 $q->whereIn('company_id', $companyIds ?: [0]);
@@ -106,11 +110,39 @@ class KamsRecruitmentController extends Controller
             ? (int) $request->company_id
             : ($request->user()->isGroupAdmin() ? null : $request->user()->primary_company_id);
 
-        return $this->ok($this->metrics->recap(
-            $request->string('group_by')->toString() ?: 'week',
+        $user = $request->user();
+        $offices = $this->kamsOffices($request)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+        $accessibleIds = $offices->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $canFilter = count($accessibleIds) > 1;
+        $officeIds = $user->isGroupAdmin() || ! $user->isOfficeScoped() ? [] : $accessibleIds;
+        if (! $canFilter) {
+            $officeIds = $accessibleIds;
+        } elseif ($request->filled('office_id')) {
+            $selected = (int) $request->integer('office_id');
+            $this->assertKamsOffice($request, $selected);
+            $officeIds = [$selected];
+        }
+
+        $groupBy = $request->string('group_by')->toString() ?: 'week';
+        $payload = $this->metrics->recap(
+            $groupBy,
             $companyId,
-            $request->filled('office_id') ? (int) $request->office_id : null,
-        ));
+            $officeIds,
+            $groupBy === 'custom' ? $request->string('from')->toString() : null,
+            $groupBy === 'custom' ? $request->string('to')->toString() : null,
+        );
+        $payload['can_filter_offices'] = $canFilter;
+        $payload['filter_offices'] = $canFilter ? $offices->map(fn ($office) => [
+            'id' => $office->id,
+            'name' => $office->name,
+            'code' => $office->code,
+        ])->values()->all() : [];
+
+        return $this->ok($payload);
     }
 
     public function candidates(Request $request): JsonResponse
@@ -123,6 +155,11 @@ class KamsRecruitmentController extends Controller
 
         if ($status = $request->string('status')->toString()) {
             $query->where('status', $status);
+        }
+        $from = $request->string('from')->toString();
+        $to = $request->string('to')->toString();
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
+            $query->whereBetween('applied_at', [$from.' 00:00:00', $to.' 23:59:59']);
         }
 
         return $this->paginated($query->paginate($request->integer('per_page', 20)));

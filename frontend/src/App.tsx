@@ -18,7 +18,7 @@ import { UsersPage } from './pages/UsersPage'
 import { GroupSettingsPage, ModuleSettingsPage, SettingsHome, SettingsWorkspace } from './pages/settings/SettingsPages'
 import { FinanceSettingsPage } from './pages/settings/FinanceSettingsPage'
 import { RolesSettingsPage } from './pages/settings/RolesSettingsPage'
-import { KamsCampaigns, KamsEntry } from './pages/kams/KamsPages'
+import { KamsEntry } from './pages/kams/KamsPages'
 import { KamsAgents, KamsCandidates, KamsMembersWorkspace, KamsRecruitmentDashboard } from './pages/kams/KamsRecruitmentPages'
 import { KamsClientsList, KamsClientsWorkspace, KamsSuppliersList } from './pages/kams/KamsClientsPage'
 import { KamsAssignments, KamsAssignmentsWorkspace } from './pages/kams/KamsStockFlows'
@@ -142,7 +142,6 @@ export default function App() {
           </Route>
           <Route path="products" element={<Navigate to="/modules/kams/stock/warehouses" replace />} />
           <Route path="orders" element={<Navigate to="/modules/kams/finance" replace />} />
-          <Route path="campaigns" element={<RequirePermission perm="kams.campaigns.view"><KamsCampaigns /></RequirePermission>} />
         </Route>
         <Route element={<ModuleWorkspaceLayout />}>
           <Route path="/notifications" element={<RequirePermission perm="notifications.view"><NotificationsPage /></RequirePermission>} />

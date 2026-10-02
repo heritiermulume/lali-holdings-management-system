@@ -101,10 +101,39 @@ class KamsStockController extends Controller
 
     public function dashboard(Request $request, StockMetrics $metrics): JsonResponse
     {
-        return $this->ok($metrics->recap(
+        $companyId = $this->kamsCompanyId($request);
+        $offices = $this->kamsOffices($request)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+        $accessibleIds = $offices->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $canFilter = count($accessibleIds) > 1;
+        $user = $request->user();
+        $officeIds = $user->isGroupAdmin() || ! $user->isOfficeScoped() ? [] : $accessibleIds;
+        if (! $canFilter) {
+            $officeIds = $accessibleIds;
+        } elseif ($request->filled('office_id')) {
+            $selected = (int) $request->integer('office_id');
+            $this->assertKamsOffice($request, $selected);
+            $officeIds = [$selected];
+        }
+
+        $payload = $metrics->recap(
             $request->string('group_by')->toString() ?: 'week',
-            $this->kamsCompanyId($request),
-        ));
+            $companyId,
+            $request->string('group_by')->toString() === 'custom' ? $request->string('from')->toString() : null,
+            $request->string('group_by')->toString() === 'custom' ? $request->string('to')->toString() : null,
+            $officeIds,
+        );
+        $payload['can_filter_offices'] = $canFilter;
+        $payload['filter_offices'] = $canFilter ? $offices->map(fn ($office) => [
+            'id' => $office->id,
+            'name' => $office->name,
+            'code' => $office->code,
+        ])->values()->all() : [];
+
+        return $this->ok($payload);
     }
 
     public function receipts(Request $request): JsonResponse
@@ -245,9 +274,14 @@ class KamsStockController extends Controller
         $companyId = $this->kamsCompanyId($request);
         $search = trim($request->string('search')->toString());
         $query = KamsStockAssignment::query()
-            ->with(['member:id,full_name,member_code,office_id', 'office:id,name,code', 'depot:id,name', 'items.product:id,name,sku,price,cost,image_path'])
+            ->with(['member:id,full_name,member_code,phone,office_id', 'office:id,name,code', 'depot:id,name', 'items.product:id,name,sku,price,cost,image_path'])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
+            ->when($request->filled('office_id'), function ($q) use ($request) {
+                $officeId = (int) $request->integer('office_id');
+                abort_unless($request->user()->canAccessOffice($officeId), 403);
+                $q->where('office_id', $officeId);
+            })
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')->toString()))
             ->when($search !== '', function ($q) use ($search) {
                 $q->where(function ($inner) use ($search) {
@@ -255,7 +289,8 @@ class KamsStockController extends Controller
                         ->orWhere('notes', 'like', "%{$search}%")
                         ->orWhereHas('member', function ($member) use ($search) {
                             $member->where('full_name', 'like', "%{$search}%")
-                                ->orWhere('member_code', 'like', "%{$search}%");
+                                ->orWhere('member_code', 'like', "%{$search}%")
+                                ->orWhere('phone', 'like', "%{$search}%");
                         })
                         ->orWhereHas('office', function ($office) use ($search) {
                             $office->where('name', 'like', "%{$search}%")
@@ -306,7 +341,7 @@ class KamsStockController extends Controller
 
         $assignments = KamsStockAssignment::query()
             ->with([
-                'member:id,full_name,member_code,office_id',
+                'member:id,full_name,member_code,phone,office_id',
                 'office:id,name,code',
                 'depot:id,name',
                 'items.product:id,name,sku,price,cost,image_path',
@@ -475,6 +510,7 @@ class KamsStockController extends Controller
             'items.*.product_id' => ['required', 'exists:kams_products,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
         ]);
+        $before = $this->assignmentAuditSnapshot($assignment);
         $updated = $this->inventory->addToAssignment(
             $assignment,
             $data['items'],
@@ -482,7 +518,7 @@ class KamsStockController extends Controller
             $request->user()->id,
             $data['notes'] ?? null,
         );
-        AuditLogger::record('update', $updated, [], $data);
+        AuditLogger::record('update', $updated, $before, $data);
 
         return $this->ok($updated);
     }
@@ -498,13 +534,14 @@ class KamsStockController extends Controller
             'items.*.id' => ['required', 'exists:kams_stock_assignment_items,id'],
             'items.*.quantity' => ['required', 'integer', 'min:0'],
         ]);
+        $before = $this->assignmentAuditSnapshot($assignment);
         $updated = $this->inventory->updateAssignment(
             $assignment,
             $data['items'],
             $request->user()->id,
             $data['notes'] ?? null,
         );
-        AuditLogger::record('update', $updated, [], $data);
+        AuditLogger::record('update', $updated, $before, $data);
 
         return $this->ok($updated);
     }
@@ -522,6 +559,7 @@ class KamsStockController extends Controller
             'items.*.quantity_returned' => ['required', 'integer', 'min:0'],
             'items.*.quantity_lost' => ['required', 'integer', 'min:0'],
         ]);
+        $before = $this->assignmentAuditSnapshot($assignment, true);
         $settled = $this->inventory->settle(
             $assignment,
             $data['items'],
@@ -530,7 +568,7 @@ class KamsStockController extends Controller
             $request->user()->id,
             (bool) ($data['deposit_surplus'] ?? false),
         );
-        AuditLogger::record('update', $settled, [], $data);
+        AuditLogger::record('update', $settled, $before, $data);
         if ($settled->getAttribute('surplus_entry')) {
             $entryId = data_get($settled->getAttribute('surplus_entry'), 'id');
             if ($entryId) {
@@ -925,6 +963,20 @@ class KamsStockController extends Controller
             ->whereIn('auditable_type', $types)
             ->latest();
 
+        if ($request->filled('office_id')) {
+            $officeId = (int) $request->integer('office_id');
+            abort_unless($request->user()->canAccessOffice($officeId), 403);
+            $assignmentIds = KamsStockAssignment::query()->where('office_id', $officeId)->pluck('id');
+            $query->where(function ($inner) use ($officeId, $assignmentIds) {
+                $inner->where('new_values->office_id', $officeId)
+                    ->orWhere('old_values->office_id', $officeId)
+                    ->orWhere(function ($assignment) use ($assignmentIds) {
+                        $assignment->where('auditable_type', KamsStockAssignment::class)
+                            ->whereIn('auditable_id', $assignmentIds);
+                    });
+            });
+        }
+
         if ($action = $request->string('action')->toString()) {
             $query->where('action', $action);
         }
@@ -949,9 +1001,11 @@ class KamsStockController extends Controller
 
         $perPage = min(max($request->integer('per_page', 20), 1), 40);
         $paginator = $query->paginate($perPage);
-        $lookups = $this->journalLookups($paginator->getCollection());
+        $logs = $paginator->getCollection();
+        $lookups = $this->journalLookups($logs);
+        $priors = $this->journalPriorValues($logs);
         $paginator->setCollection(
-            $paginator->getCollection()->map(fn (AuditLog $log) => $this->presentJournalEntry($log, $lookups))
+            $logs->map(fn (AuditLog $log) => $this->presentJournalEntry($log, $lookups, $priors))
         );
 
         return $this->paginated($paginator);
@@ -995,12 +1049,19 @@ class KamsStockController extends Controller
                 $idsByEntity[$entity][] = (int) $log->auditable_id;
             }
 
-            if (! empty($new['member_id'])) {
-                $memberIds[] = (int) $new['member_id'];
-            }
-            foreach (['from_depot_id', 'to_depot_id'] as $key) {
-                if (! empty($new[$key])) {
-                    $depotIds[] = (int) $new[$key];
+            foreach ([$old, $new] as $payload) {
+                if (! empty($payload['member_id'])) {
+                    $memberIds[] = (int) $payload['member_id'];
+                }
+                foreach (['from_depot_id', 'to_depot_id', 'depot_id', 'warehouse_id'] as $key) {
+                    if (! empty($payload[$key])) {
+                        $depotIds[] = (int) $payload[$key];
+                    }
+                }
+                foreach ($payload['items'] ?? [] as $item) {
+                    if (is_array($item) && ! empty($item['product_id'])) {
+                        $idsByEntity['KamsProduct'][] = (int) $item['product_id'];
+                    }
                 }
             }
             foreach ([$new['office_id'] ?? null, $old['office_id'] ?? null] as $officeId) {
@@ -1051,11 +1112,82 @@ class KamsStockController extends Controller
      * @param  array<string, mixed>  $lookups
      * @return array<string, mixed>
      */
-    private function presentJournalEntry(AuditLog $log, array $lookups = []): array
+    /**
+     * @param  \Illuminate\Support\Collection<int, AuditLog>  $logs
+     * @return array<string, array<string, mixed>>
+     */
+    private function journalPriorValues($logs): array
+    {
+        $types = $logs->pluck('auditable_type')->filter()->unique()->values();
+        $ids = $logs->pluck('auditable_id')->filter()->unique()->values();
+        if ($types->isEmpty() || $ids->isEmpty()) {
+            return [];
+        }
+
+        $history = AuditLog::query()
+            ->whereIn('auditable_type', $types)
+            ->whereIn('auditable_id', $ids)
+            ->orderBy('id')
+            ->get(['id', 'auditable_type', 'auditable_id', 'new_values']);
+
+        $latest = [];
+        $priors = [];
+        foreach ($history as $row) {
+            $key = $row->auditable_type.'#'.$row->auditable_id;
+            $priors[$key.'@'.$row->id] = $latest[$key] ?? [];
+            $values = is_array($row->new_values) ? $row->new_values : [];
+            $latest[$key] = array_merge($latest[$key] ?? [], $values);
+        }
+
+        return $priors;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function assignmentAuditSnapshot(KamsStockAssignment $assignment, bool $settlement = false): array
+    {
+        $assignment->loadMissing('items');
+
+        return [
+            'collected_amount' => $assignment->collected_amount,
+            'items' => $assignment->items->map(function ($item) use ($settlement) {
+                $line = [
+                    'id' => $item->id,
+                    'product_id' => $item->product_id,
+                    'quantity' => (int) $item->quantity_out,
+                ];
+                if ($settlement) {
+                    $line['quantity_returned'] = (int) $item->quantity_returned;
+                    $line['quantity_lost'] = (int) $item->quantity_lost;
+                }
+
+                return $line;
+            })->values()->all(),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $lookups
+     * @param  array<string, array<string, mixed>>  $priors
+     * @return array<string, mixed>
+     */
+    private function presentJournalEntry(AuditLog $log, array $lookups = [], array $priors = []): array
     {
         $entity = class_basename($log->auditable_type);
         $new = is_array($log->new_values) ? $log->new_values : [];
         $old = is_array($log->old_values) ? $log->old_values : [];
+        if ($log->action !== 'create') {
+            $prior = $priors[$log->auditable_type.'#'.$log->auditable_id.'@'.$log->id] ?? [];
+            foreach ($new as $key => $value) {
+                if (! array_key_exists($key, $old) && array_key_exists($key, $prior)) {
+                    $old[$key] = $prior[$key];
+                }
+            }
+            if ($old === [] && $prior !== []) {
+                $old = $prior;
+            }
+        }
         $event = $this->journalEventKey($log->action, $entity, $old, $new);
 
         return [
@@ -1066,6 +1198,7 @@ class KamsStockController extends Controller
             'auditable_id' => $log->auditable_id,
             'subject' => $this->journalSubject($entity, $old, $new, $log->auditable_id, $lookups),
             'details' => $this->journalDetails($entity, $old, $new, $lookups),
+            'changes' => $this->journalChanges($old, $new, $lookups),
             'created_at' => $log->created_at?->toIso8601String(),
             'ip_address' => $log->ip_address,
             'user' => $log->user ? [
@@ -1308,5 +1441,171 @@ class KamsStockController extends Controller
         }
 
         return array_values(array_filter($details, fn ($line) => is_string($line) && $line !== ''));
+    }
+
+    /**
+     * @param  array<string, mixed>  $old
+     * @param  array<string, mixed>  $new
+     * @param  array<string, mixed>  $lookups
+     * @return list<array{field: string, before: ?string, after: ?string}>
+     */
+    private function journalChanges(array $old, array $new, array $lookups): array
+    {
+        $skip = ['updated_at', 'created_at', 'deleted_at', 'password', 'remember_token'];
+        $changes = [];
+
+        foreach (array_values(array_unique([...array_keys($old), ...array_keys($new)])) as $key) {
+            if (in_array($key, $skip, true)) {
+                continue;
+            }
+            if ($key === 'items') {
+                array_push($changes, ...$this->journalItemChanges($old[$key] ?? null, $new[$key] ?? null, $lookups));
+                continue;
+            }
+            $before = array_key_exists($key, $old) ? $this->journalDisplayValue($key, $old[$key], $lookups) : null;
+            $after = array_key_exists($key, $new) ? $this->journalDisplayValue($key, $new[$key], $lookups) : null;
+            if ($before === $after) {
+                continue;
+            }
+            $changes[] = [
+                'field' => $key,
+                'before' => $before,
+                'after' => $after,
+            ];
+        }
+
+        return $changes;
+    }
+
+    /**
+     * @param  array<string, mixed>  $lookups
+     * @return list<array{field: string, before: ?string, after: ?string}>
+     */
+    private function journalItemChanges(mixed $before, mixed $after, array $lookups): array
+    {
+        $beforeRows = $this->journalItemIndex(is_array($before) ? $before : []);
+        $afterRows = $this->journalItemIndex(is_array($after) ? $after : []);
+        $shared = array_intersect(array_keys($beforeRows), array_keys($afterRows));
+        if ($shared === [] && $beforeRows !== [] && $afterRows !== []) {
+            $beforeRows = array_values($beforeRows);
+            $afterRows = array_values($afterRows);
+            $keys = range(0, max(count($beforeRows), count($afterRows)) - 1);
+        } else {
+            $keys = array_values(array_unique([...array_keys($beforeRows), ...array_keys($afterRows)]));
+        }
+
+        $changes = [];
+        foreach ($keys as $key) {
+            $previous = $beforeRows[$key] ?? null;
+            $current = $afterRows[$key] ?? null;
+            $previousLine = is_array($previous) ? $this->journalItemLine($previous, $current, $lookups) : null;
+            $currentLine = is_array($current) ? $this->journalItemLine($current, $previous, $lookups) : null;
+            if ($previousLine === $currentLine) {
+                continue;
+            }
+            $changes[] = [
+                'field' => 'items',
+                'before' => $previousLine,
+                'after' => $currentLine,
+            ];
+        }
+
+        return $changes;
+    }
+
+    /**
+     * @param  array<int, mixed>  $items
+     * @return array<int|string, array<string, mixed>>
+     */
+    private function journalItemIndex(array $items): array
+    {
+        $rows = [];
+        foreach (array_values($items) as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $key = ! empty($item['id'])
+                ? 'id:'.$item['id']
+                : (! empty($item['product_id']) ? 'product:'.$item['product_id'] : 'index:'.$index);
+            $rows[$key] = $item;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     * @param  array<string, mixed>|null  $sibling
+     * @param  array<string, mixed>  $lookups
+     */
+    private function journalItemLine(array $item, ?array $sibling, array $lookups): ?string
+    {
+        $productId = $item['product_id'] ?? $sibling['product_id'] ?? null;
+        $parts = [];
+        if ($productId) {
+            $name = ($lookups['products'] ?? collect())[(int) $productId] ?? null;
+            if (is_string($name) && $name !== '') {
+                $parts[] = $name;
+            }
+        }
+        foreach (['quantity', 'quantity_returned', 'quantity_lost'] as $key) {
+            if (! array_key_exists($key, $item) || $item[$key] === null || $item[$key] === '') {
+                continue;
+            }
+            $parts[] = $key.': '.$item[$key];
+        }
+
+        return $parts === [] ? null : implode(' · ', $parts);
+    }
+
+    /**
+     * @param  array<string, mixed>  $lookups
+     */
+    private function journalDisplayValue(string $key, mixed $value, array $lookups): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_bool($value)) {
+            return $value ? '1' : '0';
+        }
+        if (is_array($value)) {
+            $lines = [];
+            foreach ($value as $item) {
+                if (! is_array($item)) {
+                    $lines[] = (string) $item;
+                    continue;
+                }
+                $parts = [];
+                foreach ($item as $itemKey => $itemValue) {
+                    if (in_array($itemKey, ['id', 'created_at', 'updated_at'], true) || $itemValue === null || $itemValue === '') {
+                        continue;
+                    }
+                    $shown = $this->journalDisplayValue((string) $itemKey, $itemValue, $lookups);
+                    if ($shown !== null) {
+                        $parts[] = $itemKey.': '.$shown;
+                    }
+                }
+                if ($parts !== []) {
+                    $lines[] = implode(' · ', $parts);
+                }
+            }
+
+            return $lines === [] ? null : implode("\n", $lines);
+        }
+        if (str_ends_with($key, '_id') && is_numeric($value)) {
+            $resolved = match (true) {
+                str_contains($key, 'member') => ($lookups['members'] ?? collect())[(int) $value] ?? null,
+                str_contains($key, 'office') => ($lookups['offices'] ?? collect())[(int) $value] ?? null,
+                str_contains($key, 'product') => ($lookups['products'] ?? collect())[(int) $value] ?? null,
+                str_contains($key, 'depot') || str_contains($key, 'warehouse') => ($lookups['depots'] ?? collect())[(int) $value] ?? null,
+                default => null,
+            };
+            if (is_string($resolved) && $resolved !== '') {
+                return $resolved;
+            }
+        }
+
+        return is_scalar($value) ? (string) $value : null;
     }
 }

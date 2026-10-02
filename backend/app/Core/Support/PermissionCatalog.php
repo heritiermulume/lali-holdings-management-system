@@ -91,6 +91,10 @@ class PermissionCatalog
     {
         $areas = [
             'dashboard' => ['view'],
+            'dashboard.products' => ['view'],
+            'dashboard.orders' => ['view'],
+            'dashboard.finance' => ['view'],
+            'dashboard.recruitment' => ['view'],
             'members' => ['view', 'create', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate'],
             'recruitment' => ['view', 'create', 'update', 'delete', 'approve'],
             'clients' => ['view', 'create', 'update', 'delete'],
@@ -105,7 +109,11 @@ class PermissionCatalog
         $permissions = [];
 
         foreach ($areas as $area => $actions) {
-            $group = str_starts_with($area, 'finance.') ? 'kams.finance' : "kams.{$area}";
+            $group = match (true) {
+                str_starts_with($area, 'finance.') => 'kams.finance',
+                str_starts_with($area, 'dashboard.') => 'kams.dashboard',
+                default => "kams.{$area}",
+            };
             foreach ($actions as $action) {
                 $permissions[] = [
                     'slug' => "kams.{$area}.{$action}",

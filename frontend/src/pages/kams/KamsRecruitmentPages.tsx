@@ -14,6 +14,35 @@ import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
+type ListPeriod = 'day' | 'week' | 'month' | 'custom'
+
+function isoDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function presetRange(period: Exclude<ListPeriod, 'custom'>) {
+  const today = new Date()
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  if (period === 'day') {
+    const day = isoDate(end)
+    return { from: day, to: day }
+  }
+  if (period === 'month') {
+    const start = new Date(end.getFullYear(), end.getMonth(), 1)
+    const monthEnd = new Date(end.getFullYear(), end.getMonth() + 1, 0)
+    return { from: isoDate(start), to: isoDate(monthEnd) }
+  }
+  const weekday = end.getDay()
+  const start = new Date(end)
+  start.setDate(end.getDate() - (weekday === 0 ? 6 : weekday - 1))
+  const weekEnd = new Date(start)
+  weekEnd.setDate(start.getDate() + 6)
+  return { from: isoDate(start), to: isoDate(weekEnd) }
+}
+
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
 type LookupCompany = { id: number; name: string; code: string }
 type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null }
@@ -403,6 +432,7 @@ export function KamsAgents() {
   const [roles, setRoles] = useState<LookupRole[]>([])
   const [lookupMembers, setLookupMembers] = useState<LookupPerson[]>([])
   const [origin, setOrigin] = useState('')
+  const [officeId, setOfficeId] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -434,7 +464,7 @@ export function KamsAgents() {
   const load = (term = query) => {
     setLoading(true)
     return api.get('/modules/kams/members', {
-      params: { per_page: 50, ...(origin ? { origin } : {}), ...(term ? { search: term } : {}) },
+      params: { per_page: 50, ...(origin ? { origin } : {}), ...(officeId ? { office_id: officeId } : {}), ...(term ? { search: term } : {}) },
     }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
   }
 
@@ -454,7 +484,7 @@ export function KamsAgents() {
 
   useEffect(() => {
     void load()
-  }, [origin, query])
+  }, [origin, officeId, query])
 
   useEffect(() => {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
@@ -644,6 +674,7 @@ export function KamsAgents() {
   const memberParams = () => ({
     per_page: 1000,
     ...(origin ? { origin } : {}),
+    ...(officeId ? { office_id: officeId } : {}),
     ...(query ? { search: query } : {}),
   })
 
@@ -686,6 +717,7 @@ export function KamsAgents() {
     subtitle: t('kams.membersHint'),
     meta: [
       { label: t('common.filter'), value: origin ? t(`kams.origin.${origin}`) : t('common.all') },
+      { label: t('kams.filterOffice'), value: offices.find((office) => String(office.id) === officeId)?.name || t('kams.allOffices') },
       { label: t('common.records'), value: String(list.length) },
       { label: t('common.printedOn'), value: new Date().toLocaleString() },
     ],
@@ -735,8 +767,9 @@ export function KamsAgents() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
+      <div className="mb-4 flex flex-col-reverse gap-3 md:flex-row md:items-end">
+        <div className="flex min-w-0 flex-1 items-end gap-2 md:contents">
+        <div className="relative order-2 flex min-h-11 w-full min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3 md:min-w-[8rem]">
           <Search size={16} className="shrink-0 text-muted" />
           <input
             value={search}
@@ -783,22 +816,37 @@ export function KamsAgents() {
             ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 flex-nowrap items-center gap-2">
+        {offices.length > 1 ? (
+          <div className="order-1 w-36 shrink-0 md:w-52 lg:w-64">
+          <Select
+            className="w-full min-w-0"
+            label={t('kams.filterOffice')}
+            value={officeId}
+            onChange={(e) => setOfficeId(e.target.value)}
+          >
+            <option value="">{t('kams.allOffices')}</option>
+            {offices.map((office) => (
+              <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+            ))}
+          </Select>
+          </div>
+        ) : null}
+        </div>
+        <div className="flex w-full shrink-0 items-center gap-2 md:w-auto md:order-3">
           {hasPermission('kams.members.create') ? (
             <Button className="shrink-0 px-3 sm:px-4" onClick={openCreate}>
               <Plus size={16} /> {t('kams.addAgent')}
             </Button>
           ) : null}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
           {hasPermission('kams.members.import') ? (
-            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('kams.importAgents')} onClick={() => setImportOpen(true)}>
+            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0" title={t('kams.importAgents')} aria-label={t('kams.importAgents')} onClick={() => setImportOpen(true)}>
               <Upload size={16} />
-              <span className="hidden sm:inline">{t('kams.importAgents')}</span>
             </Button>
           ) : null}
           {hasPermission('kams.members.export') ? (
-            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('common.export')} onClick={() => void exportAgents()}>
+            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0" title={t('common.export')} aria-label={t('common.export')} onClick={() => void exportAgents()}>
               <Download size={16} />
-              <span className="hidden sm:inline">{t('common.export')}</span>
             </Button>
           ) : null}
           {hasPermission('kams.members.print') || hasPermission('kams.members.preview') ? (
@@ -809,13 +857,13 @@ export function KamsAgents() {
           >
             <Button
               variant="secondary"
-              className="h-11 w-11 px-0 sm:w-auto sm:px-4"
+              className="h-11 w-11 px-0"
+              title={t('common.print')}
               aria-label={t('common.print')}
               aria-expanded={printMenuOpen}
               onClick={() => setPrintMenuOpen((open) => !open)}
             >
               <Printer size={16} />
-              <span className="hidden sm:inline">{t('common.print')}</span>
             </Button>
             {printMenuOpen ? (
               <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
@@ -849,6 +897,7 @@ export function KamsAgents() {
             ) : null}
           </div>
           ) : null}
+          </div>
         </div>
       </div>
 
@@ -1110,7 +1159,7 @@ export function KamsAgents() {
 export { KamsRecruitmentDashboard } from './KamsRecapPage'
 
 export function KamsCandidates() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { user, hasPermission } = useAuth()
   const canCreate = hasPermission('kams.recruitment.create')
   const canUpdate = hasPermission('kams.recruitment.update')
@@ -1133,6 +1182,12 @@ export function KamsCandidates() {
   const [formError, setFormError] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
+  const today = isoDate(new Date())
+  const [period, setPeriod] = useState<ListPeriod>('week')
+  const [from, setFrom] = useState(today)
+  const [to, setTo] = useState(today)
+  const [officeId, setOfficeId] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const photoInput = useRef<HTMLInputElement>(null)
   const [action, setAction] = useState<'interview' | 'observation' | null>(null)
   const [pickingSupervisor, setPickingSupervisor] = useState(false)
@@ -1141,8 +1196,14 @@ export function KamsCandidates() {
 
   const load = (term = query) => {
     setLoading(true)
+    const range = period === 'custom' ? { from, to } : presetRange(period)
     return api.get('/modules/kams/candidates', {
-      params: { per_page: 50, ...(term ? { search: term } : {}) },
+      params: {
+        per_page: 50,
+        ...(term ? { search: term } : {}),
+        ...(officeId ? { office_id: officeId } : {}),
+        ...range,
+      },
     }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
   }
 
@@ -1153,7 +1214,7 @@ export function KamsCandidates() {
 
   useEffect(() => {
     void load()
-  }, [query])
+  }, [query, period, from, to, officeId])
 
   useEffect(() => {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
@@ -1398,9 +1459,68 @@ export function KamsCandidates() {
   }))
   const selectedInterviewer = interviewerOptions.find((item) => item.id === form.interviewer_user_id) ?? null
   const companySelected = Boolean(form.company_id)
+  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const range = period === 'custom' ? { from, to } : presetRange(period)
+  const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
 
   return (
     <div>
+      <div className="mb-4 flex flex-col gap-3 sm:items-end">
+        <div className="flex w-full items-center justify-between gap-3">
+          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+            {range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : null}
+          </p>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('w-fit shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
+        </div>
+        {filtersOpen ? <div className="flex w-full flex-col gap-3 sm:items-end">
+          {offices.length > 1 ? (
+            <Select
+              className="w-full min-w-0 sm:w-72"
+              label={t('kams.filterOffice')}
+              value={officeId}
+              onChange={(e) => setOfficeId(e.target.value)}
+            >
+              <option value="">{t('kams.allOffices')}</option>
+              {offices.map((office) => (
+                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+              ))}
+            </Select>
+          ) : null}
+          <div className="flex flex-col gap-2 sm:items-end">
+            <div className="flex w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+              {(['day', 'week', 'month'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPeriod(item)}
+                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                >
+                  {t(`kams.period.${item}`)}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPeriod('custom')}
+                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t('dashboard.customPeriod')}
+              </button>
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
+                <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
+              </div>
+            ) : null}
+          </div>
+        </div> : null}
+      </div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />

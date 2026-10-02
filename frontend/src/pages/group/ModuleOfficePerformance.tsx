@@ -82,9 +82,8 @@ function startOfWeekMonday(value: Date) {
 function presetRange(period: Exclude<Period, 'custom'>, now = new Date()) {
   const to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   if (period === 'day') {
-    const from = new Date(to)
-    from.setDate(from.getDate() - 13)
-    return { from: isoDate(from), to: isoDate(to) }
+    const day = isoDate(to)
+    return { from: day, to: day }
   }
   if (period === 'month') {
     return { from: isoDate(new Date(to.getFullYear(), to.getMonth() - 11, 1)), to: isoDate(to) }

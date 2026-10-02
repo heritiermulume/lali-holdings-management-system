@@ -48,9 +48,9 @@ class KamsModule implements BusinessModule, FinancialContributor
         return true;
     }
 
-    public function financialSummary(?int $companyId = null): array
+    public function financialSummary(?int $companyId = null, ?string $from = null, ?string $to = null, array $officeIds = []): array
     {
-        return $this->finance->summarize($companyId);
+        return $this->finance->summarize($companyId, $from, $to, $officeIds);
     }
 
     public function recentOrders(?int $companyId = null, int $limit = 5)

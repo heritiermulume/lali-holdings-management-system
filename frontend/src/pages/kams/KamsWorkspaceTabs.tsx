@@ -12,14 +12,14 @@ export function KamsWorkspaceTabs({ tabs }: { tabs: KamsWorkspaceTab[] }) {
   const visible = tabs.filter((tab) => tab.show !== false)
 
   return (
-    <nav className="-mx-1 mb-5 flex gap-2 overflow-x-auto px-1 pb-1">
+    <nav className="mb-5 flex flex-wrap gap-2">
       {visible.map((tab) => (
         <NavLink
           key={tab.to}
           to={tab.to}
           end={tab.end}
           className={({ isActive }) => cn(
-            'min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap inline-flex items-center',
+            'inline-flex min-h-10 items-center rounded-full px-3 text-xs font-semibold whitespace-nowrap sm:px-4 sm:text-sm',
             isActive ? 'bg-lhms text-white' : 'bg-white text-muted',
           )}
         >

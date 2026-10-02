@@ -196,7 +196,7 @@ class ModuleOfficePerformance
     {
         $end = now()->endOfDay();
         $start = match ($groupBy) {
-            'day' => $end->copy()->subDays(13)->startOfDay(),
+            'day' => $end->copy()->startOfDay(),
             'month' => $end->copy()->startOfMonth()->subMonths(11)->startOfDay(),
             default => $end->copy()->startOfWeek(Carbon::MONDAY)->subWeeks(7)->startOfDay(),
         };

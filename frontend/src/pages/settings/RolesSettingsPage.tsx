@@ -25,8 +25,11 @@ type RoleRow = {
 const BUSINESS_MODULES = ['kams', 'heavy-equipment', 'real-estate', 'rice-mills', 'lali-tv']
 
 const MODULE_AREA_ORDER: Record<string, string[]> = {
-  kams: ['kams.members', 'kams.recruitment', 'kams.clients', 'kams.products', 'kams.orders', 'kams.finance', 'kams.campaigns'],
+  kams: ['kams.dashboard', 'kams.members', 'kams.recruitment', 'kams.clients', 'kams.products', 'kams.orders', 'kams.finance', 'kams.campaigns'],
 }
+
+const DASHBOARD_PAGE_ORDER = ['products', 'orders', 'finance', 'recruitment']
+const DASHBOARD_VIEW_SLUG = 'kams.dashboard.view'
 
 const FINANCE_PAGE_ORDER = ['dashboard', 'account', 'company']
 const ADMIN_PAGE_ORDER = ['users', 'audit', 'settings']
@@ -43,6 +46,12 @@ function permissionAction(slug: string) {
 
 function permissionPrefix(slug: string) {
   return slug.split('.').slice(0, -1).join('.')
+}
+
+function dashboardPage(slug: string) {
+  const parts = slug.split('.')
+  if (parts[0] !== 'kams' || parts[1] !== 'dashboard') return 'other'
+  return parts.length === 3 ? 'root' : parts[2]
 }
 
 function permissionPage(slug: string) {
@@ -89,6 +98,10 @@ function groupedPages(permissions: Permission[], pageOf: (slug: string) => strin
 
 function financePages(permissions: Permission[]) {
   return groupedPages(permissions, (slug) => permissionPage(slug) || 'other', FINANCE_PAGE_ORDER)
+}
+
+function dashboardPages(permissions: Permission[]) {
+  return groupedPages(permissions, dashboardPage, ['root', ...DASHBOARD_PAGE_ORDER])
 }
 
 function administrationPages(permissions: Permission[]) {
@@ -162,7 +175,7 @@ export function RolesSettingsPage() {
     const hasAreas = Object.keys(permissionGroups).some((group) => group.startsWith(`${moduleSlug}.`))
     const entries = Object.entries(permissionGroups).filter(([group]) => (
       group === 'administration'
-      || (hasAreas ? group.startsWith(`${moduleSlug}.`) && group !== 'kams.dashboard' : group === moduleSlug)
+      || (hasAreas ? group.startsWith(`${moduleSlug}.`) : group === moduleSlug)
     ))
     const order = MODULE_AREA_ORDER[moduleSlug] ?? []
     entries.sort((a, b) => {
@@ -185,6 +198,8 @@ export function RolesSettingsPage() {
   const togglePermission = (group: Permission[], permission: Permission) => {
     const adminView = group.find((item) => item.slug === ADMIN_VIEW_SLUG)
     const adminIds = adminView ? group.map((item) => item.id) : []
+    const dashboardView = group.find((item) => item.slug === DASHBOARD_VIEW_SLUG)
+    const dashboardIds = dashboardView ? group.map((item) => item.id) : []
     const view = viewFor(group, permission)
     const siblingIds = siblingsOf(group, permission).map((item) => item.id)
 
@@ -194,7 +209,14 @@ export function RolesSettingsPage() {
         if (enabled) return current.filter((id) => !adminIds.includes(id))
         return [...current, permission.id]
       }
+      if (permission.slug === DASHBOARD_VIEW_SLUG) {
+        if (enabled) return current.filter((id) => !dashboardIds.includes(id))
+        return [...current, permission.id]
+      }
       if (adminView && !current.includes(adminView.id)) {
+        return current
+      }
+      if (dashboardView && permission.slug.startsWith('kams.dashboard.') && !current.includes(dashboardView.id)) {
         return current
       }
       if (isViewPermission(permission)) {
@@ -226,10 +248,7 @@ export function RolesSettingsPage() {
       const res = await api.put(`/roles/${selected.id}`, {
         permission_ids: selected.full_access
           ? selected.permissions.map((permission) => permission.id)
-          : [...new Set([
-            ...permissionIds,
-            ...selected.permissions.filter((permission) => permission.group === 'kams.dashboard').map((permission) => permission.id),
-          ])],
+          : permissionIds,
       })
       const updated = res.data.data as RoleRow
       setRoles((current) => current.map((role) => (role.id === updated.id ? { ...role, ...updated } : role)))
@@ -336,12 +355,16 @@ export function RolesSettingsPage() {
                 {Object.entries(visiblePermissionGroups).map(([group, permissions]) => {
                   const adminView = permissions.find((item) => item.slug === ADMIN_VIEW_SLUG)
                   const adminOn = !adminView || permissionIds.includes(adminView.id)
+                  const dashboardView = permissions.find((item) => item.slug === DASHBOARD_VIEW_SLUG)
+                  const dashboardOn = !dashboardView || permissionIds.includes(dashboardView.id)
                   const paged = group === 'administration'
                     ? administrationPages(permissions.filter((item) => item.slug !== ADMIN_VIEW_SLUG))
                     : group === 'kams.finance'
                       ? financePages(permissions)
-                      : [['all', permissions] as const]
-                  const wide = group === 'administration' || group === 'kams.finance'
+                      : group === 'kams.dashboard'
+                        ? dashboardPages(permissions.filter((item) => item.slug !== DASHBOARD_VIEW_SLUG))
+                        : [['all', permissions] as const]
+                  const wide = group === 'administration' || group === 'kams.finance' || group === 'kams.dashboard'
                   return (
                   <fieldset key={group} className={cn('rounded-2xl border border-line p-3', wide && 'sm:col-span-2')}>
                     <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
@@ -357,9 +380,19 @@ export function RolesSettingsPage() {
                         {permissionLabel(t, adminView)}
                       </label>
                     ) : null}
+                    {group === 'kams.dashboard' && dashboardView ? (
+                      <label className="mb-3 flex min-h-9 items-center gap-2 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          checked={dashboardOn}
+                          onChange={() => togglePermission(permissions, dashboardView)}
+                        />
+                        {permissionLabel(t, dashboardView)}
+                      </label>
+                    ) : null}
                     <div className={cn(
                       group === 'administration' && 'grid gap-4 sm:grid-cols-3',
-                      group === 'kams.finance' && 'grid gap-4 sm:grid-cols-3',
+                      (group === 'kams.finance' || group === 'kams.dashboard') && 'grid gap-4 sm:grid-cols-2 xl:grid-cols-4',
                       !wide && 'space-y-1',
                     )}>
                       {paged.map(([page, items]) => (
@@ -369,7 +402,9 @@ export function RolesSettingsPage() {
                               {t(
                                 group === 'administration'
                                   ? `settings.permissionGroups.administrationPages.${page}`
-                                  : `settings.permissionGroups.kams.financePages.${page}`,
+                                  : group === 'kams.dashboard'
+                                    ? `settings.permissionGroups.kams.dashboardPages.${page}`
+                                    : `settings.permissionGroups.kams.financePages.${page}`,
                                 { defaultValue: page },
                               )}
                             </div>
@@ -379,7 +414,8 @@ export function RolesSettingsPage() {
                             const viewOn = !view || permissionIds.includes(view.id)
                             const pageDependent = Boolean(view) && !isViewPermission(permission)
                             const adminDependent = group === 'administration' && permission.slug !== ADMIN_VIEW_SLUG
-                            const gatedOff = (adminDependent && !adminOn) || (pageDependent && !viewOn)
+                            const dashboardDependent = group === 'kams.dashboard' && permission.slug !== DASHBOARD_VIEW_SLUG
+                            const gatedOff = (adminDependent && !adminOn) || (dashboardDependent && !dashboardOn) || (pageDependent && !viewOn)
                             const checked = permissionIds.includes(permission.id) && !gatedOff
                             return (
                             <label key={permission.id} className={cn('flex min-h-9 items-center gap-2 text-sm', pageDependent && 'pl-5', gatedOff && 'text-muted')}>

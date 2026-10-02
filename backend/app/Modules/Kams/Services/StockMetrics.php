@@ -29,15 +29,29 @@ class StockMetrics
     /**
      * @return array<string, mixed>
      */
-    public function recap(string $groupBy = 'week', ?int $companyId = null): array
+    public function recap(string $groupBy = 'week', ?int $companyId = null, ?string $from = null, ?string $to = null, array $officeIds = []): array
     {
-        $groupBy = in_array($groupBy, ['day', 'week', 'month'], true) ? $groupBy : 'week';
-        $end = now()->endOfDay();
-        [$start, $series] = match ($groupBy) {
-            'day' => $this->buildBuckets($end, 14, 'day'),
-            'week' => $this->buildBuckets($end, 8, 'week'),
-            'month' => $this->buildBuckets($end, 12, 'month'),
-        };
+        $groupBy = in_array($groupBy, ['day', 'week', 'month', 'custom'], true) ? $groupBy : 'week';
+        if ($groupBy === 'custom' && $from && $to) {
+            $start = Carbon::parse($from)->startOfDay();
+            $end = Carbon::parse($to)->endOfDay();
+            if ($end->gt(now())) {
+                $end = now()->endOfDay();
+            }
+            $span = $start->copy()->startOfDay()->diffInDays($end->copy()->startOfDay()) + 1;
+            $bucketMode = $span > 120 ? 'month' : ($span > 31 ? 'week' : 'day');
+            $series = $this->seriesBetween($start, $end, $bucketMode);
+        } else {
+            $groupBy = $groupBy === 'custom' ? 'week' : $groupBy;
+            $today = now();
+            [$start, $end] = match ($groupBy) {
+                'day' => [$today->copy()->startOfDay(), $today->copy()->endOfDay()],
+                'month' => [$today->copy()->startOfMonth()->startOfDay(), $today->copy()->endOfMonth()->endOfDay()],
+                default => [$today->copy()->startOfWeek(Carbon::MONDAY)->startOfDay(), $today->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay()],
+            };
+            $bucketMode = $groupBy;
+            $series = $this->seriesBetween($start, $end, $bucketMode);
+        }
 
         if ($companyId) {
             $this->inventory->ensureOfficeDepots($companyId);
@@ -47,21 +61,31 @@ class StockMetrics
         $products = KamsProduct::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId));
         $balances = KamsStockBalance::query()
             ->with(['depot:id,name,kind,office_id', 'product:id,name,sku,price,cost,avg_cost,stock'])
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)));
         $available = (clone $balances)->where('condition', 'available');
-        $assignments = KamsStockAssignment::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId));
+        $assignments = KamsStockAssignment::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds));
         $sales = KamsStockSale::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
             ->whereBetween('sold_at', [$start, $end])
             ->get(['sold_at', 'paid_amount', 'margin', 'subtotal']);
         $opened = (clone $assignments)->whereBetween('assigned_at', [$start, $end])->get(['assigned_at']);
         $transfers = KamsStockTransfer::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], function ($q) use ($officeIds) {
+                $q->where(function ($inner) use ($officeIds) {
+                    $inner->whereHas('fromDepot', fn ($depot) => $depot->whereIn('office_id', $officeIds))
+                        ->orWhereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeIds));
+                });
+            })
             ->whereBetween('transferred_at', [$start, $end])
             ->get(['transferred_at']);
 
         foreach ($sales as $row) {
-            $bucket = $this->bucketFor($row->sold_at, $groupBy, $series);
+            $bucket = $this->bucketFor($row->sold_at, $bucketMode, $series);
             if ($bucket === null) {
                 continue;
             }
@@ -70,13 +94,13 @@ class StockMetrics
             $series[$bucket]['sales']++;
         }
         foreach ($opened as $row) {
-            $bucket = $this->bucketFor($row->assigned_at, $groupBy, $series);
+            $bucket = $this->bucketFor($row->assigned_at, $bucketMode, $series);
             if ($bucket) {
                 $series[$bucket]['assignments']++;
             }
         }
         foreach ($transfers as $row) {
-            $bucket = $this->bucketFor($row->transferred_at, $groupBy, $series);
+            $bucket = $this->bucketFor($row->transferred_at, $bucketMode, $series);
             if ($bucket) {
                 $series[$bucket]['transfers']++;
             }
@@ -89,14 +113,19 @@ class StockMetrics
         $quarantine = (int) (clone $balances)->whereIn('condition', ['quarantine', 'damaged'])->sum('quantity');
         $inventoryValue = (float) KamsStockBalance::query()
             ->when($companyId, fn ($q) => $q->where('kams_stock_balances.company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
             ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
             ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
             ->value('value');
         $periodSales = KamsStockSale::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
             ->whereBetween('sold_at', [$start, $end]);
         $soldUnits = (int) KamsStockSaleItem::query()
-            ->whereHas('sale', fn ($q) => $q->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))->whereBetween('sold_at', [$start, $end]))
+            ->whereHas('sale', fn ($q) => $q
+                ->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))
+                ->when($officeIds !== [], fn ($inner) => $inner->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
+                ->whereBetween('sold_at', [$start, $end]))
             ->sum('quantity');
         $returnedSold = (int) KamsStockReturnItem::query()
             ->whereHas('stockReturn', fn ($q) => $q
@@ -120,11 +149,13 @@ class StockMetrics
             ->sum('payable_amount');
         $activeSellers = KamsDepot::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds))
             ->where('kind', 'seller')
             ->whereHas('balances', fn ($q) => $q->where('condition', 'available')->where('quantity', '>', 0))
             ->count();
 
         $lowLocations = (clone $available)
+            ->whereHas('depot', fn ($q) => $q->where('kind', 'depot'))
             ->where('quantity', '<=', $threshold)
             ->where('quantity', '>', 0)
             ->orderBy('quantity')
@@ -606,6 +637,51 @@ class StockMetrics
         $start = Carbon::parse(reset($series)['from'])->startOfDay();
 
         return [$start, $series];
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function seriesBetween(Carbon $start, Carbon $end, string $mode): array
+    {
+        $series = [];
+        $cursor = $start->copy()->startOfDay();
+        $limit = $end->copy()->startOfDay();
+
+        while ($cursor->lte($limit)) {
+            if ($mode === 'month') {
+                $bucketFrom = $cursor->copy()->startOfMonth()->lt($start) ? $start->copy() : $cursor->copy()->startOfMonth();
+                $bucketTo = $cursor->copy()->endOfMonth()->startOfDay();
+                $cursor = $cursor->copy()->addMonth()->startOfMonth();
+            } elseif ($mode === 'week') {
+                $weekStart = $cursor->copy()->startOfWeek(Carbon::MONDAY);
+                $bucketFrom = $weekStart->lt($start) ? $start->copy() : $weekStart;
+                $bucketTo = $cursor->copy()->endOfWeek(Carbon::SUNDAY)->startOfDay();
+                $cursor = $bucketTo->copy()->addDay();
+            } else {
+                $bucketFrom = $cursor->copy();
+                $bucketTo = $cursor->copy();
+                $cursor = $cursor->copy()->addDay();
+            }
+            if ($bucketTo->gt($limit)) {
+                $bucketTo = $limit->copy();
+            }
+            $key = $this->bucketKey($bucketFrom, $mode);
+            $series[$key] = [
+                'key' => $key,
+                'from' => $bucketFrom->toDateString(),
+                'to' => $bucketTo->toDateString(),
+                'transfers' => 0,
+                'assignments' => 0,
+                'sales' => 0,
+                'settlements' => 0,
+                'cash' => 0,
+                'profit' => 0,
+                'loss' => 0,
+            ];
+        }
+
+        return $series;
     }
 
     /**

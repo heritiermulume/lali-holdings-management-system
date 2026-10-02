@@ -90,7 +90,7 @@
       "week": "Semaine",
       "month": "Mois"
     },
-    "periodRange": "Du {{from}} au {{to}}",
+    "periodRange": "Du {{start}} au {{end}}",
     "dateFrom": "Du",
     "dateTo": "Au",
     "customPeriod": "Personnaliser",
@@ -346,7 +346,7 @@
   "kams": {
     "title": "King Attitude Management System",
     "subtitle": "Gestion commerciale de King Attitude Traders.",
-    "dashboardHint": "Vue d'ensemble des ventes, des finances et des commandes récentes.",
+    "dashboardHint": "Vue d'ensemble du stock, des ventes, des finances et des recrutements.",
     "clientsHint": "Consultez et gérez les clients de King Attitude Traders.",
     "clientsAndSuppliers": "Clients & Fournisseurs",
     "clientsAndSuppliersHint": "Gérez vos clients et vos fournisseurs au même endroit.",
@@ -362,7 +362,7 @@
     "productsHint": "Catalogue, stocks et tarifs des produits.",
     "ordersHint": "Suivi des commandes et de leur statut.",
     "stock": "Stock",
-    "stockHint": "Suivez vos marchandises : réceptions, transferts, stocks disponibles et remises aux agents.",
+    "stockHint": "Gestion complète du stock.",
     "warehousesHint": "Stockez et recevez les produits au niveau régional, puis transférez-les vers les dépôts des bureaux.",
     "depotsHint": "Gérez le stock de chaque bureau : réceptions, approvisionnements depuis l’entrepôt et mouvements.",
     "finance": "Finance",
@@ -553,6 +553,8 @@
     "quarantine": "Quarantaine",
     "receipts": "Réceptions",
     "sales": "Ventes",
+    "losses": "Pertes",
+    "defectives": "Défectués",
     "returns": "Retours",
     "commissions": "Commissions",
     "newSale": "Nouvelle vente",
@@ -587,7 +589,7 @@
     "receivePrepaidCash": "Recevoir l'argent des ventes précédentes",
     "receivePrepaidCashHint": "Montant que l'agent laisse maintenant, avant la clôture de journée.",
     "cashCollectedIncludesPrepaid": "Incluez l'argent déjà reçu dans le total collecté.",
-    "closeDayHint": "Les unités ni restituées ni perdues sont enregistrées comme ventes. L'épargne est mise à jour automatiquement.",
+    "closeDayHint": "Les unités ni restituées ni perdues sont enregistrées comme ventes.",
     "returnType": {
       "customer": "Retour client",
       "seller_to_depot": "Vendeur → dépôt",
@@ -609,6 +611,45 @@
     "assignmentReportsHint": "Rapports détaillés des journées clôturées",
     "stockJournal": "Journal",
     "stockJournalHint": "Historique des créations, modifications, suppressions, retraits et affectations effectués par les utilisateurs.",
+    "journalWhen": "Date et heure",
+    "journalField": "Champ",
+    "journalBefore": "Avant",
+    "journalAfter": "Après",
+    "journalValue": "Valeur",
+    "journalNoChanges": "Aucun détail de valeur enregistré.",
+    "journalFields": {
+      "items": "Articles",
+      "quantity": "Quantité",
+      "assigned_quantity": "Quantité affectée",
+      "returned_quantity": "Quantité restituée",
+      "sold_quantity": "Quantité vendue",
+      "lost_quantity": "Quantité perdue",
+      "collected_amount": "Montant collecté",
+      "amount": "Montant",
+      "amount_due": "Montant dû",
+      "sale_price": "Prix de vente",
+      "cost_price": "Prix de revient",
+      "unit_price": "Prix unitaire",
+      "status": "Statut",
+      "reference": "Référence",
+      "notes": "Notes",
+      "reason": "Motif",
+      "description": "Description",
+      "name": "Nom",
+      "kind": "Type",
+      "member_id": "Agent",
+      "office_id": "Bureau",
+      "depot_id": "Dépôt",
+      "warehouse_id": "Entrepôt",
+      "product_id": "Produit",
+      "from_depot_id": "Dépôt d'origine",
+      "to_depot_id": "Dépôt de destination",
+      "sku": "Code produit",
+      "barcode": "Code-barres",
+      "unit": "Unité",
+      "active": "Actif",
+      "is_active": "Actif"
+    },
     "journalActionFilter": "Type d'action",
     "journalEntries": "Entrées",
     "journalToday": "Aujourd'hui",
@@ -748,6 +789,9 @@
     "addLine": "Ajouter une ligne",
     "newAssignment": "Affecter à un agent",
     "settleAssignment": "Clôturer la journée",
+    "settleNow": "Clôturer maintenant",
+    "settleQtyMismatch": "Pour {{product}}, restitués et perdus dépassent la quantité sortie ({{out}}). Vendus, restitués et perdus doivent correspondre à la quantité sortie.",
+    "settleCashShort": "L'argent collecté doit être égal au montant dû, ou supérieur pour épargner le surplus sur le compte de l'agent.",
     "assignedQty": "sortis",
     "returned": "Restitués",
     "lost": "Perdus",
@@ -774,6 +818,7 @@
     "campaignsHint": "Campagnes marketing, canaux et budgets.",
     "clients": "Clients",
     "products": "Produits",
+    "assignmentValue": "Valeurs",
     "orders": "Commandes",
     "campaigns": "Campagnes",
     "newClient": "Nouveau client",
@@ -839,7 +884,7 @@
     "availableQty": "Dispo",
     "newOrder": "Nouvelle commande",
     "newCampaign": "Nouvelle campagne",
-    "recruitment": "Recrutement",
+    "recruitment": "Recrutements",
     "recruitmentHint": "Parcours des nouveaux membres, de la candidature à l'enregistrement.",
     "candidates": "Candidats",
     "candidatesHint": "Candidatures, entretiens et journées d'observation.",
@@ -877,7 +922,7 @@
       "week": "Semaine",
       "month": "Mois"
     },
-    "periodRange": "Du {{from}} au {{to}}",
+    "periodRange": "Du {{start}} au {{end}}",
     "activityTrend": "Évolution du recrutement",
     "outcomes": "Décisions",
     "funnel": "Parcours du recrutement",
@@ -1157,8 +1202,14 @@
       "files": "Fichiers",
       "kams": {
         "dashboard": "Tableau de bord",
+        "dashboardPages": {
+          "products": "Stock",
+          "orders": "Ventes",
+          "finance": "Chiffre d'affaires et dépenses",
+          "recruitment": "Recrutements"
+        },
         "members": "Membres",
-        "recruitment": "Recrutement",
+        "recruitment": "Recrutements",
         "clients": "Clients",
         "products": "Produits",
         "orders": "Commandes",
@@ -1259,7 +1310,19 @@
         "approve": "Approuver dans KAMS",
         "export": "Exporter depuis KAMS",
         "dashboard": {
-          "view": "Consulter le tableau de bord"
+          "view": "Consulter le tableau de bord",
+          "products": {
+            "view": "Consulter le stock"
+          },
+          "orders": {
+            "view": "Consulter les ventes"
+          },
+          "finance": {
+            "view": "Consulter le chiffre d'affaires et les dépenses"
+          },
+          "recruitment": {
+            "view": "Consulter le recrutement"
+          }
         },
         "members": {
           "view": "Consulter les membres",

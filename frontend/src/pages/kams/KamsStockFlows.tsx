@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Package, Search } from 'lucide-react'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
@@ -50,7 +50,7 @@ type Assignment = {
   collected_amount: number
   profit_amount: number
   loss_amount: number
-  member?: { full_name: string; member_code: string } | null
+  member?: { full_name: string; member_code: string; phone?: string | null } | null
   office?: { name: string } | null
   items?: AssignmentItem[]
 }
@@ -291,13 +291,39 @@ export function KamsTransfers() {
   )
 }
 
+export type OperationsOfficeFilter = { officeId: string }
+
 export function KamsAssignmentsWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
   const canView = hasPermission('kams.products.view')
+  const [officeId, setOfficeId] = useState('')
+  const [offices, setOffices] = useState<Array<{ id: number; name: string; code?: string | null }>>([])
+
+  useEffect(() => {
+    api.get('/modules/kams/stock/lookups').then((res) => {
+      const list = (res.data.data.offices || []) as Array<{ id: number; name: string; code?: string | null }>
+      setOffices(list)
+    })
+  }, [])
 
   return (
     <div>
+      {offices.length > 1 ? (
+        <div className="mb-4 sm:max-w-xs">
+          <Select
+            className="w-full min-w-0"
+            label={t('kams.filterOffice')}
+            value={officeId}
+            onChange={(event) => setOfficeId(event.target.value)}
+          >
+            <option value="">{t('kams.allOffices')}</option>
+            {offices.map((office) => (
+              <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+            ))}
+          </Select>
+        </div>
+      ) : null}
       <KamsWorkspaceTabs
         tabs={[
           { to: '/modules/kams/stock/assignments', end: true, label: t('kams.assignments'), show: canView },
@@ -305,7 +331,7 @@ export function KamsAssignmentsWorkspace() {
           { to: '/modules/kams/stock/assignments/journal', end: true, label: t('kams.stockJournal'), show: canView },
         ]}
       />
-      <Outlet />
+      <Outlet context={{ officeId } satisfies OperationsOfficeFilter} />
     </div>
   )
 }
@@ -313,6 +339,7 @@ export function KamsAssignmentsWorkspace() {
 export function KamsAssignments() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
+  const { officeId } = useOutletContext<OperationsOfficeFilter>()
   const [rows, setRows] = useState<Assignment[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -338,6 +365,7 @@ export function KamsAssignments() {
     api.get('/modules/kams/stock/assignments', {
       params: {
         status: 'open',
+        ...(officeId ? { office_id: officeId } : {}),
         ...(term ? { search: term } : {}),
       },
     }).then((res) => setRows(res.data.data))
@@ -349,7 +377,7 @@ export function KamsAssignments() {
 
   useEffect(() => {
     void load(query)
-  }, [query])
+  }, [query, officeId])
 
   useEffect(() => {
     api.get('/modules/kams/stock/lookups').then((res) => {
@@ -457,6 +485,22 @@ export function KamsAssignments() {
   const settle = async (event: FormEvent) => {
     event.preventDefault()
     if (!settling) return
+    const overflow = (settling.items || []).find((item) => {
+      const returnedQty = Number(returns[item.id]?.returned || 0)
+      const lostQty = Number(returns[item.id]?.lost || 0)
+      return returnedQty + lostQty > item.quantity_out
+    })
+    if (overflow) {
+      setError(t('kams.settleQtyMismatch', {
+        product: overflow.product?.name || '—',
+        out: overflow.quantity_out,
+      }))
+      return
+    }
+    if (settleTotals.shortfall > 0) {
+      setError(t('kams.settleCashShort'))
+      return
+    }
     if (settleTotals.surplus > 0) {
       setSurplusConfirm({ amount: settleTotals.surplus })
       return
@@ -521,23 +565,26 @@ export function KamsAssignments() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted">{t('kams.assignmentFlowHint')}</p>
-        {hasPermission('kams.products.update') ? <Button className="shrink-0 self-end sm:self-auto" onClick={() => { setError(''); setOpen(true) }}>{t('kams.newAssignment')}</Button> : null}
-      </div>
-      <div className="mb-4 relative flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-3">
-        <Search size={16} className="shrink-0 text-muted" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={t('kams.searchAssignments')}
-          className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted"
-        />
+      <p className="mb-4 text-sm text-muted">{t('kams.assignmentFlowHint')}</p>
+      <div className="mb-4 flex items-center gap-3">
+        <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
+          <Search size={16} className="shrink-0 text-muted" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('kams.searchAssignments')}
+            className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted"
+          />
+        </div>
+        {hasPermission('kams.products.update') ? <Button className="shrink-0" onClick={() => { setError(''); setOpen(true) }}>{t('kams.newAssignment')}</Button> : null}
       </div>
       <div className="grid gap-3">
         {rows.map((row) => {
           const expanded = expandedIds.includes(row.id)
-          const itemCount = (row.items || []).length
+          const items = row.items || []
+          const itemCount = items.length
+          const quantityTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0), 0)
+          const valueTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0) * Number(item.unit_price || 0), 0)
           return (
             <Card key={row.id} className="overflow-hidden">
               <button
@@ -548,16 +595,19 @@ export function KamsAssignments() {
               >
                 <div className="min-w-0">
                   <div className="font-semibold">
-                    {[row.member?.full_name, row.member?.member_code].filter(Boolean).join(' · ') || row.reference}
+                    {row.member?.full_name || row.reference}
                   </div>
-                  <div className="text-sm text-muted">
-                    {row.reference}
-                    {row.office?.name ? ` · ${row.office.name}` : ''}
-                    {' · '}
-                    {t('kams.assignmentNotSale')}
-                  </div>
+                  {row.member?.phone || row.office?.name ? (
+                    <div className="text-sm text-muted">
+                      {[row.member?.phone, row.office?.name].filter(Boolean).join(' · ')}
+                    </div>
+                  ) : null}
                   <div className="mt-1 text-xs text-muted">
-                    {itemCount} {t('kams.products').toLowerCase()}
+                    {t('kams.products')}: {itemCount}
+                    {' · '}
+                    {t('kams.quantity')}: {quantityTotal}
+                    {' · '}
+                    {t('kams.assignmentValue')}: {money(valueTotal)}
                     {row.status === 'open' && row.collected_amount > 0
                       ? ` · ${t('kams.prepaidCash')} ${money(row.collected_amount)}`
                       : ''}
@@ -573,47 +623,44 @@ export function KamsAssignments() {
                   {itemCount === 0 ? (
                     <p className="text-sm text-muted">{t('common.empty')}</p>
                   ) : (
-                    <div className="overflow-hidden rounded-xl border border-line bg-white shadow-sm">
-                      <div className={cn(
-                        'grid gap-3 border-b border-line bg-[#f4faf5] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted',
-                        row.status === 'settled' ? 'grid-cols-[1fr_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto]',
-                      )}>
+                    <div className={cn(
+                      'grid overflow-hidden rounded-xl border border-line bg-white shadow-sm',
+                      row.status === 'settled'
+                        ? 'grid-cols-[minmax(0,1fr)_minmax(6.5rem,max-content)_minmax(4.5rem,max-content)_minmax(4.5rem,max-content)]'
+                        : 'grid-cols-[minmax(0,1fr)_minmax(6.5rem,max-content)_minmax(4.5rem,max-content)]',
+                    )}>
+                      <div className="col-span-full grid grid-cols-subgrid items-end gap-x-3 border-b border-line bg-[#f4faf5] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
                         <span>{t('kams.product')}</span>
                         <span className="text-right">{t('kams.salePrice')}</span>
                         <span className="text-right">{t('kams.quantity')}</span>
                         {row.status === 'settled' ? <span className="text-right">{t('kams.sold')}</span> : null}
                       </div>
-                      <div className="divide-y divide-line">
-                        {(row.items || []).map((item) => {
-                          const sold = Math.max(0, item.quantity_out - item.quantity_returned - item.quantity_lost)
-                          return (
-                            <div
-                              key={item.id}
-                              className={cn(
-                                'grid items-center gap-3 px-4 py-3 text-sm',
-                                row.status === 'settled' ? 'grid-cols-[1fr_auto_auto_auto]' : 'grid-cols-[1fr_auto_auto]',
-                              )}
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <span className="grid h-10 w-10 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
-                                  {item.product?.image_url ? (
-                                    <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <Package size={16} />
-                                  )}
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="truncate font-semibold text-ink">{item.product?.name || '—'}</div>
-                                  {item.product?.sku ? <div className="truncate text-xs text-muted">{item.product.sku}</div> : null}
-                                </div>
+                      {(row.items || []).map((item) => {
+                        const sold = Math.max(0, item.quantity_out - item.quantity_returned - item.quantity_lost)
+                        return (
+                          <div
+                            key={item.id}
+                            className="col-span-full grid grid-cols-subgrid items-center gap-x-3 border-t border-line px-4 py-3 text-sm"
+                          >
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span className="grid h-10 w-10 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
+                                {item.product?.image_url ? (
+                                  <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />
+                                ) : (
+                                  <Package size={16} />
+                                )}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="truncate font-semibold text-ink">{item.product?.name || '—'}</div>
+                                {item.product?.sku ? <div className="truncate text-xs text-muted">{item.product.sku}</div> : null}
                               </div>
-                              <span className="text-right tabular-nums text-muted">{money(item.unit_price)}</span>
-                              <span className="text-right font-semibold tabular-nums">{item.quantity_out}</span>
-                              {row.status === 'settled' ? <span className="text-right font-semibold tabular-nums text-lhms">{sold}</span> : null}
                             </div>
-                          )
-                        })}
-                      </div>
+                            <span className="text-right tabular-nums text-muted">{money(item.unit_price)}</span>
+                            <span className="text-right font-semibold tabular-nums">{item.quantity_out}</span>
+                            {row.status === 'settled' ? <span className="text-right font-semibold tabular-nums text-lhms">{sold}</span> : null}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   {row.status === 'settled' ? (
@@ -754,18 +801,29 @@ export function KamsAssignments() {
         <form className="space-y-3" onSubmit={(e) => void settle(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <p className="text-sm text-muted">{t('kams.closeDayHint')}</p>
-          <p className="text-sm text-muted">{settling?.member?.full_name} · {settling?.reference}</p>
+          <p className="text-sm text-muted"><span className="font-semibold text-ink">{settling?.member?.full_name}</span>{settling?.reference ? ` · ${settling.reference}` : ''}</p>
           {(settling?.items || []).map((item) => {
             const returnedQty = Number(returns[item.id]?.returned || 0)
             const lostQty = Number(returns[item.id]?.lost || 0)
             const soldQty = Math.max(0, item.quantity_out - returnedQty - lostQty)
             const lineDue = Math.round(soldQty * Number(item.unit_price || 0) * 100) / 100
             return (
-            <div key={item.id} className="rounded-xl bg-surface p-3 space-y-2">
-              <div className="font-semibold">{item.product?.name} · {item.quantity_out} {t('kams.assignedQty')}</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Field label={t('kams.returned')} type="number" min="0" max={item.quantity_out} value={returns[item.id]?.returned || '0'} onChange={(e) => setReturns({ ...returns, [item.id]: { returned: e.target.value, lost: returns[item.id]?.lost || '0' } })} />
-                <Field label={t('kams.lost')} type="number" min="0" max={item.quantity_out} value={returns[item.id]?.lost || '0'} onChange={(e) => setReturns({ ...returns, [item.id]: { returned: returns[item.id]?.returned || '0', lost: e.target.value } })} />
+            <div key={item.id} className="space-y-2 rounded-xl bg-surface p-3">
+              <div className="flex items-start gap-3">
+                <span className="grid h-12 w-12 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
+                  {item.product?.image_url ? (
+                    <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />
+                  ) : (
+                    <Package size={18} />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="font-semibold">{item.product?.name} · {item.quantity_out} {t('kams.assignedQty')}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label={t('kams.returned')} type="number" min="0" max={Math.max(0, item.quantity_out - lostQty)} value={returns[item.id]?.returned || '0'} onChange={(e) => setReturns({ ...returns, [item.id]: { returned: e.target.value, lost: returns[item.id]?.lost || '0' } })} />
+                    <Field label={t('kams.lost')} type="number" min="0" max={Math.max(0, item.quantity_out - returnedQty)} value={returns[item.id]?.lost || '0'} onChange={(e) => setReturns({ ...returns, [item.id]: { returned: returns[item.id]?.returned || '0', lost: e.target.value } })} />
+                  </div>
+                </div>
               </div>
               <div className="flex justify-between gap-3 text-sm text-muted">
                 <span>{t('kams.sold')}: <b>{soldQty}</b></span>
@@ -775,9 +833,9 @@ export function KamsAssignments() {
             )
           })}
           <div className="rounded-xl border border-line bg-white p-3 space-y-1 text-sm">
-            <div className="flex justify-between gap-3">
-              <span className="text-muted">{t('kams.amountDue')}</span>
-              <b>{money(settleTotals.amountDue)}</b>
+            <div className="flex items-center justify-between gap-3 rounded-lg bg-lhms-soft px-3 py-2 text-lhms">
+              <span>{t('kams.amountDue')}</span>
+              <b className="text-base">{money(settleTotals.amountDue)}</b>
             </div>
             {settleTotals.prepaidAmount > 0 ? (
               <div className="flex justify-between gap-3 text-muted">
@@ -802,7 +860,7 @@ export function KamsAssignments() {
           {settleTotals.prepaidAmount > 0 ? (
             <p className="text-xs text-muted">{t('kams.cashCollectedIncludesPrepaid')}</p>
           ) : null}
-          <Button type="submit" className="w-full" disabled={saving}>{t('common.save')}</Button>
+          <Button type="submit" className="w-full" disabled={saving || settleTotals.shortfall > 0}>{t('kams.settleNow')}</Button>
         </form>
       </Modal>
 
@@ -818,7 +876,7 @@ export function KamsAssignments() {
             })}
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
-            <Button type="button" variant="secondary" disabled={saving} onClick={() => void submitSettle(false)}>{t('kams.surplusSkip')}</Button>
+            <Button type="button" variant="secondary" disabled={saving} onClick={() => setSurplusConfirm(null)}>{t('common.cancel')}</Button>
             <Button type="button" disabled={saving} onClick={() => void submitSettle(true)}>{t('kams.surplusDeposit')}</Button>
           </div>
         </div>

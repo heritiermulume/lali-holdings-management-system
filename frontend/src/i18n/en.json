@@ -90,7 +90,7 @@
       "week": "Week",
       "month": "Month"
     },
-    "periodRange": "From {{from}} to {{to}}",
+    "periodRange": "From {{start}} to {{end}}",
     "dateFrom": "From",
     "dateTo": "To",
     "customPeriod": "Custom",
@@ -346,7 +346,7 @@
   "kams": {
     "title": "King Attitude Management System",
     "subtitle": "Commercial operations for King Attitude Traders.",
-    "dashboardHint": "Overview of sales, finances and recent orders.",
+    "dashboardHint": "Overview of stock, sales, finances and recruitment.",
     "clientsHint": "View and manage King Attitude Traders customers.",
     "clientsAndSuppliers": "Customers & Suppliers",
     "clientsAndSuppliersHint": "Manage your customers and suppliers in one place.",
@@ -362,7 +362,7 @@
     "productsHint": "Product catalog, stock levels and pricing.",
     "ordersHint": "Track orders and their status.",
     "stock": "Stock",
-    "stockHint": "Track your goods: receipts, transfers, available stock and agent handovers.",
+    "stockHint": "Complete stock management.",
     "warehousesHint": "Store and receive products at regional level, then transfer them to office depots.",
     "depotsHint": "Manage each office’s stock: receipts, replenishment from the warehouse, and movements.",
     "finance": "Finance",
@@ -553,6 +553,8 @@
     "quarantine": "Quarantine",
     "receipts": "Receipts",
     "sales": "Sales",
+    "losses": "Losses",
+    "defectives": "Defectives",
     "returns": "Returns",
     "commissions": "Commissions",
     "newSale": "New sale",
@@ -587,7 +589,7 @@
     "receivePrepaidCash": "Receive cash from previous sales",
     "receivePrepaidCashHint": "Amount the agent leaves now, before day closing.",
     "cashCollectedIncludesPrepaid": "Include cash already received in the total collected.",
-    "closeDayHint": "Units that are neither returned nor lost are recorded as sales. Savings update automatically.",
+    "closeDayHint": "Units that are neither returned nor lost are recorded as sales.",
     "returnType": {
       "customer": "Customer return",
       "seller_to_depot": "Seller → depot",
@@ -609,6 +611,45 @@
     "assignmentReportsHint": "Detailed reports of closed days",
     "stockJournal": "Journal",
     "stockJournalHint": "History of creations, updates, deletions, withdrawals and location assignments made by users.",
+    "journalWhen": "Date and time",
+    "journalField": "Field",
+    "journalBefore": "Before",
+    "journalAfter": "After",
+    "journalValue": "Value",
+    "journalNoChanges": "No value details were recorded.",
+    "journalFields": {
+      "items": "Items",
+      "quantity": "Quantity",
+      "assigned_quantity": "Assigned quantity",
+      "returned_quantity": "Returned quantity",
+      "sold_quantity": "Sold quantity",
+      "lost_quantity": "Lost quantity",
+      "collected_amount": "Collected amount",
+      "amount": "Amount",
+      "amount_due": "Amount due",
+      "sale_price": "Sale price",
+      "cost_price": "Cost price",
+      "unit_price": "Unit price",
+      "status": "Status",
+      "reference": "Reference",
+      "notes": "Notes",
+      "reason": "Reason",
+      "description": "Description",
+      "name": "Name",
+      "kind": "Type",
+      "member_id": "Agent",
+      "office_id": "Office",
+      "depot_id": "Depot",
+      "warehouse_id": "Warehouse",
+      "product_id": "Product",
+      "from_depot_id": "Source depot",
+      "to_depot_id": "Destination depot",
+      "sku": "Product code",
+      "barcode": "Barcode",
+      "unit": "Unit",
+      "active": "Active",
+      "is_active": "Active"
+    },
     "journalActionFilter": "Action type",
     "journalEntries": "Entries",
     "journalToday": "Today",
@@ -748,6 +789,9 @@
     "addLine": "Add line",
     "newAssignment": "Assign to agent",
     "settleAssignment": "Close the day",
+    "settleNow": "Close now",
+    "settleQtyMismatch": "For {{product}}, returned and lost quantities exceed the issued quantity ({{out}}). Sold, returned and lost must match the issued quantity.",
+    "settleCashShort": "Collected cash must equal the amount due, or be higher so the surplus is saved to the agent's account.",
     "assignedQty": "issued",
     "returned": "Returned",
     "lost": "Lost",
@@ -774,6 +818,7 @@
     "campaignsHint": "Marketing campaigns, channels and budgets.",
     "clients": "Customers",
     "products": "Products",
+    "assignmentValue": "Value",
     "orders": "Orders",
     "campaigns": "Campaigns",
     "newClient": "New customer",
@@ -839,7 +884,7 @@
     "availableQty": "Available",
     "newOrder": "New order",
     "newCampaign": "New campaign",
-    "recruitment": "Recruitment",
+    "recruitment": "Recruitments",
     "recruitmentHint": "New member pipeline from application to registration.",
     "candidates": "Candidates",
     "candidatesHint": "Applications, interviews and observation days.",
@@ -877,7 +922,7 @@
       "week": "Week",
       "month": "Month"
     },
-    "periodRange": "From {{from}} to {{to}}",
+    "periodRange": "From {{start}} to {{end}}",
     "activityTrend": "Recruitment trend",
     "outcomes": "Outcomes",
     "funnel": "Recruitment journey",
@@ -1157,8 +1202,14 @@
       "files": "Files",
       "kams": {
         "dashboard": "Dashboard",
+        "dashboardPages": {
+          "products": "Stock",
+          "orders": "Sales",
+          "finance": "Revenue and expenses",
+          "recruitment": "Recruitments"
+        },
         "members": "Members",
-        "recruitment": "Recruitment",
+        "recruitment": "Recruitments",
         "clients": "Customers",
         "products": "Products",
         "orders": "Orders",
@@ -1259,7 +1310,19 @@
         "approve": "Approve in KAMS",
         "export": "Export from KAMS",
         "dashboard": {
-          "view": "View the dashboard"
+          "view": "View the dashboard",
+          "products": {
+            "view": "View stock"
+          },
+          "orders": {
+            "view": "View sales"
+          },
+          "finance": {
+            "view": "View revenue and expenses"
+          },
+          "recruitment": {
+            "view": "View recruitment"
+          }
         },
         "members": {
           "view": "View members",

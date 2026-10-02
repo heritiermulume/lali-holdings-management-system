@@ -61,6 +61,7 @@ export function KamsTransactionsPrintMenu({
   canPrint = true,
   className,
   buttonClassName,
+  iconOnly = false,
 }: {
   onPreview: () => void
   onPrint: () => void
@@ -70,6 +71,7 @@ export function KamsTransactionsPrintMenu({
   canPrint?: boolean
   className?: string
   buttonClassName?: string
+  iconOnly?: boolean
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -98,7 +100,7 @@ export function KamsTransactionsPrintMenu({
           setOpen((value) => !value)
         }}
       >
-        <Printer size={16} /> {t('common.print')}
+        <Printer size={16} /> {iconOnly ? null : t('common.print')}
       </Button>
       {open ? (
         <div className={cn('absolute right-0 z-30 mt-1 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl', hasSimplified ? 'w-60' : 'w-48')}>
@@ -126,28 +128,17 @@ export function KamsTransactionsPrintMenu({
               <Printer size={16} className="text-lhms" /> {t('common.print')}
             </button>
           ) : null}
-          {onPreviewSimplified ? (
+          {onPreviewSimplified || onPrintSimplified ? (
             <button
               type="button"
               className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
               onClick={() => {
                 setOpen(false)
-                onPreviewSimplified()
+                if (onPreviewSimplified) onPreviewSimplified()
+                else onPrintSimplified?.()
               }}
             >
-              <Eye size={16} className="text-lhms" /> {t('kams.previewSimplifiedReport')}
-            </button>
-          ) : null}
-          {onPrintSimplified ? (
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
-              onClick={() => {
-                setOpen(false)
-                onPrintSimplified()
-              }}
-            >
-              <Printer size={16} className="text-lhms" /> {t('kams.simplifiedReport')}
+              <Eye size={16} className="text-lhms" /> {t('kams.simplifiedReport')}
             </button>
           ) : null}
         </div>

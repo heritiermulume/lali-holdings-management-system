@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
+import { useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeftRight,
@@ -20,11 +21,12 @@ import {
   ScrollText,
   type LucideIcon,
 } from 'lucide-react'
-import { Badge, Card, Empty, Field, Select } from '../../components/ui'
+import { Badge, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { initials } from '../../lib/format'
+import type { OperationsOfficeFilter } from './KamsStockFlows'
 
 type JournalEntry = {
   id: number
@@ -34,6 +36,7 @@ type JournalEntry = {
   auditable_id?: number | null
   subject: string
   details: string[]
+  changes?: Array<{ field: string; before: string | null; after: string | null }>
   created_at?: string | null
   ip_address?: string | null
   user?: { id: number; name: string; email?: string } | null
@@ -126,8 +129,91 @@ function formatClock(value?: string | null, locale?: string) {
   return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+function journalFieldLabel(field: string, t: (key: string, options?: { defaultValue?: string }) => string) {
+  return t(`kams.journalFields.${field}`, { defaultValue: field.replaceAll('_', ' ') })
+}
+
+function translateJournalToken(value: string, t: (key: string, options?: { defaultValue?: string }) => string) {
+  const trimmed = value.trim()
+  if (!/^[a-z0-9_]+$/.test(trimmed)) return value
+  const status = t(`kams.status.${trimmed}`, { defaultValue: '' })
+  if (status) return status
+  const field = t(`kams.journalFields.${trimmed}`, { defaultValue: '' })
+  if (field && field !== trimmed.replaceAll('_', ' ')) return field
+  return value
+}
+
+function translateJournalValue(value: string | null | undefined, t: (key: string, options?: { defaultValue?: string }) => string) {
+  if (!value) return '—'
+  return value
+    .split('\n')
+    .map((line) => line.split(' · ').map((part) => {
+      const separator = part.indexOf(': ')
+      if (separator <= 0) return translateJournalToken(part, t)
+      const key = part.slice(0, separator)
+      if (!/^[a-z0-9_]+$/.test(key)) return part
+      return `${journalFieldLabel(key, t)} : ${translateJournalToken(part.slice(separator + 2), t)}`
+    }).join(' · '))
+    .join('\n')
+}
+
+function JournalDetail({ entry, locale }: { entry: JournalEntry; locale: string }) {
+  const { t } = useTranslation()
+  const when = entry.created_at
+    ? new Date(entry.created_at).toLocaleString(locale, { dateStyle: 'full', timeStyle: 'short' })
+    : '—'
+  const userName = entry.user?.name || t('common.system')
+  const changes = entry.changes || []
+  const isUpdate = entry.action === 'update' || changes.some((change) => change.before && change.after)
+  const eventLabel = t(`kams.journalEvents.${entry.event}`, { defaultValue: entry.event })
+  const entityLabel = t(`kams.journalEntities.${entry.entity}`, { defaultValue: entry.entity })
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="flex flex-wrap gap-2">
+        <Badge tone="slate">{eventLabel}</Badge>
+        <Badge tone="slate">{entityLabel}</Badge>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="rounded-xl border border-line px-3 py-2">
+          <div className="text-xs text-muted">{t('kams.performedBy')}</div>
+          <div className="font-semibold">{userName}</div>
+          {entry.user?.email ? <div className="text-xs text-muted">{entry.user.email}</div> : null}
+        </div>
+        <div className="rounded-xl border border-line px-3 py-2">
+          <div className="text-xs text-muted">{t('kams.journalWhen')}</div>
+          <div className="font-semibold capitalize">{when}</div>
+          {entry.ip_address ? <div className="text-xs text-muted">{entry.ip_address}</div> : null}
+        </div>
+      </div>
+      {changes.length === 0 ? (
+        <p className="text-muted">{t('kams.journalNoChanges')}</p>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-line">
+          <div className={cn('grid gap-2 border-b border-line bg-[#f4faf5] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted', isUpdate ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]')}>
+            <span>{t('kams.journalField')}</span>
+            {isUpdate ? <span>{t('kams.journalBefore')}</span> : null}
+            <span>{isUpdate ? t('kams.journalAfter') : t('kams.journalValue')}</span>
+          </div>
+          {changes.map((change, index) => {
+            const hideLabel = change.field === 'items' && changes[index - 1]?.field === 'items'
+            return (
+            <div key={`${change.field}-${index}`} className={cn('grid items-start gap-2 border-t border-line px-3 py-2', isUpdate ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]')}>
+              <div className="font-semibold">{hideLabel ? '' : journalFieldLabel(change.field, t)}</div>
+              {isUpdate ? <div className="whitespace-pre-line text-muted">{translateJournalValue(change.before, t)}</div> : null}
+              <div className="whitespace-pre-line">{translateJournalValue(isUpdate ? change.after : (change.after || change.before), t)}</div>
+            </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function KamsStockJournal() {
   const { t, i18n } = useTranslation()
+  const { officeId } = useOutletContext<OperationsOfficeFilter>()
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
   const [rows, setRows] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -138,8 +224,17 @@ export function KamsStockJournal() {
   const [to, setTo] = useState('')
   const [page, setPage] = useState(1)
   const [lastPage, setLastPage] = useState(1)
-  const [total, setTotal] = useState(0)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [selected, setSelected] = useState<JournalEntry | null>(null)
   const hasRows = rows.length > 0
+  const formatFilterDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
+  const periodLabel = from && to
+    ? t('kams.periodRange', { start: formatFilterDate(from), end: formatFilterDate(to) })
+    : from
+      ? `${t('kams.dateFrom')} ${formatFilterDate(from)}`
+      : to
+        ? `${t('kams.dateTo')} ${formatFilterDate(to)}`
+        : ''
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -160,26 +255,25 @@ export function KamsStockJournal() {
         ...(action ? { action } : {}),
         ...(from ? { from } : {}),
         ...(to ? { to } : {}),
+        ...(officeId ? { office_id: officeId } : {}),
       },
     }).then((res) => {
       if (!active) return
       startTransition(() => {
         setRows(res.data.data || [])
         setLastPage(res.data.meta?.last_page || 1)
-        setTotal(res.data.meta?.total || 0)
       })
     }).catch(() => {
       if (!active) return
       startTransition(() => {
         setRows([])
         setLastPage(1)
-        setTotal(0)
       })
     }).finally(() => {
       if (active) setLoading(false)
     })
     return () => { active = false }
-  }, [page, query, action, from, to])
+  }, [page, query, action, from, to, officeId])
 
   const groups = useMemo(() => {
     const map = new Map<string, JournalEntry[]>()
@@ -194,22 +288,32 @@ export function KamsStockJournal() {
 
   return (
     <div>
-      <div className="mb-5 overflow-hidden rounded-2xl border border-line bg-white">
-        <div className="border-b border-line bg-[linear-gradient(135deg,rgba(9,73,36,0.06),rgba(255,255,255,0.9)_42%)] px-5 py-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-ink">{t('kams.stockJournal')}</div>
-              <p className="mt-1 max-w-2xl text-sm text-muted">{t('kams.stockJournalHint')}</p>
-            </div>
-            {!loading && total > 0 ? (
-              <div className="rounded-full bg-lhms-soft px-3 py-1 text-xs font-semibold text-lhms">
-                {total} {t('kams.journalEntries').toLowerCase()}
-              </div>
-            ) : null}
-          </div>
+      <div className="mb-5 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          {periodLabel ? (
+            <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">{periodLabel}</p>
+          ) : <span />}
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
         </div>
-
-        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+        {filtersOpen ? (
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 [&>*]:min-w-0">
+          <Select
+            className="min-w-0"
+            label={t('kams.journalActionFilter')}
+            value={action}
+            onChange={(e) => { setAction(e.target.value as ActionFilter); setPage(1) }}
+          >
+            <option value="">{t('common.all')}</option>
+            <option value="create">{t('kams.journalActions.create')}</option>
+            <option value="update">{t('kams.journalActions.update')}</option>
+            <option value="delete">{t('kams.journalActions.delete')}</option>
+          </Select>
           <label className="block min-w-0 space-y-1.5">
             <span className="text-sm font-medium text-ink">{t('common.search')}</span>
             <div className="relative">
@@ -222,17 +326,6 @@ export function KamsStockJournal() {
               />
             </div>
           </label>
-          <Select
-            className="min-w-0"
-            label={t('kams.journalActionFilter')}
-            value={action}
-            onChange={(e) => { setAction(e.target.value as ActionFilter); setPage(1) }}
-          >
-            <option value="">{t('common.all')}</option>
-            <option value="create">{t('kams.journalActions.create')}</option>
-            <option value="update">{t('kams.journalActions.update')}</option>
-            <option value="delete">{t('kams.journalActions.delete')}</option>
-          </Select>
           <Field
             className="min-w-0 max-w-full"
             label={t('kams.dateFrom')}
@@ -248,6 +341,7 @@ export function KamsStockJournal() {
             onChange={(e) => { setTo(e.target.value); setPage(1) }}
           />
         </div>
+        ) : null}
       </div>
 
       {loading && !hasRows ? <LoadingScreen /> : null}
@@ -298,9 +392,13 @@ export function KamsStockJournal() {
                               </span>
                               <Badge tone="slate">{entityLabel}</Badge>
                             </div>
-                            {row.subject && !/^#\d+$/.test(row.subject) ? (
-                              <h3 className="truncate text-base font-semibold tracking-tight text-ink">{row.subject}</h3>
-                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => setSelected(row)}
+                              className="block max-w-full truncate text-left text-base font-semibold tracking-tight text-lhms underline-offset-2 hover:underline"
+                            >
+                              {row.subject && !/^#\d+$/.test(row.subject) ? row.subject : eventLabel}
+                            </button>
                             {row.details.length > 0 ? (
                               <div className="flex flex-wrap gap-2">
                                 {row.details.map((detail) => (
@@ -340,6 +438,17 @@ export function KamsStockJournal() {
           ))}
         </div>
       ) : null}
+
+      <Modal
+        open={Boolean(selected)}
+        title={selected?.subject && !/^#\d+$/.test(selected.subject) ? selected.subject : (selected ? t(`kams.journalEvents.${selected.event}`, { defaultValue: selected.event }) : '')}
+        size="lg"
+        onClose={() => setSelected(null)}
+      >
+        {selected ? (
+          <JournalDetail entry={selected} locale={locale} />
+        ) : null}
+      </Modal>
 
       {lastPage > 1 ? (
         <div className="mt-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm">

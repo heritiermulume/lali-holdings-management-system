@@ -338,7 +338,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className={cn('flex-1', isHome ? 'px-0 py-0' : 'px-4 py-5 lg:px-8 lg:py-8')}>
+        <main className={cn('flex-1', isHome ? 'px-0 py-0' : 'px-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:px-8 lg:py-8')}>
           <Outlet />
         </main>
       </div>

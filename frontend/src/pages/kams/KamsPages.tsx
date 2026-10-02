@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Navigate } from 'react-router-dom'
+import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { cn } from '../../lib/cn'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
-import { money } from '../../lib/format'
+import { compact, money } from '../../lib/format'
 import { moduleRegistry } from '../../modules/registry'
 import api from '../../lib/api'
 
@@ -28,44 +30,191 @@ export function KamsEntry() {
   return <Empty>{t('common.noAccess')}</Empty>
 }
 
+type DashboardPeriod = 'day' | 'week' | 'month' | 'custom'
+
+function isoDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function KamsDashboard() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const { user, hasPermission } = useAuth()
+  const knowsOptions = (user?.permissions ?? []).some((slug) => slug.startsWith('kams.dashboard.') && slug !== 'kams.dashboard.view')
+  const allow = (slug: string) => hasPermission(slug) || (hasPermission('kams.dashboard.view') && !knowsOptions)
+  const canProducts = allow('kams.dashboard.products.view')
+  const canOrders = allow('kams.dashboard.orders.view')
+  const canFinance = allow('kams.dashboard.finance.view')
+  const canRecruitment = allow('kams.dashboard.recruitment.view')
+  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const today = isoDate(new Date())
+  const [period, setPeriod] = useState<DashboardPeriod>('week')
+  const [from, setFrom] = useState(today)
+  const [to, setTo] = useState(today)
+  const [officeId, setOfficeId] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [data, setData] = useState<{
+    range: { from: string; to: string }
+    can_filter_offices?: boolean
+    filter_offices?: Array<{ id: number; name: string; code?: string }>
     stats: Record<string, number>
-    finance: Record<string, number>
-    recent_orders: Array<{ id: number; reference: string; total: number; status: string; client?: { name: string } }>
+    finance: Record<string, number> | null
+    trend?: Array<{ from: string; to: string; revenue: number; expenses: number }>
     recruitment?: Record<string, number>
-    migration?: Record<string, number>
+    recruitment_trend?: Array<{ from: string; to: string; applications: number; interviews: number; observations: number; approved: number }>
   } | null>(null)
 
   useEffect(() => {
-    api.get('/modules/kams/dashboard').then((res) => setData(res.data.data))
-  }, [])
+    let active = true
+    if (period === 'custom' && (!from || !to)) return () => { active = false }
+    api.get('/modules/kams/dashboard', {
+      params: {
+        group_by: period,
+        office_id: officeId || undefined,
+        from: period === 'custom' ? from : undefined,
+        to: period === 'custom' ? to : undefined,
+      },
+    }).then((res) => { if (active) setData(res.data.data) })
+    return () => { active = false }
+  }, [period, officeId, from, to])
 
   if (!data) return <LoadingScreen />
 
+  const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
+
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Object.entries(data.stats).map(([key, value]) => (
-          <Card key={key} className="p-5">
-            <div className="text-sm text-muted">{t(`kams.${key}`)}</div>
-            <div className="mt-3 text-3xl font-extrabold">{value}</div>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
+            {t('kams.periodRange', { start: formatDay(data.range.from), end: formatDay(data.range.to) })}
+          </p>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
+        </div>
+        {filtersOpen ? <div className="flex flex-col gap-3 sm:items-end">
+          {data.can_filter_offices ? (
+            <Select
+              className="w-full min-w-0 sm:w-72"
+              label={t('kams.filterOffice')}
+              value={officeId}
+              onChange={(e) => setOfficeId(e.target.value)}
+            >
+              <option value="">{t('kams.allOffices')}</option>
+              {(data.filter_offices || []).map((office) => (
+                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+              ))}
+            </Select>
+          ) : null}
+          <div className="flex flex-col gap-2 sm:items-end">
+            <div className="flex w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+              {(['day', 'week', 'month'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPeriod(item)}
+                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                >
+                  {t(`kams.period.${item}`)}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPeriod('custom')}
+                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t('dashboard.customPeriod')}
+              </button>
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                <Field
+                  className="min-w-0 max-w-full"
+                  label={t('dashboard.dateFrom')}
+                  type="date"
+                  value={from}
+                  max={to || today}
+                  onChange={(event) => setFrom(event.target.value)}
+                />
+                <Field
+                  className="min-w-0 max-w-full"
+                  label={t('dashboard.dateTo')}
+                  type="date"
+                  value={to}
+                  min={from}
+                  max={today}
+                  onChange={(event) => setTo(event.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
+        </div> : null}
+      </div>
+      {canProducts || canOrders ? (
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        {([
+          canProducts ? 'stock' : null,
+          canOrders ? 'sales' : null,
+          canOrders ? 'losses' : null,
+          canOrders ? 'defectives' : null,
+        ] as const).filter((key): key is 'stock' | 'sales' | 'losses' | 'defectives' => Boolean(key)).map((key) => (
+          <Card key={key} className="min-w-0 p-4 sm:p-5">
+            <div className="text-xs text-muted sm:text-sm">{t(`kams.${key}`)}</div>
+            <div className="mt-2 text-2xl font-extrabold sm:mt-3 sm:text-3xl">{data.stats[key] ?? 0}</div>
           </Card>
         ))}
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {['revenue', 'expenses', 'profit', 'receivables'].map((key) => (
-          <Card key={key} className="p-5">
-            <div className="text-sm text-muted">{t(`dashboard.${key}`)}</div>
-            <div className="mt-3 text-2xl font-bold text-lhms">{money(data.finance[key])}</div>
+      ) : null}
+      {canFinance && data.finance ? (
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        {(['revenue', 'expenses', 'profit', 'receivables'] as const).map((key) => {
+          const finance = data.finance
+          return (
+          <Card key={key} className="min-w-0 p-4 sm:p-5">
+            <div className="text-xs text-muted sm:text-sm">{t(`dashboard.${key}`)}</div>
+            <div className="mt-2 break-words text-lg font-bold text-lhms sm:mt-3 sm:text-2xl">{money(finance?.[key])}</div>
           </Card>
-        ))}
+          )
+        })}
       </div>
-      {data.recruitment ? (
+      ) : null}
+      {canFinance ? (
+      <Card className="p-4 sm:p-5">
+        <div className="mb-4 font-semibold">{t('dashboard.revenue')} · {t('dashboard.expenses')}</div>
+        <div className="h-64 sm:h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={(data.trend || []).map((row) => ({
+              ...row,
+              label: row.from === row.to ? formatDay(row.from) : `${formatDay(row.from)} – ${formatDay(row.to)}`,
+            }))}>
+              <defs>
+                <linearGradient id="kams-revenue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#094924" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#094924" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis width={44} tick={{ fontSize: 11 }} tickFormatter={(value) => compact(Number(value))} />
+              <Tooltip formatter={(value, key) => [money(Number(value)), t(`dashboard.${String(key)}`)]} />
+              <Area type="monotone" dataKey="revenue" stroke="#094924" fill="url(#kams-revenue)" />
+              <Area type="monotone" dataKey="expenses" stroke="#c81e1e" fillOpacity={0} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      ) : null}
+      {canRecruitment && data.recruitment ? (
         <Card className="p-5">
-          <div className="mb-3 font-semibold">{t('kams.newRecruitment')}</div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mb-3 font-semibold">{t('kams.recruitment')}</div>
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             {['applications', 'interviews', 'observations', 'approved', 'rejected', 'on_hold'].map((key) => (
               <div key={key} className="rounded-xl bg-surface p-4">
                 <div className="text-sm text-muted">{t(`kams.${key === 'on_hold' ? 'onHold' : key}`)}</div>
@@ -73,39 +222,32 @@ export function KamsDashboard() {
               </div>
             ))}
           </div>
-        </Card>
-      ) : null}
-      {data.migration ? (
-        <Card className="p-5">
-          <div className="mb-1 font-semibold">{t('kams.existingMigration')}</div>
-          <p className="mb-3 text-sm text-muted">{t('kams.migrationNotRecruitment')}</p>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {['imported', 'pending_verification', 'verified', 'active', 'issues'].map((key) => (
-              <div key={key} className="rounded-xl bg-surface p-4">
-                <div className="text-sm text-muted">{t(`kams.${key === 'pending_verification' ? 'pendingVerification' : key === 'active' ? 'activeMembers' : key}`)}</div>
-                <div className="mt-2 text-2xl font-extrabold">{data.migration?.[key]}</div>
-              </div>
-            ))}
+          <div className="mt-5 h-64 sm:h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={(data.recruitment_trend || []).map((row) => ({
+                ...row,
+                label: row.from === row.to ? formatDay(row.from) : `${formatDay(row.from)} – ${formatDay(row.to)}`,
+              }))}>
+                <defs>
+                  <linearGradient id="kams-applications" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#094924" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#094924" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <YAxis width={36} allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Legend />
+                <Area type="monotone" dataKey="applications" name={t('kams.applications')} stroke="#094924" fill="url(#kams-applications)" />
+                <Area type="monotone" dataKey="interviews" name={t('kams.interviews')} stroke="#2d8a5a" fillOpacity={0} />
+                <Area type="monotone" dataKey="observations" name={t('kams.observations')} stroke="#c9a227" fillOpacity={0} />
+                <Area type="monotone" dataKey="approved" name={t('kams.approved')} stroke="#1d4ed8" fillOpacity={0} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </Card>
       ) : null}
-      <Card className="p-5">
-        <div className="mb-3 font-semibold">{t('kams.orders')}</div>
-        <div className="space-y-3">
-          {data.recent_orders.map((order) => (
-            <div key={order.id} className="flex items-center justify-between rounded-xl bg-surface p-3">
-              <div>
-                <div className="font-semibold">{order.reference}</div>
-                <div className="text-sm text-muted">{order.client?.name}</div>
-              </div>
-              <div className="text-right">
-                <div className="font-semibold">{money(order.total)}</div>
-                <Badge>{t(`kams.status.${order.status}`, { defaultValue: order.status })}</Badge>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
     </div>
   )
 }
@@ -239,31 +381,5 @@ export function KamsOrders() {
         </Card>
       ))}
     </div>
-  )
-}
-
-export function KamsCampaigns() {
-  const { t } = useTranslation()
-  return (
-    <ResourcePage
-      endpoint="/modules/kams/campaigns"
-      title={t('kams.campaigns')}
-      createLabel={t('kams.newCampaign')}
-      permPrefix="kams.campaigns"
-      fields={[
-        { name: 'name', label: t('org.name') },
-        { name: 'channel', label: 'Channel' },
-        { name: 'budget', label: 'Budget', type: 'number' },
-        { name: 'starts_on', label: 'Start', type: 'date' },
-        { name: 'ends_on', label: 'End', type: 'date' },
-      ]}
-      render={(row) => (
-        <>
-          <div className="font-semibold">{String(row.name)}</div>
-          <div className="text-sm text-muted">{String(row.channel)} · {money(Number(row.budget))}</div>
-          <div className="mt-2"><Badge>{String(row.status)}</Badge></div>
-        </>
-      )}
-    />
   )
 }
