@@ -9,7 +9,6 @@ import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { money } from '../../lib/format'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
-import { KamsAgentAccountModal } from './KamsAgentAccountModal'
 import { KamsBankCard } from './KamsBankCard'
 
 type Entry = {
@@ -80,11 +79,9 @@ export function KamsCompanyAccountPage() {
   const [saving, setSaving] = useState(false)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const transactionsRef = useRef<KamsAccountTransactionsHandle>(null)
+  const [hasPrintableRows, setHasPrintableRows] = useState(false)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
-  const [agentModalOpen, setAgentModalOpen] = useState(false)
-  const [agentMemberId, setAgentMemberId] = useState<number | null>(null)
-  const [agentOfficeId, setAgentOfficeId] = useState<number | null>(null)
 
   const loadList = () => {
     api.get('/modules/kams/finance/company-accounts').then((res) => {
@@ -238,10 +235,7 @@ export function KamsCompanyAccountPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-lg font-bold">{t('kams.companyAccount')}</h2>
-        <p className="mt-1 text-sm text-muted">{t('kams.companyAccountHint')}</p>
-      </div>
+      <p className="text-sm text-muted">{t('kams.companyAccountHint')}</p>
 
       {rows.length === 0 ? <Empty>{t('common.empty')}</Empty> : (
         <div className="relative">
@@ -299,25 +293,10 @@ export function KamsCompanyAccountPage() {
               <Button onClick={() => openAction('deposit')}>{t('kams.makeDeposit')}</Button>
             ) : null}
             {data.can_withdraw ? (
-              <Button variant="secondary" onClick={() => openAction('withdraw')}>{t('kams.makeWithdrawal')}</Button>
+              <Button variant="secondary" disabled={(data.balance ?? 0) <= 0.001} onClick={() => openAction('withdraw')}>{t('kams.makeWithdrawal')}</Button>
             ) : null}
             {data.can_expense ? (
-              <Button variant="accent" onClick={() => openAction('expense')}>{t('kams.ledger.expense')}</Button>
-            ) : null}
-            {(hasPermission('kams.finance.account.view')
-              || hasPermission('kams.finance.dashboard.view')
-              || hasPermission('kams.finance.company.view')) ? (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  const officeScoped = !data.account.is_central
-                  setAgentOfficeId(officeScoped ? (data.account.office?.id ?? null) : null)
-                  setAgentMemberId(data.members[0]?.id ?? null)
-                  setAgentModalOpen(true)
-                }}
-              >
-                {t('kams.agentAccounts')}
-              </Button>
+              <Button variant="accent" disabled={(data.balance ?? 0) <= 0.001} onClick={() => openAction('expense')}>{t('kams.ledger.expense')}</Button>
             ) : null}
             <div className="ml-auto">
               <KamsTransactionsPrintMenu
@@ -325,6 +304,7 @@ export function KamsCompanyAccountPage() {
                 canPrint={hasPermission('kams.finance.company.print')}
                 onPreview={() => transactionsRef.current?.preview()}
                 onPrint={() => transactionsRef.current?.print()}
+                disabled={!hasPrintableRows}
               />
             </div>
           </div>
@@ -338,6 +318,7 @@ export function KamsCompanyAccountPage() {
             subtitle={data.account.name}
             entries={data.entries}
             onDecide={data.can_decide ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
+            onRowsChange={(count) => setHasPrintableRows(count > 0)}
           />
         </>
       ) : selected ? <LoadingScreen /> : null}
@@ -355,9 +336,9 @@ export function KamsCompanyAccountPage() {
               setMemberId(!item || item.id === 'office' ? '' : item.id)
               setError('')
             }}
+            required
           />
-          <Field
-            label={t('kams.amount')}
+          <Field label={t('kams.amount')}
             type="number"
             min="0.01"
             step="0.01"
@@ -375,21 +356,10 @@ export function KamsCompanyAccountPage() {
             }}
             required
           />
-          <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} required />
           <Button type="submit" className="w-full" disabled={saving || amountTooHigh}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
       </Modal>
-
-      <KamsAgentAccountModal
-        open={agentModalOpen}
-        initialMemberId={agentMemberId}
-        officeId={agentOfficeId}
-        onClose={() => {
-          setAgentModalOpen(false)
-          setAgentMemberId(null)
-          setAgentOfficeId(null)
-        }}
-      />
     </div>
   )
 }

@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Models\Setting;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -135,7 +136,7 @@ class AuthController extends Controller
     {
         $data = $request->validate([
             'current_password' => ['required', 'current_password'],
-            'password' => ['required', 'confirmed', Password::min(8)],
+            'password' => ['required', 'confirmed', Password::defaults()],
         ]);
 
         $request->user()->forceFill([
@@ -222,6 +223,12 @@ class AuthController extends Controller
             'accessible_module_slugs' => $user->accessibleModuleSlugs(),
             'last_login_at' => $user->last_login_at,
             'features' => (object) [],
+            'preferences' => [
+                'decimal_places' => max(0, min(6, (int) Setting::getValue('finance', 'decimal_places', 2))),
+                'date_format' => (string) Setting::getValue('general', 'date_format', 'DD/MM/YYYY'),
+                'timezone' => (string) ($user->timezone ?: Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa')),
+                'group_name' => (string) Setting::getValue('general', 'group_name', 'LALI Holdings'),
+            ],
         ];
     }
 }

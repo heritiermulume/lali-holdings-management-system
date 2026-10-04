@@ -7,7 +7,9 @@ use App\Models\Company;
 use App\Models\Office;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsSavingsEntry;
+use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use Illuminate\Support\Facades\DB;
@@ -91,8 +93,8 @@ class TreasuryLedger
         $this->ensurePendingSavingsLinked($account);
         $this->refreshBalance($account);
         $account->loadMissing('office:id,name,code');
-        $posted = KamsTreasuryEntry::query()->where('account_id', $account->id)->where('status', 'posted');
-        $entries = KamsTreasuryEntry::query()
+        $posted = KamsTreasuryEntry::query()->where('status', 'posted');
+        $entriesQuery = KamsTreasuryEntry::query()
             ->with([
                 'createdBy:id,name',
                 'requestedBy:id,name',
@@ -100,11 +102,21 @@ class TreasuryLedger
                 'member:id,full_name,member_code,user_id',
                 'account:id,name,code,office_id',
                 'account.office:id,name,code',
-            ])
-            ->where('account_id', $account->id)
-            ->latest()
-            ->limit(80)
-            ->get();
+            ]);
+        if ($account->isCentral()) {
+            $posted->where('company_id', $account->company_id);
+            $entriesQuery->where('company_id', $account->company_id);
+        } else {
+            $posted->where('account_id', $account->id);
+            $entriesQuery->where('account_id', $account->id);
+        }
+        $entries = $entriesQuery->orderBy('created_at')->orderBy('id')->get();
+        $savings = $this->unmirroredSavingsEntries($account, $account->isCentral());
+        $serialized = $this->timelineWithBalances($account, $entries, $savings);
+        $serialized = collect($serialized)->sortBy([
+            ['created_at', 'desc'],
+            ['id', 'desc'],
+        ])->take(500)->values();
 
         return [
             'account' => [
@@ -119,11 +131,98 @@ class TreasuryLedger
             'deposits' => round((float) (clone $posted)->where('type', 'deposit')->sum('amount'), 2),
             'withdrawals' => round(abs((float) (clone $posted)->where('type', 'withdrawal')->sum('amount')), 2),
             'expenses' => round(abs((float) (clone $posted)->where('type', 'expense')->sum('amount')), 2),
-            'entries' => $entries->map(fn (KamsTreasuryEntry $entry) => $this->serializeEntry($entry, $account))->values()->all(),
+            'entries' => $serialized->all(),
         ];
     }
 
-    public function deposit(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
+    /**
+     * Day-close cash: company share stays on the selling office.
+     * Each agent amount (margin and office percentages) is recorded on the office that agent belongs to.
+     */
+    public function recordOfficeSaleCollection(KamsMember $member, KamsStockSale $sale, float $collectedDue, int $userId): ?KamsTreasuryEntry
+    {
+        $shareIds = KamsRevenueShare::query()->where('sale_id', $sale->id)->pluck('id');
+        $savings = KamsSavingsEntry::query()
+            ->where('status', 'posted')
+            ->where(function ($query) use ($sale, $shareIds) {
+                $query->where(function ($query) use ($sale) {
+                    $query->where('source_type', KamsStockSale::class)->where('source_id', $sale->id);
+                });
+                if ($shareIds->isNotEmpty()) {
+                    $query->orWhere(function ($query) use ($shareIds) {
+                        $query->where('source_type', KamsRevenueShare::class)->whereIn('source_id', $shareIds);
+                    });
+                }
+            })
+            ->orderBy('id')
+            ->get();
+
+        $officeAmount = round($collectedDue - (float) $savings->sum('amount'), 2);
+        $entry = null;
+        if ($officeAmount > 0.001) {
+            $entry = $this->post(
+                $this->accountForMember($member),
+                'deposit',
+                $officeAmount,
+                'Encaissement clôture '.$sale->reference,
+                $userId,
+            );
+        }
+
+        foreach ($savings as $saved) {
+            $this->mirrorSavingsToOffice($saved, $userId);
+        }
+
+        $this->refreshBalance($this->ensureForCompany((int) $member->company_id));
+
+        return $entry;
+    }
+
+    /**
+     * Record an agent's posted savings on the treasury account of the office they belong to.
+     */
+    public function mirrorSavingsToOffice(KamsSavingsEntry $entry, ?int $userId = null): ?KamsTreasuryEntry
+    {
+        if ($entry->status !== 'posted' || abs((float) $entry->amount) < 0.001) {
+            return null;
+        }
+        if ($entry->source_type === KamsTreasuryEntry::class) {
+            return null;
+        }
+        if (KamsTreasuryEntry::query()->where('savings_entry_id', $entry->id)->exists()) {
+            return null;
+        }
+
+        $member = $entry->member ?: KamsMember::query()->find($entry->member_id);
+        if (! $member) {
+            return null;
+        }
+
+        $account = $this->accountForMember($member);
+        $amount = round((float) $entry->amount, 2);
+        $type = $amount < 0 ? 'withdrawal' : 'deposit';
+        $treasury = KamsTreasuryEntry::query()->create([
+            'company_id' => $account->company_id,
+            'account_id' => $account->id,
+            'office_id' => $account->office_id,
+            'member_id' => $member->id,
+            'savings_entry_id' => $entry->id,
+            'type' => $type,
+            'status' => 'posted',
+            'amount' => $amount,
+            'occurred_on' => $entry->occurred_on?->toDateString() ?: now()->toDateString(),
+            'notes' => $entry->notes ?: null,
+            'created_by' => $userId ?: $entry->created_by,
+            'requested_by' => $entry->requested_by ?: $userId,
+            'performed_by' => $userId ?: $entry->performed_by,
+        ]);
+        $this->refreshBalance($account);
+        $this->recordBalanceAfter($treasury);
+
+        return $treasury;
+    }
+
+public function deposit(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
     {
         return $this->post($account, 'deposit', abs($amount), $notes, $userId, $member);
     }
@@ -149,12 +248,20 @@ class TreasuryLedger
 
     public function displayedBalance(KamsTreasuryAccount $account): float
     {
-        $own = $this->available($account);
+        $own = round($this->available($account) + $this->unmirroredSavingsTotal($account), 2);
         if (! $account->isCentral()) {
             return $own;
         }
 
-        return round($own + $this->officesPostedTotal((int) $account->company_id), 2);
+        $offices = KamsTreasuryAccount::query()
+            ->where('company_id', $account->company_id)
+            ->whereNotNull('office_id')
+            ->get();
+        foreach ($offices as $office) {
+            $own = round($own + $this->available($office) + $this->unmirroredSavingsTotal($office), 2);
+        }
+
+        return $own;
     }
 
     public function spendable(KamsTreasuryAccount $account): float
@@ -173,6 +280,162 @@ class TreasuryLedger
         return $account;
     }
 
+    private function recordBalanceAfter(?KamsTreasuryEntry $entry): void
+    {
+        if (! $entry || ! in_array($entry->status ?: 'posted', ['posted', 'rejected'], true)) {
+            return;
+        }
+
+        $posted = KamsTreasuryEntry::query()
+            ->where('account_id', $entry->account_id)
+            ->where('status', 'posted');
+        $this->limitToPriorEntries($posted, $entry, $entry->status !== 'rejected');
+        $entry->forceFill(['balance_after' => round((float) $posted->sum('amount'), 2)])->save();
+    }
+
+    private function limitToPriorEntries($query, KamsTreasuryEntry $entry, bool $includeSelf): void
+    {
+        $second = $entry->created_at?->format('Y-m-d H:i:s');
+        $nextSecond = $entry->created_at?->copy()->addSecond()->format('Y-m-d H:i:s');
+        $query->where(function ($query) use ($entry, $second, $nextSecond, $includeSelf) {
+            $query->where('created_at', '<', $second)
+                ->orWhere(function ($query) use ($entry, $second, $nextSecond, $includeSelf) {
+                    $query->where('created_at', '>=', $second)
+                        ->where('created_at', '<', $nextSecond)
+                        ->where('id', $includeSelf ? '<=' : '<', $entry->id);
+                });
+        });
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, KamsTreasuryEntry>  $treasury
+     * @param  \Illuminate\Support\Collection<int, KamsSavingsEntry>  $savings
+     * @return list<array<string, mixed>>
+     */
+    private function timelineWithBalances(KamsTreasuryAccount $account, $treasury, $savings): array
+    {
+        $events = [];
+        foreach ($treasury as $entry) {
+            $events[] = ['kind' => 'treasury', 'at' => $entry->created_at?->format('Y-m-d H:i:s') ?? '', 'id' => (int) $entry->id, 'entry' => $entry];
+        }
+        foreach ($savings as $entry) {
+            $events[] = ['kind' => 'savings', 'at' => $entry->created_at?->format('Y-m-d H:i:s') ?? '', 'id' => (int) $entry->id, 'entry' => $entry];
+        }
+        usort($events, function (array $a, array $b) {
+            $time = strcmp($a['at'], $b['at']);
+            if ($time !== 0) {
+                return $time;
+            }
+            $kind = strcmp($a['kind'], $b['kind']);
+            if ($kind !== 0) {
+                return $kind;
+            }
+
+            return $a['id'] <=> $b['id'];
+        });
+
+        $officeAccounts = KamsTreasuryAccount::query()
+            ->where('company_id', $account->company_id)
+            ->whereNotNull('office_id')
+            ->pluck('id', 'office_id');
+        $buckets = [];
+        $rows = [];
+        foreach ($events as $event) {
+            $entry = $event['entry'];
+            $bucketId = $event['kind'] === 'treasury'
+                ? (int) $entry->account_id
+                : (int) ($officeAccounts[$entry->member?->office_id] ?? $account->id);
+            if ($event['kind'] === 'savings' && ! $account->isCentral()) {
+                $bucketId = (int) $account->id;
+            }
+            $buckets[$bucketId] ??= 0.0;
+            $counts = ($event['kind'] === 'treasury' && ($entry->status ?: 'posted') === 'posted')
+                || ($event['kind'] === 'savings' && ($entry->status ?: 'posted') === 'posted');
+            if ($counts) {
+                $buckets[$bucketId] = round($buckets[$bucketId] + (float) $entry->amount, 2);
+            }
+            $balance = $account->isCentral()
+                ? round(array_sum($buckets), 2)
+                : round($buckets[(int) $account->id] ?? 0, 2);
+            if ($event['kind'] === 'treasury') {
+                $entry->setAttribute('balance_after', $balance);
+                $rows[] = $this->serializeEntry($entry);
+            } else {
+                $rows[] = $this->serializeSavingsEntry($entry, $balance, $account);
+            }
+        }
+
+        return $rows;
+    }
+
+    private function unmirroredSavingsTotal(KamsTreasuryAccount $account): float
+    {
+        return round((float) $this->unmirroredSavingsEntries($account, false)->sum('amount'), 2);
+    }
+
+    /**
+     * Savings that are not already posted on a treasury account.
+     *
+     * @return \Illuminate\Support\Collection<int, KamsSavingsEntry>
+     */
+    private function unmirroredSavingsEntries(KamsTreasuryAccount $account, bool $companyWide)
+    {
+        $query = KamsSavingsEntry::query()
+            ->with(['member:id,full_name,member_code,office_id', 'member.office:id,name,code'])
+            ->where('status', 'posted')
+            ->where('company_id', $account->company_id)
+            ->where(function ($query) {
+                $query->whereNull('source_type')
+                    ->orWhere('source_type', '!=', KamsTreasuryEntry::class);
+            })
+            ->whereNotIn('id', KamsTreasuryEntry::query()->whereNotNull('savings_entry_id')->select('savings_entry_id'));
+        if (! $companyWide) {
+            if ($account->isCentral()) {
+                $query->whereHas('member', fn ($query) => $query->whereNull('office_id'));
+            } else {
+                $query->whereHas('member', fn ($query) => $query->where('office_id', $account->office_id));
+            }
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeSavingsEntry(KamsSavingsEntry $entry, float $balance, KamsTreasuryAccount $account): array
+    {
+        $holder = $entry->member?->office?->name ?: ($account->isCentral() ? 'KAMS' : $account->office?->name);
+
+        return [
+            'uid' => 'savings-'.$entry->id,
+            'id' => $entry->id,
+            'type' => $entry->type,
+            'status' => $entry->status ?: 'posted',
+            'amount' => round((float) $entry->amount, 2),
+            'balance_after' => round($balance, 2),
+            'occurred_on' => $entry->occurred_on?->toDateString(),
+            'created_at' => $entry->created_at?->toIso8601String(),
+            'updated_at' => $entry->updated_at?->toIso8601String(),
+            'notes' => $entry->notes,
+            'decision_notes' => null,
+            'holder' => $holder,
+            'member' => $entry->member ? [
+                'id' => $entry->member->id,
+                'full_name' => $entry->member->full_name,
+                'member_code' => $entry->member->member_code,
+            ] : null,
+            'requested_by' => null,
+            'performed_by' => null,
+            'created_by' => null,
+            'source' => [
+                'type' => 'savings',
+                'id' => $entry->id,
+                'label' => $holder,
+            ],
+        ];
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -180,9 +443,7 @@ class TreasuryLedger
     {
         $posted = KamsTreasuryEntry::query()->where('account_id', $account->id)->where('status', 'posted');
         $own ??= $this->available($account);
-        $balance = $account->isCentral()
-            ? round($own + ($officeTotal ?? $this->officesPostedTotal((int) $account->company_id)), 2)
-            : $own;
+        $balance = $this->displayedBalance($account);
 
         return [
             'id' => $account->id,
@@ -331,6 +592,8 @@ class TreasuryLedger
         $outgoing->forceFill(['related_entry_id' => $incoming->id])->save();
         $incoming->forceFill(['related_entry_id' => $outgoing->id])->save();
         $this->refreshBalance($office);
+        $this->recordBalanceAfter($outgoing->fresh());
+        $this->recordBalanceAfter($incoming->fresh());
     }
 
     public function accountForMember(KamsMember $member): KamsTreasuryAccount
@@ -395,6 +658,7 @@ class TreasuryLedger
                     'decision_notes' => $motif !== '' ? $motif : null,
                 ])->save();
                 $this->refreshBalance($account);
+                $this->recordBalanceAfter($entry->fresh());
                 if ($queued) {
                     $savings->postQueued($queued, $userId, $motif);
                 } elseif ($entry->type === 'deposit') {
@@ -408,6 +672,7 @@ class TreasuryLedger
                     'performed_by' => $userId,
                     'decision_notes' => $motif,
                 ])->save();
+                $this->recordBalanceAfter($entry->fresh());
                 if ($queued) {
                     $savings->rejectQueued($queued, $userId, $motif);
                 }
@@ -529,6 +794,7 @@ class TreasuryLedger
                 'performed_by' => $userId,
             ]);
             $this->refreshBalance($account);
+            $this->recordBalanceAfter($entry);
 
             if ($member) {
                 $savings = app(SavingsLedger::class);
@@ -547,9 +813,11 @@ class TreasuryLedger
     /**
      * @return array<string, mixed>
      */
-    private function serializeEntry(KamsTreasuryEntry $entry, KamsTreasuryAccount $account): array
+    private function serializeEntry(KamsTreasuryEntry $entry): array
     {
-        $sourceLabel = $account->office?->name ?: $account->name;
+        $entry->loadMissing(['account:id,name,code,office_id', 'account.office:id,name,code']);
+        $holder = $entry->account?->office?->name
+            ?: ($entry->account?->isCentral() ? 'KAMS' : $entry->account?->name);
 
         return [
             'uid' => 'treasury-'.$entry->id,
@@ -557,11 +825,13 @@ class TreasuryLedger
             'type' => $entry->type,
             'status' => $entry->status ?: 'posted',
             'amount' => round((float) $entry->amount, 2),
+            'balance_after' => $entry->balance_after !== null ? round((float) $entry->balance_after, 2) : null,
             'occurred_on' => $entry->occurred_on?->toDateString(),
             'created_at' => $entry->created_at?->toIso8601String(),
             'updated_at' => $entry->updated_at?->toIso8601String(),
             'notes' => $entry->notes,
             'decision_notes' => $entry->decision_notes ?? null,
+            'holder' => $holder,
             'member' => $entry->member ? [
                 'id' => $entry->member->id,
                 'full_name' => $entry->member->full_name,
@@ -573,7 +843,7 @@ class TreasuryLedger
             'source' => [
                 'type' => 'treasury',
                 'id' => $entry->id,
-                'label' => $sourceLabel,
+                'label' => $holder,
             ],
         ];
     }

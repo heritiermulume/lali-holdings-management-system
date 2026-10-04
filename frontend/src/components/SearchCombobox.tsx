@@ -14,6 +14,7 @@ export function SearchCombobox({
   placeholder,
   disabled,
   emptyLabel,
+  required,
   onSelect,
 }: {
   label: string
@@ -22,6 +23,7 @@ export function SearchCombobox({
   placeholder?: string
   disabled?: boolean
   emptyLabel?: string
+  required?: boolean
   onSelect: (item: SearchComboboxItem | null) => void
 }) {
   const [query, setQuery] = useState('')
@@ -46,7 +48,18 @@ export function SearchCombobox({
 
   return (
     <div ref={root} className="relative space-y-1.5">
-      <span className="text-sm font-medium text-ink">{label}</span>
+      <span className="text-sm font-medium text-ink">
+        {label}
+        {required ? <span className="text-danger"> *</span> : null}
+      </span>
+      <input
+        className="sr-only"
+        tabIndex={-1}
+        value={value?.id ?? ''}
+        required={required}
+        onChange={() => undefined}
+        aria-hidden
+      />
       <input
         aria-label={label}
         className={cn(

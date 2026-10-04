@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
+import { applyDisplayPrefs } from '../lib/format'
 import type { User } from '../types'
 
 type AuthContextValue = {
@@ -44,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const { data } = await api.get('/auth/me')
     setUser(data.data)
+    applyDisplayPrefs({ ...data.data?.preferences, timezone: data.data?.timezone || data.data?.preferences?.timezone })
     if (data.data?.locale) {
       await applyLocale(i18n, data.data.locale)
     }
@@ -63,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await api.post('/auth/login', { login: email, email, password })
       localStorage.setItem('lhms_token', data.data.token)
       setUser(data.data.user)
+      applyDisplayPrefs({ ...data.data.user?.preferences, timezone: data.data.user?.timezone || data.data.user?.preferences?.timezone })
       await applyLocale(i18n, data.data.user?.locale || 'fr')
     },
     logout: async () => {

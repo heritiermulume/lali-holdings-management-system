@@ -4,7 +4,7 @@ import { Badge, Button, Card, Empty, Field, Modal } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
-import { money, roleLabel } from '../../lib/format'
+import { money } from '../../lib/format'
 import type { User } from '../../types'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
 import { KamsBankCard } from './KamsBankCard'
@@ -164,6 +164,7 @@ export function KamsAccountPage() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const transactionsRef = useRef<KamsAccountTransactionsHandle>(null)
+  const [hasPrintableRows, setHasPrintableRows] = useState(false)
 
   const showCompensation = canViewMyCompensation(user, data?.member.role?.slug)
 
@@ -236,27 +237,15 @@ export function KamsAccountPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-lg font-bold">{t('kams.myAccount')}</h2>
-        <p className="mt-1 text-sm text-muted">{t('kams.myAccountHint')}</p>
-        <p className="mt-1 text-sm">
-          <b>{data.member.full_name}</b>
-          <span className="text-muted"> · {data.member.member_code}</span>
-          {data.member.office ? <span className="text-muted"> · {data.member.office.name}</span> : null}
-          {data.member.role ? <span className="text-muted"> · {roleLabel(t, data.member.role)}</span> : data.member.rank ? <span className="text-muted"> · {t(`kams.rank.${data.member.rank}`, { defaultValue: data.member.rank })}</span> : null}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {data.can_deposit ? <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestDeposit')}</Button> : null}
-        {data.can_withdraw ? <Button variant="secondary" onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestWithdrawal')}</Button> : null}
-        <div className="ml-auto">
-          <KamsTransactionsPrintMenu
-            canPreview={hasPermission('kams.finance.account.preview')}
-            canPrint={hasPermission('kams.finance.account.print')}
-            onPreview={() => transactionsRef.current?.preview()}
-            onPrint={() => transactionsRef.current?.print()}
-          />
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted">{t('kams.myAccountHint')}</p>
+        <KamsTransactionsPrintMenu
+          canPreview={hasPermission('kams.finance.account.preview')}
+          canPrint={hasPermission('kams.finance.account.print')}
+          onPreview={() => transactionsRef.current?.preview()}
+          onPrint={() => transactionsRef.current?.print()}
+          disabled={!hasPrintableRows}
+        />
       </div>
 
       {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -269,6 +258,11 @@ export function KamsAccountPage() {
         pending={data.pending_withdrawals}
         pendingDeposits={data.pending_deposits}
       />
+
+      <div className="flex flex-wrap items-center gap-2">
+        {data.can_deposit ? <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestDeposit')}</Button> : null}
+        {data.can_withdraw ? <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestWithdrawal')}</Button> : null}
+      </div>
 
       {showCompensation && (compensation || compensationEntries.length > 0) ? (
         <Card className="p-5">
@@ -332,6 +326,8 @@ export function KamsAccountPage() {
         subtitle={data.member.full_name}
         entries={data.entries}
         showMember={false}
+        compact
+        onRowsChange={(count) => setHasPrintableRows(count > 0)}
       />
 
       <Modal open={Boolean(action)} title={action ? titles[action] : ''} onClose={() => setAction(null)}>
@@ -354,7 +350,7 @@ export function KamsAccountPage() {
             }}
             required
           />
-          <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} required />
           <Button type="submit" className="w-full" disabled={saving || withdrawTooHigh}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
       </Modal>

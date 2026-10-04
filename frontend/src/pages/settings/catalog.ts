@@ -6,7 +6,7 @@ export type SettingField = {
   options?: Array<{ value: string; labelKey: string }>
 }
 
-export type SettingGroupId = 'general' | 'finance' | 'notifications' | 'security'
+export type SettingGroupId = 'general' | 'finance' | 'security'
 
 export const settingGroups: Record<SettingGroupId, SettingField[]> = {
   general: [
@@ -43,12 +43,6 @@ export const settingGroups: Record<SettingGroupId, SettingField[]> = {
     ] },
     { key: 'tax_inclusive_prices', type: 'boolean' },
     { key: 'fx_spread_percent', type: 'number' },
-  ],
-  notifications: [
-    { key: 'email_enabled', type: 'boolean' },
-    { key: 'sms_enabled', type: 'boolean' },
-    { key: 'inapp_enabled', type: 'boolean' },
-    { key: 'digest_hour', type: 'number' },
   ],
   security: [
     { key: 'password_min_length', type: 'number' },
@@ -111,12 +105,6 @@ export const settingDefaults: Record<string, Record<string, string>> = {
     fiscal_year_start_month: '1',
     tax_inclusive_prices: '0',
     fx_spread_percent: '1.5',
-  },
-  notifications: {
-    email_enabled: '0',
-    sms_enabled: '0',
-    inapp_enabled: '1',
-    digest_hour: '8',
   },
   security: {
     password_min_length: '10',

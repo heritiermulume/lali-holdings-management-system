@@ -858,6 +858,140 @@ class StockInventory
     }
 
     /**
+     * Record an agent's closing figures without posting stock or money movements.
+     *
+     * @param  list<array{id:int, quantity_returned:int, quantity_lost:int}>  $items
+     */
+    public function close(
+        KamsStockAssignment $assignment,
+        array $items,
+        float $collectedAmount,
+        ?string $notes = null,
+        bool $depositSurplus = false,
+        ?int $userId = null,
+    ): KamsStockAssignment {
+        abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+
+        return DB::transaction(function () use ($assignment, $items, $collectedAmount, $notes, $depositSurplus, $userId) {
+            $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
+            abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+            $totals = $this->applyClosingQuantities($assignment, $items);
+            abort_unless(
+                round($collectedAmount, 2) + 0.001 >= $totals['expected'],
+                422,
+                __('L\'argent collecté doit être égal au montant dû (:due), ou supérieur pour épargner le surplus.', [
+                    'due' => number_format($totals['expected'], 2, '.', ''),
+                ]),
+            );
+
+            $assignment->update([
+                'status' => 'closed',
+                'expected_amount' => $totals['expected'],
+                'collected_amount' => round($collectedAmount, 2),
+                'profit_amount' => $totals['profit'],
+                'loss_amount' => $totals['loss'],
+                'deposit_surplus' => $depositSurplus && round($collectedAmount, 2) > $totals['expected'],
+                'notes' => $notes ?? $assignment->notes,
+                'closed_by' => $userId,
+            ]);
+
+            return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+        });
+    }
+
+    /**
+     * Post stock, sales, and account movements for assignments already closed by their agents.
+     *
+     * @param  list<int>|null  $officeIds
+     * @return list<KamsStockAssignment>
+     */
+    public function closeDay(?int $companyId, ?int $officeId, ?int $userId, ?array $officeIds = null): array
+    {
+        return DB::transaction(function () use ($companyId, $officeId, $userId, $officeIds) {
+            $assignments = KamsStockAssignment::query()
+                ->where('status', 'closed')
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->when($officeId, fn ($q) => $q->where('office_id', $officeId))
+                ->when($officeIds !== null, fn ($q) => $q->whereIn('office_id', $officeIds))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            abort_if($assignments->isEmpty(), 422, __('Aucune affectation clôturée à comptabiliser.'));
+            $stillOpen = KamsStockAssignment::query()
+                ->where('status', 'open')
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->when($officeId, fn ($q) => $q->where('office_id', $officeId))
+                ->when($officeIds !== null, fn ($q) => $q->whereIn('office_id', $officeIds))
+                ->exists();
+            abort_if($stillOpen, 422, __('Toutes les affectations doivent être clôturées avant de clôturer la journée.'));
+
+            $posted = [];
+            foreach ($assignments as $assignment) {
+                $assignment->load('items');
+                $posted[] = $this->settle(
+                    $assignment,
+                    $assignment->items->map(fn ($line) => [
+                        'id' => $line->id,
+                        'quantity_returned' => (int) $line->quantity_returned,
+                        'quantity_lost' => (int) $line->quantity_lost,
+                    ])->all(),
+                    (float) $assignment->collected_amount,
+                    $assignment->notes,
+                    $userId,
+                    (bool) $assignment->deposit_surplus,
+                );
+            }
+
+            return $posted;
+        });
+    }
+
+    /**
+     * @param  list<array{id:int, quantity_returned:int, quantity_lost:int}>  $items
+     * @return array{expected: float, profit: float, loss: float}
+     */
+    private function applyClosingQuantities(KamsStockAssignment $assignment, array $items): array
+    {
+        $assignment->load(['items.product']);
+        $byId = collect($items)->keyBy('id');
+        $expectedAmount = 0.0;
+        $profitAmount = 0.0;
+        $lossAmount = 0.0;
+
+        foreach ($assignment->items as $line) {
+            $payload = $byId->get($line->id, []);
+            $returned = (int) ($payload['quantity_returned'] ?? 0);
+            $lost = (int) ($payload['quantity_lost'] ?? 0);
+            abort_unless($returned >= 0 && $lost >= 0, 422, __('Quantities must be zero or greater.'));
+            $productName = $line->product?->name ?: (string) $line->product_id;
+            abort_unless(
+                $returned + $lost <= (int) $line->quantity_out,
+                422,
+                __('Pour :product, restitués et perdus dépassent la quantité sortie (:out). Vendus, restitués et perdus doivent correspondre à la quantité sortie.', [
+                    'product' => $productName,
+                    'out' => (int) $line->quantity_out,
+                ]),
+            );
+            $sold = max(0, $line->quantity_out - $returned - $lost);
+            $line->update([
+                'quantity_returned' => $returned,
+                'quantity_lost' => $lost,
+            ]);
+            $unitPrice = (float) $line->unit_price;
+            $unitCost = (float) $line->unit_cost;
+            $expectedAmount += $sold * $unitPrice;
+            $profitAmount += $sold * ($unitPrice - $unitCost);
+            $lossAmount += $lost * $unitCost;
+        }
+
+        return [
+            'expected' => round($expectedAmount, 2),
+            'profit' => round($profitAmount, 2),
+            'loss' => round($lossAmount, 2),
+        ];
+    }
+
+    /**
      * @param  list<array{id:int, quantity_returned:int, quantity_lost:int}>  $items
      */
     public function settle(
@@ -868,11 +1002,11 @@ class StockInventory
         ?int $userId = null,
         bool $depositSurplus = false,
     ): KamsStockAssignment {
-        abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+        abort_unless(in_array($assignment->status, ['open', 'closed'], true), 422, __('This assignment is already settled.'));
 
         return DB::transaction(function () use ($assignment, $items, $collectedAmount, $notes, $userId, $depositSurplus) {
             $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
-            abort_unless($assignment->status === 'open', 422, __('This assignment is already settled.'));
+            abort_unless(in_array($assignment->status, ['open', 'closed'], true), 422, __('This assignment is already settled.'));
             $assignment->load(['items.product', 'member']);
             $member = $assignment->member;
             $byId = collect($items)->keyBy('id');
@@ -884,8 +1018,8 @@ class StockInventory
 
             foreach ($assignment->items as $line) {
                 $payload = $byId->get($line->id, []);
-                $returned = (int) ($payload['quantity_returned'] ?? 0);
-                $lost = (int) ($payload['quantity_lost'] ?? 0);
+                $returned = (int) ($payload['quantity_returned'] ?? $line->quantity_returned);
+                $lost = (int) ($payload['quantity_lost'] ?? $line->quantity_lost);
                 abort_unless($returned >= 0 && $lost >= 0, 422, __('Quantities must be zero or greater.'));
                 $productName = $line->product?->name ?: (string) $line->product_id;
                 abort_unless(
@@ -932,8 +1066,9 @@ class StockInventory
             $surplus = round(max(0, $collectedAmount - $expectedAmount), 2);
             $salePayment = min($collectedAmount, $expectedAmount);
 
+            $sale = null;
             if ($saleLines !== []) {
-                $this->sell($member, $saleLines, null, null, $salePayment, $userId, $notes);
+                $sale = $this->sell($member, $saleLines, null, null, $salePayment, $userId, $notes);
             }
             if ($returnLines !== []) {
                 $depot = KamsDepot::query()->find($assignment->depot_id);
@@ -954,6 +1089,10 @@ class StockInventory
                 );
             }
 
+            if ($sale && $member && $userId && $salePayment > 0) {
+                app(TreasuryLedger::class)->recordOfficeSaleCollection($member, $sale, $salePayment, $userId);
+            }
+
             $assignmentNotes = $notes ?? $assignment->notes;
             if ($surplusEntry) {
                 $surplusNote = __('Surplus :amount deposited to agent account (:ref).', [
@@ -971,6 +1110,7 @@ class StockInventory
                 'profit_amount' => $profitAmount,
                 'loss_amount' => $lossAmount,
                 'notes' => $assignmentNotes,
+                'day_closed_by' => $userId ?? $assignment->day_closed_by,
             ]);
 
             $fresh = $assignment->fresh(['member', 'office', 'depot', 'items.product']);

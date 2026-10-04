@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { navItemLabel, type ModuleNavItem } from '../../modules/registry'
 import { cn } from '../../lib/cn'
@@ -30,7 +30,9 @@ export function SettingsMobileTabs({ items }: { items: ModuleNavItem[] }) {
 
 function SettingsTab({ item }: { item: ModuleNavItem }) {
   const { t } = useTranslation()
+  const { pathname } = useLocation()
   const Icon = item.icon
+  const companiesSelected = item.to === '/administration/settings/companies' && pathname.startsWith('/administration/settings/modules/')
 
   return (
     <NavLink
@@ -38,7 +40,7 @@ function SettingsTab({ item }: { item: ModuleNavItem }) {
       end={item.end}
       className={({ isActive }) => cn(
         'flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold whitespace-nowrap',
-        isActive ? 'bg-lhms text-white shadow-sm' : 'bg-surface text-ink',
+        isActive || companiesSelected ? 'bg-lhms text-white shadow-sm' : 'bg-surface text-ink',
       )}
     >
       <Icon size={14} className="shrink-0" aria-hidden />

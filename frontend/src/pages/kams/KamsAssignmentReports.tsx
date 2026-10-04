@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Link, useOutletContext, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Package } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Info, Package } from 'lucide-react'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
-import { Badge, Card, Empty, Field, Select } from '../../components/ui'
+import { Badge, Card, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -44,6 +44,8 @@ type Assignment = {
   loss_amount: number
   member?: { full_name: string; member_code: string; phone?: string | null } | null
   office?: { name: string } | null
+  closed_by?: { id: number; name: string } | null
+  day_closed_by?: { id: number; name: string } | null
   items?: AssignmentItem[]
 }
 
@@ -66,6 +68,7 @@ type DayReport = {
   date: string
   totals: DayTotals
   assignments: Assignment[]
+  day_closed_by?: string
 }
 
 type ReportPayload = {
@@ -110,6 +113,17 @@ function presetRange(period: Exclude<Period, 'custom'>, now = new Date()) {
   return { from: isoDate(start), to: isoDate(end) }
 }
 
+function formatDateTime(value: string, locale: string) {
+  const normalized = value.includes('T') || value.includes(' ') ? value.replace(' ', 'T') : `${value}T00:00:00`
+  return new Date(normalized).toLocaleString(locale, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function formatDay(value: string, locale: string) {
   return new Date(`${value}T12:00:00`).toLocaleDateString(locale, {
     weekday: 'long',
@@ -141,8 +155,6 @@ function assignmentSoldUnits(row: Assignment) {
   return (row.items || []).reduce((sum, item) => sum + soldQty(item), 0)
 }
 
-const DAY_SORTS: DaySort[] = ['name', 'code', 'amount', 'due', 'quantity', 'reference']
-
 function sortAssignments(rows: Assignment[], sort: DaySort) {
   const list = [...rows]
   const cmpText = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' })
@@ -159,17 +171,20 @@ function sortAssignments(rows: Assignment[], sort: DaySort) {
 
 export function KamsAssignmentReports() {
   const { t, i18n } = useTranslation()
+  const { date: reportDate } = useParams()
+  const detailDate = reportDate && /^\d{4}-\d{2}-\d{2}$/.test(reportDate) ? reportDate : ''
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
-  const initial = useMemo(() => presetRange('day'), [])
+  const initial = useMemo(() => (detailDate ? { from: detailDate, to: detailDate } : presetRange('month')), [detailDate])
   const today = useMemo(() => isoDate(new Date()), [])
-  const [period, setPeriod] = useState<Period>('day')
+  const [period, setPeriod] = useState<Period>(detailDate ? 'day' : 'month')
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
   const { officeId } = useOutletContext<OperationsOfficeFilter>()
   const [data, setData] = useState<ReportPayload | null>(null)
-  const [expandedDays, setExpandedDays] = useState<string[]>([])
   const [expandedAssignments, setExpandedAssignments] = useState<number[]>([])
-  const [daySorts, setDaySorts] = useState<Record<string, DaySort>>({})
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
+  const [daySorts] = useState<Record<string, DaySort>>({})
   const [loading, setLoading] = useState(true)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const [printPreviewTitle, setPrintPreviewTitle] = useState('')
@@ -190,7 +205,7 @@ export function KamsAssignmentReports() {
       if (!active) return
       const payload = res.data.data as ReportPayload
       setData(payload)
-      setExpandedDays([])
+      setPage(1)
     }).catch(() => {
       if (active) {
         setData({
@@ -223,17 +238,18 @@ export function KamsAssignmentReports() {
     return () => { active = false }
   }, [from, to, period, officeId])
 
+  useEffect(() => {
+    if (!detailDate) return
+    setPeriod('day')
+    setFrom(detailDate)
+    setTo(detailDate)
+  }, [detailDate])
+
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)
     setPeriod(item)
     setFrom(next.from)
     setTo(next.to)
-  }
-
-  const toggleDay = (date: string) => {
-    setExpandedDays((current) => (
-      current.includes(date) ? current.filter((item) => item !== date) : [...current, date]
-    ))
   }
 
   const toggleAssignment = (id: number) => {
@@ -243,10 +259,6 @@ export function KamsAssignmentReports() {
   }
 
   const daySort = (date: string): DaySort => daySorts[date] || 'name'
-
-  const setDaySort = (date: string, sort: DaySort) => {
-    setDaySorts((current) => ({ ...current, [date]: sort }))
-  }
 
   const sortedDay = (day: DayReport): DayReport => ({
     ...day,
@@ -319,7 +331,7 @@ export function KamsAssignmentReports() {
           ? `<table>
               <thead>
                 <tr>
-                  <th>${escapeHtml(t('kams.agents'))}</th>
+                  <th>${escapeHtml(t('kams.agent'))}</th>
                   <th>${escapeHtml(t('kams.office'))}</th>
                   <th style="text-align:right;">${escapeHtml(t('kams.sold'))}</th>
                   <th style="text-align:right;">${escapeHtml(t('kams.amountDue'))}</th>
@@ -384,41 +396,186 @@ export function KamsAssignmentReports() {
   const allTitle = withOffice(t('kams.assignmentReports'))
   const allSubtitle = t('kams.assignmentReportsHint')
   const simplifiedTitle = withOffice(t('kams.simplifiedReport'))
-  const dayTitle = (day: DayReport, simplified = false) => (
-    simplified
-      ? withOffice(t('kams.simplifiedReport'))
-      : withOffice(`${t('kams.assignmentReports')} — ${formatDay(day.date, locale)}`)
-  )
 
   if (loading && !data) return <LoadingScreen />
 
   const totals = data?.totals
   const canPrint = Boolean(data && (data.days || []).length > 0)
+  const lines = (data?.days || []).flatMap((day) => (day.assignments || []).map((assignment) => ({ date: day.date, assignment })))
+  const lastPage = Math.max(1, Math.ceil(lines.length / perPage) || 1)
+  const safePage = Math.min(page, lastPage)
+  const pageRows = lines.slice((safePage - 1) * perPage, safePage * perPage)
+  const rangeStart = lines.length === 0 ? 0 : (safePage - 1) * perPage + 1
+  const rangeEnd = Math.min(safePage * perPage, lines.length)
+  const days = data?.days || []
+  const dayLastPage = Math.max(1, Math.ceil(days.length / perPage) || 1)
+  const safeDayPage = Math.min(page, dayLastPage)
+  const dayRows = days.slice((safeDayPage - 1) * perPage, safeDayPage * perPage)
+  const dayRangeStart = days.length === 0 ? 0 : (safeDayPage - 1) * perPage + 1
+  const dayRangeEnd = Math.min(safeDayPage * perPage, days.length)
+
+  if (!detailDate) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            {data ? (
+              <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
+                {t('kams.periodRange', {
+                  start: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
+                  end: new Date(`${data.range.to}T12:00:00`).toLocaleDateString(locale),
+                })}
+              </p>
+            ) : <span />}
+            <div className="flex shrink-0 items-center justify-end gap-1.5">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                className={cn('shrink-0 rounded-full px-2.5 py-2 text-xs font-semibold sm:px-3 sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+              >
+                {filtersOpen ? t('common.hide') : t('common.filter')}
+              </button>
+              <KamsTransactionsPrintMenu
+                buttonClassName="px-2.5 sm:px-4"
+                canPreview={canPrint}
+                canPrint={canPrint}
+                disabled={!days.length}
+                onPreview={() => data && previewDays(data.days.map(sortedDay), allTitle, allSubtitle, true)}
+                onPrint={() => data && printDays(data.days.map(sortedDay), allTitle, allSubtitle, true)}
+                onPreviewSimplified={() => data && previewDays(data.days.map(sortedDay), simplifiedTitle, allSubtitle, true)}
+                onPrintSimplified={() => data && printDays(data.days.map(sortedDay), simplifiedTitle, allSubtitle, true)}
+              />
+            </div>
+          </div>
+          {filtersOpen ? (
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:items-end">
+              <div className="flex w-full min-w-0 overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+                {(['day', 'week', 'month'] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => applyPreset(item)}
+                    className={cn(
+                      'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
+                      period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
+                    )}
+                  >
+                    {t(`kams.period.${item}`)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPeriod('custom')}
+                  className={cn(
+                    'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
+                    period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
+                  )}
+                >
+                  {t('dashboard.customPeriod')}
+                </button>
+              </div>
+              {period === 'custom' ? (
+                <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                  <Field className="min-w-0 max-w-full" label={t('kams.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
+                  <Field className="min-w-0 max-w-full" label={t('kams.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-lhms text-white">
+                <tr className="text-left text-xs font-semibold tracking-wide">
+                  <th className="bg-lhms px-4 py-2 font-semibold">{t('common.date')}</th>
+                  <th className="bg-lhms px-4 py-2 font-semibold">{t('kams.dayClosedBy')}</th>
+                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.assignments')}</th>
+                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.sold')}</th>
+                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.amountDue')}</th>
+                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.cashCollected')}</th>
+                  <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('common.actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                  </tr>
+                ) : dayRows.map((day, index) => (
+                  <tr key={day.date} className={cn('border-t border-line', index % 2 === 1 ? 'bg-emerald-50' : 'bg-white')}>
+                    <td className="px-4 py-2 font-semibold capitalize">{formatDay(day.date, locale)}</td>
+                    <td className="px-4 py-2">{day.day_closed_by || '—'}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{day.totals.assignments}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{day.totals.sold_units}</td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.expected_amount)}</td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.collected_amount)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Link
+                        to={`/modules/kams/stock/assignments/reports/${day.date}`}
+                        aria-label={t('kams.dayReportDetails')}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-lhms/10 text-lhms hover:bg-lhms/20"
+                      >
+                        <Info size={20} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-line px-4 py-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted">{t('kams.pageRange', { from: dayRangeStart, to: dayRangeEnd, total: days.length })}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-muted">
+                {t('kams.rowsPerPage')}
+                <select
+                  value={perPage}
+                  onChange={(event) => { setPerPage(Number(event.target.value)); setPage(1) }}
+                  className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+                >
+                  {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+              <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safeDayPage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safeDayPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+                <ChevronLeft size={16} /> {t('common.prev')}
+              </button>
+              <span className="px-1 text-sm font-semibold">{safeDayPage} / {dayLastPage}</span>
+              <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safeDayPage >= dayLastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safeDayPage >= dayLastPage} onClick={() => setPage((value) => Math.min(dayLastPage, value + 1))}>
+                {t('common.next')} <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+        <PrintPreviewModal
+          open={Boolean(printPreviewHtml)}
+          title={printPreviewTitle || t('common.printPreview')}
+          html={printPreviewHtml}
+          onClose={() => setPrintPreviewHtml('')}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
-          {data ? (
-            <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
-              {t('kams.periodRange', {
-                start: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
-                end: new Date(`${data.range.to}T12:00:00`).toLocaleDateString(locale),
-              })}
-            </p>
-          ) : <span />}
+          <div className="min-w-0">
+            <Link to="/modules/kams/stock/assignments/reports" className="text-sm font-semibold text-lhms">
+              ← {t('kams.assignmentReports')}
+            </Link>
+            <p className="truncate text-base font-semibold capitalize">{formatDay(detailDate, locale)}</p>
+            {data?.days?.[0]?.day_closed_by ? (
+              <p className="truncate text-sm text-muted">{t('kams.dayClosedBy')}: {data.days[0].day_closed_by}</p>
+            ) : null}
+          </div>
           <div className="flex shrink-0 items-center justify-end gap-1.5">
-            <button
-              type="button"
-              onClick={() => setFiltersOpen((open) => !open)}
-              className={cn('shrink-0 rounded-full px-2.5 py-2 text-xs font-semibold sm:px-3 sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
-            >
-              {filtersOpen ? t('common.hide') : t('common.filter')}
-            </button>
             <KamsTransactionsPrintMenu
               buttonClassName="px-2.5 sm:px-4"
               canPreview={canPrint}
               canPrint={canPrint}
+              disabled={!data?.days?.length}
               onPreview={() => data && previewDays(data.days.map(sortedDay), allTitle, allSubtitle)}
               onPrint={() => data && printDays(data.days.map(sortedDay), allTitle, allSubtitle)}
               onPreviewSimplified={() => data && previewDays(data.days.map(sortedDay), simplifiedTitle, allSubtitle, true)}
@@ -426,56 +583,6 @@ export function KamsAssignmentReports() {
             />
           </div>
         </div>
-        {filtersOpen ? (
-          <div className="flex w-full min-w-0 flex-col gap-2 sm:items-end">
-            <div className="flex w-full min-w-0 overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
-              {(['day', 'week', 'month'] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => applyPreset(item)}
-                  className={cn(
-                    'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
-                    period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
-                  )}
-                >
-                  {t(`kams.period.${item}`)}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPeriod('custom')}
-                className={cn(
-                  'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
-                  period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
-                )}
-              >
-                {t('dashboard.customPeriod')}
-              </button>
-            </div>
-            {period === 'custom' ? (
-              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
-                <Field
-                  className="min-w-0 max-w-full"
-                  label={t('kams.dateFrom')}
-                  type="date"
-                  value={from}
-                  max={to || today}
-                  onChange={(event) => setFrom(event.target.value)}
-                />
-                <Field
-                  className="min-w-0 max-w-full"
-                  label={t('kams.dateTo')}
-                  type="date"
-                  value={to}
-                  min={from}
-                  max={today}
-                  onChange={(event) => setTo(event.target.value)}
-                />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       {totals ? (
@@ -498,125 +605,69 @@ export function KamsAssignmentReports() {
         </div>
       ) : null}
 
-      <div className="grid gap-3">
-        {(data?.days || []).map((day) => {
-          const expanded = expandedDays.includes(day.date)
-          return (
-            <Card key={day.date} className="overflow-hidden">
-              <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:p-5">
-                <button
-                  type="button"
-                  onClick={() => toggleDay(day.date)}
-                  aria-expanded={expanded}
-                  className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left hover:opacity-90"
-                >
-                  <div className="min-w-0">
-                    <div className="font-semibold capitalize">{formatDay(day.date, locale)}</div>
-                    <div className="mt-1 text-xs text-muted sm:text-sm">
-                      {day.totals.assignments} {t('kams.assignments').toLowerCase()}
-                      {' · '}
-                      {day.totals.agents} {t('kams.agents').toLowerCase()}
-                      {' · '}
-                      {t('kams.sold')} {day.totals.sold_units}
-                      {' · '}
-                      {t('kams.cashCollected')} {money(day.totals.collected_amount)}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge tone="green">{money(day.totals.expected_amount)}</Badge>
-                    <ChevronDown size={18} className={cn('text-muted transition', expanded ? 'rotate-0' : '-rotate-90')} />
-                  </div>
-                </button>
-                <KamsTransactionsPrintMenu
-                  iconOnly
-                  className="shrink-0 self-end sm:self-auto"
-                  buttonClassName="h-11 w-11 px-0"
-                  onPreview={() => {
-                    const sorted = sortedDay(day)
-                    previewDays([sorted], dayTitle(day), allSubtitle)
-                  }}
-                  onPrint={() => {
-                    const sorted = sortedDay(day)
-                    printDays([sorted], dayTitle(day), allSubtitle)
-                  }}
-                  onPreviewSimplified={() => {
-                    const sorted = sortedDay(day)
-                    previewDays([sorted], dayTitle(day, true), allSubtitle, true)
-                  }}
-                  onPrintSimplified={() => {
-                    const sorted = sortedDay(day)
-                    printDays([sorted], dayTitle(day, true), allSubtitle, true)
-                  }}
-                />
-              </div>
-              {expanded ? (
-                <div className="space-y-3 border-t border-line bg-surface px-4 py-4 sm:px-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div className="grid flex-1 grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.sold')}: <b>{day.totals.sold_units}</b></div>
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.returned')}: <b>{day.totals.returned_units}</b></div>
-                    </div>
-                    <div className="w-full sm:w-56">
-                      <Select
-                        label={t('kams.reportSortLabel')}
-                        value={daySort(day.date)}
-                        onChange={(e) => setDaySort(day.date, e.target.value as DaySort)}
-                      >
-                        {DAY_SORTS.map((value) => (
-                          <option key={value} value={value}>{t(`kams.reportSort.${value}`)}</option>
-                        ))}
-                      </Select>
-                    </div>
-                  </div>
-                  {sortedDay(day).assignments.map((row) => {
-                    const open = expandedAssignments.includes(row.id)
-                    return (
-                      <div key={row.id} className="overflow-hidden rounded-xl border border-line bg-white">
-                        <button
-                          type="button"
-                          onClick={() => toggleAssignment(row.id)}
-                          aria-expanded={open}
-                          className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-surface/50"
-                        >
-                          <div className="min-w-0">
-                            <div className="font-semibold">{agentLabel(row)}</div>
-                            {row.member?.phone || row.office?.name ? (
-                              <div className="text-sm text-muted">
-                                {[row.member?.phone, row.office?.name].filter(Boolean).join(' · ')}
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1 text-xs sm:flex-row sm:items-center sm:gap-3 sm:text-sm">
-                            <div className="text-right">
-                              <div className="text-[11px] uppercase tracking-wide text-muted">{t('kams.sold')}</div>
-                              <div className="font-semibold tabular-nums text-lhms">{assignmentSoldUnits(row)}</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-[11px] uppercase tracking-wide text-muted">{t('kams.cashCollected')}</div>
-                              <div className="font-semibold tabular-nums">{money(row.collected_amount)}</div>
-                            </div>
-                            <ChevronDown size={16} className={cn('text-muted transition', open ? 'rotate-0' : '-rotate-90')} />
-                          </div>
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-lhms text-white">
+              <tr className="text-left text-xs font-semibold tracking-wide">
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.date')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.agent')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.assignmentClosedBy')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.phoneWhatsapp')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.office')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.reference')}</th>
+                <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.sold')}</th>
+                <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.amountDue')}</th>
+                <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.cashCollected')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.status')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                </tr>
+              ) : pageRows.map(({ date, assignment: row }, index) => {
+                const open = expandedAssignments.includes(row.id)
+                return (
+                  <Fragment key={row.id}>
+                    <tr className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
+                      <td className="w-px whitespace-nowrap px-3 py-1.5 text-muted">{formatDateTime(row.assigned_at || date, locale)}</td>
+                      <td className="px-4 py-1.5 font-semibold whitespace-nowrap">{agentLabel(row)}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.closed_by?.name || '—'}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.member?.phone || '—'}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.office?.name || '—'}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">
+                        <button type="button" className="inline-flex items-center gap-1 font-semibold text-lhms" onClick={() => toggleAssignment(row.id)}>
+                          {row.reference}
+                          <ChevronDown size={14} className={cn('transition', open ? 'rotate-0' : '-rotate-90')} />
                         </button>
-                        {open ? (
-                          <div className="border-t border-line px-4 py-3">
-                            <div className="mb-3 grid gap-2 sm:grid-cols-3 text-sm">
-                              <div>{t('kams.sold')}: <b>{assignmentSoldUnits(row)}</b></div>
-                              <div>{t('kams.amountDue')}: <b>{money(row.expected_amount)}</b></div>
-                              <div>{t('kams.cashCollected')}: <b>{money(row.collected_amount)}</b></div>
-                            </div>
-                            <div className="overflow-x-auto rounded-xl border border-line">
-                              <div className="grid min-w-full grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_7rem]">
-                                <div className="col-span-4 grid grid-cols-subgrid items-end gap-x-2 border-b border-line bg-[#f4faf5] px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                                  <span>{t('kams.product')}</span>
-                                  <span className="text-right">{t('kams.quantity')}</span>
-                                  <span className="text-right">{t('kams.sold')}</span>
-                                  <span className="text-right">{t('kams.salePrice')}</span>
-                                </div>
-                                {(row.items || []).map((item) => (
-                                  <div key={item.id} className="col-span-4 grid grid-cols-subgrid items-center gap-x-2 border-t border-line px-3 py-3 text-sm">
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-semibold tabular-nums">{assignmentSoldUnits(row)}</td>
+                      <td className="px-4 py-1.5 text-right whitespace-nowrap tabular-nums">{money(row.expected_amount)}</td>
+                      <td className="px-4 py-1.5 text-right whitespace-nowrap tabular-nums">{money(row.collected_amount)}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">
+                        <Badge tone={row.status === 'open' ? 'amber' : 'green'}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
+                      </td>
+                    </tr>
+                    {open ? (
+                      <tr className={index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white'}>
+                        <td colSpan={10} className="px-4 pb-4">
+                          <table className="min-w-full overflow-hidden rounded-xl border border-line text-sm">
+                            <thead className="bg-lhms text-white">
+                              <tr className="text-left text-xs font-semibold">
+                                <th className="bg-lhms px-3 py-2 font-semibold">{t('kams.product')}</th>
+                                <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.quantity')}</th>
+                                <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.sold')}</th>
+                                <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.salePrice')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(row.items || []).map((item) => (
+                                <tr key={item.id} className="border-t border-line bg-white">
+                                  <td className="px-3 py-2">
                                     <div className="flex min-w-0 items-center gap-2">
-                                      <span className="grid h-10 w-10 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
+                                      <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-lhms-soft text-lhms">
                                         {item.product?.image_url ? (
                                           <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />
                                         ) : (
@@ -628,26 +679,63 @@ export function KamsAssignmentReports() {
                                         {item.product?.sku ? <div className="truncate text-xs text-muted">{item.product.sku}</div> : null}
                                       </div>
                                     </div>
-                                    <span className="text-right font-semibold tabular-nums">{item.quantity_out}</span>
-                                    <span className="text-right font-semibold tabular-nums text-lhms">{soldQty(item)}</span>
-                                    <span className="text-right tabular-nums text-muted">{money(item.unit_price)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : null}
-            </Card>
-          )
-        })}
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{item.quantity_out}</td>
+                                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-lhms">{soldQty(item)}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{money(item.unit_price)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: lines.length })}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              {t('kams.rowsPerPage')}
+              <select
+                value={perPage}
+                onChange={(event) => {
+                  setPerPage(Number(event.target.value))
+                  setPage(1)
+                }}
+                className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+              >
+                {[10, 20, 50].map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
+              disabled={safePage <= 1}
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+            >
+              <ChevronLeft size={16} />
+              {t('common.prev')}
+            </button>
+            <span className="px-1 text-sm font-semibold">{safePage} / {lastPage}</span>
+            <button
+              type="button"
+              className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
+              disabled={safePage >= lastPage}
+              onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
+            >
+              {t('common.next')}
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
       </div>
-
-      {!loading && (data?.days || []).length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
 
       <PrintPreviewModal
         open={Boolean(printPreviewHtml)}

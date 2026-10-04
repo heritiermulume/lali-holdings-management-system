@@ -139,9 +139,9 @@ export function KamsRecruitmentDashboard() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex items-center justify-between gap-3 sm:justify-start">
-          <p className="shrink-0 text-xs text-muted whitespace-nowrap">
+      <div className="flex w-full flex-col items-end gap-3">
+        <div className="flex w-full items-center gap-3">
+          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
             {t('kams.periodRange', {
               start: parseDate(data.range.from).toLocaleDateString(locale),
               end: parseDate(data.range.to).toLocaleDateString(locale),
@@ -150,15 +150,15 @@ export function KamsRecruitmentDashboard() {
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}
-            className={cn('shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+            className={cn('ml-auto shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
           >
             {filtersOpen ? t('common.hide') : t('common.filter')}
           </button>
         </div>
-        {filtersOpen ? <div className="flex flex-col gap-3 sm:items-end">
+        {filtersOpen ? <div className="flex w-full flex-col items-end gap-3">
           {data.can_filter_offices ? (
             <Select
-              className="w-full min-w-0 sm:w-72"
+              className="w-full max-w-xs min-w-0 sm:w-72"
               label={t('kams.filterOffice')}
               value={officeId}
               onChange={(e) => setOfficeId(e.target.value)}
@@ -169,8 +169,8 @@ export function KamsRecruitmentDashboard() {
               ))}
             </Select>
           ) : null}
-          <div className="flex flex-col gap-2 sm:items-end">
-            <div className="flex w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+          <div className="flex max-w-full flex-col items-end gap-2">
+            <div className="flex max-w-full overflow-x-auto rounded-full bg-white p-1">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
                   key={item}

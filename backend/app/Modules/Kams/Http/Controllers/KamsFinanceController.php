@@ -113,7 +113,7 @@ class KamsFinanceController extends Controller
         abort_unless($this->ownsAccount($request, $member), 403);
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
         ]);
         $entry = $treasury->requestDeposit($member, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id);
         AuditLogger::record('create', $entry, [], $data);
@@ -127,7 +127,7 @@ class KamsFinanceController extends Controller
         abort_unless($this->ownsAccount($request, $member), 403);
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
         ]);
         $entry = $treasury->requestWithdrawal($member, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id);
         AuditLogger::record('create', $entry, [], $data);
@@ -142,7 +142,7 @@ class KamsFinanceController extends Controller
         $this->assertCashierCanAccessMember($request, $member);
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
             'member_id' => ['required', 'integer', 'exists:kams_members,id'],
         ]);
         $account = $treasury->accountForMember($member);
@@ -159,7 +159,7 @@ class KamsFinanceController extends Controller
         $this->assertCashierCanAccessMember($request, $member);
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
             'member_id' => ['required', 'integer', 'exists:kams_members,id'],
         ]);
         $account = $treasury->accountForMember($member);
@@ -202,7 +202,7 @@ class KamsFinanceController extends Controller
         $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.deposit');
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
             'member_id' => ['nullable', 'integer', 'exists:kams_members,id'],
         ]);
         $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);
@@ -217,7 +217,7 @@ class KamsFinanceController extends Controller
         $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.withdraw');
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
             'member_id' => ['nullable', 'integer', 'exists:kams_members,id'],
         ]);
         $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);
@@ -232,7 +232,7 @@ class KamsFinanceController extends Controller
         $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.expense');
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:500'],
+            'notes' => ['required', 'string', 'max:500'],
             'member_id' => ['nullable', 'integer', 'exists:kams_members,id'],
         ]);
         $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);

@@ -276,7 +276,7 @@ class SavingsLedger
             return;
         }
         $account = $this->account($member, $kind);
-        KamsSavingsEntry::query()->create([
+        $entry = KamsSavingsEntry::query()->create([
             'company_id' => $member->company_id,
             'account_id' => $account->id,
             'member_id' => $member->id,
@@ -294,6 +294,8 @@ class SavingsLedger
             ->where('status', 'posted')
             ->sum('amount'), 2);
         $account->save();
+        $this->recordBalanceAfter($entry);
+        app(TreasuryLedger::class)->mirrorSavingsToOffice($entry->fresh());
     }
 
     public function refreshBalance(KamsSavingsAccount $account): KamsSavingsAccount
@@ -325,6 +327,7 @@ class SavingsLedger
             ->with(['createdBy:id,name', 'requestedBy:id,name', 'performedBy:id,name', 'member:id,full_name,member_code,user_id', 'source'])
             ->where('member_id', $member->id)
             ->latest()
+            ->orderByDesc('id')
             ->limit(500)
             ->get();
         $mapped = $entries->map(fn (KamsSavingsEntry $entry) => $this->serializeEntry($entry))->values();
@@ -345,12 +348,16 @@ class SavingsLedger
             ->where('member_id', $member->id)
             ->when($linkedTreasuryIds !== [], fn ($q) => $q->whereNotIn('id', $linkedTreasuryIds))
             ->latest()
+            ->orderByDesc('id')
             ->limit(500)
             ->get()
             ->map(fn (KamsTreasuryEntry $entry) => $this->serializeTreasuryMirror($entry));
         $mapped = $mapped
             ->concat($orphans)
-            ->sortByDesc(fn (array $row) => $row['created_at'] ?? $row['occurred_on'] ?? '')
+            ->sortBy([
+                ['created_at', 'desc'],
+                ['id', 'desc'],
+            ])
             ->values()
             ->take(500)
             ->values();
@@ -488,6 +495,11 @@ class SavingsLedger
             'decision_notes' => $decisionNotes !== '' ? $decisionNotes : null,
         ])->save();
         $this->refreshBalance($entry->account);
+        $fresh = $entry->fresh();
+        $this->recordBalanceAfter($fresh);
+        if ($fresh->source_type !== KamsTreasuryEntry::class) {
+            app(TreasuryLedger::class)->mirrorSavingsToOffice($fresh, $userId);
+        }
 
         return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source']);
     }
@@ -501,6 +513,7 @@ class SavingsLedger
             'performed_by' => $userId,
             'decision_notes' => $decisionNotes !== '' ? $decisionNotes : null,
         ])->save();
+        $this->recordBalanceAfter($entry);
 
         return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source']);
     }
@@ -593,9 +606,40 @@ class SavingsLedger
         ]);
         if ($status === 'posted') {
             $this->refreshBalance($account);
+            $this->recordBalanceAfter($entry);
+            if (! $source instanceof KamsTreasuryEntry) {
+                app(TreasuryLedger::class)->mirrorSavingsToOffice($entry->fresh(), $userId);
+            }
         }
 
         return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source']);
+    }
+
+    private function recordBalanceAfter(?KamsSavingsEntry $entry): void
+    {
+        if (! $entry || ! in_array($entry->status ?: 'posted', ['posted', 'rejected'], true)) {
+            return;
+        }
+
+        $posted = KamsSavingsEntry::query()
+            ->where('member_id', $entry->member_id)
+            ->where('status', 'posted');
+        $this->limitToPriorEntries($posted, $entry, $entry->status !== 'rejected');
+        $entry->forceFill(['balance_after' => round((float) $posted->sum('amount'), 2)])->save();
+    }
+
+    private function limitToPriorEntries($query, KamsSavingsEntry $entry, bool $includeSelf): void
+    {
+        $second = $entry->created_at?->format('Y-m-d H:i:s');
+        $nextSecond = $entry->created_at?->copy()->addSecond()->format('Y-m-d H:i:s');
+        $query->where(function ($query) use ($entry, $second, $nextSecond, $includeSelf) {
+            $query->where('created_at', '<', $second)
+                ->orWhere(function ($query) use ($entry, $second, $nextSecond, $includeSelf) {
+                    $query->where('created_at', '>=', $second)
+                        ->where('created_at', '<', $nextSecond)
+                        ->where('id', $includeSelf ? '<=' : '<', $entry->id);
+                });
+        });
     }
 
     /**
@@ -611,6 +655,7 @@ class SavingsLedger
             'type' => $entry->type,
             'status' => $entry->status ?: 'posted',
             'amount' => round((float) $entry->amount, 2),
+            'balance_after' => $entry->balance_after !== null ? round((float) $entry->balance_after, 2) : null,
             'occurred_on' => $entry->occurred_on?->toDateString(),
             'created_at' => $entry->created_at?->toIso8601String(),
             'updated_at' => $entry->updated_at?->toIso8601String(),
@@ -646,6 +691,7 @@ class SavingsLedger
             'type' => $entry->type,
             'status' => $entry->status ?: 'posted',
             'amount' => round((float) $entry->amount, 2),
+            'balance_after' => $entry->balance_after !== null ? round((float) $entry->balance_after, 2) : null,
             'occurred_on' => $entry->occurred_on?->toDateString(),
             'created_at' => $entry->created_at?->toIso8601String(),
             'updated_at' => $entry->updated_at?->toIso8601String(),

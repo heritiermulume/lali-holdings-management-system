@@ -19,7 +19,7 @@ import { GroupSettingsPage, ModuleSettingsPage, SettingsHome, SettingsWorkspace 
 import { FinanceSettingsPage } from './pages/settings/FinanceSettingsPage'
 import { RolesSettingsPage } from './pages/settings/RolesSettingsPage'
 import { KamsEntry } from './pages/kams/KamsPages'
-import { KamsAgents, KamsCandidates, KamsMembersWorkspace, KamsRecruitmentDashboard } from './pages/kams/KamsRecruitmentPages'
+import { KamsAgents, KamsCandidates, KamsMembersWorkspace, KamsRecruitmentDashboard, KamsRecruitmentReports, KamsRecruitmentWorkspace } from './pages/kams/KamsRecruitmentPages'
 import { KamsClientsList, KamsClientsWorkspace, KamsSuppliersList } from './pages/kams/KamsClientsPage'
 import { KamsAssignments, KamsAssignmentsWorkspace } from './pages/kams/KamsStockFlows'
 import { KamsAssignmentReports } from './pages/kams/KamsAssignmentReports'
@@ -84,7 +84,6 @@ export default function App() {
             <Route path="organization" element={<RequirePermission perm="organization.view"><OrganizationPage /></RequirePermission>} />
             <Route path="companies" element={<RequirePermission perm="companies.view"><CompaniesPage /></RequirePermission>} />
             <Route path="finance" element={<RequirePermission perm="settings.manage"><FinanceSettingsPage /></RequirePermission>} />
-            <Route path="notifications" element={<RequirePermission perm="settings.manage"><GroupSettingsPage group="notifications" /></RequirePermission>} />
             <Route path="security" element={<RequirePermission perm="settings.manage"><GroupSettingsPage group="security" /></RequirePermission>} />
             <Route path="roles" element={<RequirePermission perm="roles.manage"><RolesSettingsPage /></RequirePermission>} />
             <Route path="modules/:slug" element={<RequirePermission perm="settings.manage"><ModuleSettingsPage /></RequirePermission>} />
@@ -95,7 +94,10 @@ export default function App() {
           <Route index element={<KamsEntry />} />
           <Route path="members" element={<RequirePermission anyPerm={['kams.members.view', 'kams.recruitment.view']}><KamsMembersWorkspace /></RequirePermission>}>
             <Route index element={<KamsRecruitmentDashboard />} />
-            <Route path="recruitment" element={<RequirePermission perm="kams.recruitment.view"><KamsCandidates /></RequirePermission>} />
+            <Route path="recruitment" element={<RequirePermission perm="kams.recruitment.view"><KamsRecruitmentWorkspace /></RequirePermission>}>
+              <Route index element={<KamsCandidates />} />
+              <Route path="reports" element={<KamsRecruitmentReports />} />
+            </Route>
             <Route path="agents" element={<RequirePermission perm="kams.members.view"><KamsAgents /></RequirePermission>} />
           </Route>
           <Route path="recruitment" element={<Navigate to="/modules/kams/members" replace />} />
@@ -118,6 +120,7 @@ export default function App() {
             <Route path="assignments" element={<RequirePermission perm="kams.products.view"><KamsAssignmentsWorkspace /></RequirePermission>}>
               <Route index element={<KamsAssignments />} />
               <Route path="reports" element={<KamsAssignmentReports />} />
+              <Route path="reports/:date" element={<KamsAssignmentReports />} />
               <Route path="journal" element={<KamsStockJournal />} />
             </Route>
             <Route path="sales" element={<Navigate to="/modules/kams/stock/assignments" replace />} />

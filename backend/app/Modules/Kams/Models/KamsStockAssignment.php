@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 #[Fillable([
     'company_id', 'reference', 'office_id', 'depot_id', 'member_id', 'status',
     'assigned_at', 'settled_at', 'expected_amount', 'collected_amount', 'profit_amount', 'loss_amount',
-    'notes', 'created_by',
+    'deposit_surplus', 'notes', 'created_by', 'closed_by', 'day_closed_by',
 ])]
 class KamsStockAssignment extends Model
 {
@@ -25,6 +25,7 @@ class KamsStockAssignment extends Model
             'collected_amount' => 'float',
             'profit_amount' => 'float',
             'loss_amount' => 'float',
+            'deposit_surplus' => 'boolean',
         ];
     }
 
@@ -51,5 +52,15 @@ class KamsStockAssignment extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function closedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'closed_by');
+    }
+
+    public function dayClosedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'day_closed_by');
     }
 }

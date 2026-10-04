@@ -29,12 +29,6 @@ class SettingsCatalog
                 'reporting_currency' => ['type' => 'string', 'default' => 'USD'],
                 'multi_currency' => ['type' => 'boolean', 'default' => '1'],
             ],
-            'notifications' => [
-                'email_enabled' => ['type' => 'boolean', 'default' => '0'],
-                'sms_enabled' => ['type' => 'boolean', 'default' => '0'],
-                'inapp_enabled' => ['type' => 'boolean', 'default' => '1'],
-                'digest_hour' => ['type' => 'number', 'default' => '8'],
-            ],
             'security' => [
                 'password_min_length' => ['type' => 'number', 'default' => '10'],
                 'password_require_mixed' => ['type' => 'boolean', 'default' => '1'],

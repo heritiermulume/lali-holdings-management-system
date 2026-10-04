@@ -9,7 +9,6 @@ import {
   moduleFromPath,
   navItemDescription,
   navItemLabel,
-  settingsModuleSlug,
   settingsNavItems,
 } from '../../modules/registry'
 
@@ -20,16 +19,14 @@ export function ModuleWorkspaceLayout() {
   const module = moduleFromPath(pathname)
   const isAdminSettings = pathname.startsWith('/administration/settings')
   const navItems = isAdminSettings || module?.slug === 'settings'
-    ? settingsNavItems(modules, i18n.language)
+    ? settingsNavItems()
     : (module?.items ?? [])
-  const item = activeNavItem(pathname, navItems)
+  const companiesItem = pathname.startsWith('/administration/settings/modules/')
+    ? navItems.find((entry) => entry.to === '/administration/settings/companies')
+    : null
+  const item = companiesItem ?? activeNavItem(pathname, navItems)
   const businessSlug = dashboardBusinessSlug(pathname)
-  const settingsSlug = settingsModuleSlug(pathname)
-  const business = businessSlug
-    ? modules.find((entry) => entry.slug === businessSlug)
-    : settingsSlug
-      ? modules.find((entry) => entry.slug === settingsSlug)
-      : null
+  const business = businessSlug ? modules.find((entry) => entry.slug === businessSlug) : null
   const title = business
     ? (i18n.language.startsWith('fr') ? business.name_fr : business.name)
     : item
@@ -38,7 +35,7 @@ export function ModuleWorkspaceLayout() {
         ? t(module.titleKey)
         : ''
   const subtitle = business
-    ? (i18n.language.startsWith('fr') ? business.description_fr : business.description) || (settingsSlug ? t('settings.moduleHint') : t('groupDash.moduleHint'))
+    ? (i18n.language.startsWith('fr') ? business.description_fr : business.description) || t('groupDash.moduleHint')
     : item
       ? navItemDescription(item, t)
       : undefined

@@ -2,7 +2,7 @@ import { Camera, ChevronDown, History, Home, Info, Package, PackagePlus, Pencil,
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
-import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
@@ -440,14 +440,13 @@ export function KamsWarehouses() {
                       {row.code || '—'} · {i18n.language.startsWith('fr') ? row.province?.name_fr || row.province?.name : row.province?.name || t('kams.noRegion')}
                     </div>
                     <div className="mt-1 text-xs text-muted">
-                      {warehouseProducts.length} {t('kams.products').toLowerCase()}
+                      {t('kams.products')}: {warehouseProducts.length}
+                      {' · '}
+                      {t('kams.quantity')}: {locationUnits(row)}
                     </div>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge tone={row.status === 'active' ? 'green' : 'slate'}>{locationUnits(row)}</Badge>
-                  <ChevronDown size={18} className={cn('text-muted transition', expanded ? 'rotate-0' : '-rotate-90')} />
-                </div>
+                <ChevronDown size={18} className={cn('mt-1 shrink-0 text-muted transition', expanded ? 'rotate-0' : '-rotate-90')} />
               </button>
               {expanded ? (
                 <div className="border-t border-line bg-surface px-5 py-4">
@@ -456,22 +455,25 @@ export function KamsWarehouses() {
                   ) : (
                     <div className="space-y-3">
                       {warehouseProducts.map((item) => (
-                        <div key={item.id} className="flex items-center gap-3 text-sm">
+                        <div key={item.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 text-sm sm:flex sm:items-center sm:gap-3">
                           <ProductThumb name={item.product?.name || ''} url={item.product?.image_url} />
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 sm:flex-1">
                             <div className="text-base font-bold">
                               {item.product?.name}
                               {item.condition && item.condition !== 'available' ? ` (${item.condition})` : ''}
                             </div>
                             {item.product ? (
-                              <div className="mt-0.5 text-xs text-muted">
-                                {t('kams.fieldPrice')} {money(item.product.field_price || item.product.price)}
-                                {item.product.sku ? ` · ${item.product.sku}` : ''}
+                              <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
+                                <span>
+                                  {item.product.sku ? `${item.product.sku} · ` : ''}
+                                  {t('kams.price')} {money(item.product.field_price || item.product.price)}
+                                </span>
+                                <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
                               </div>
                             ) : null}
                           </div>
-                          <span className="shrink-0 font-semibold">{item.quantity}</span>
-                          <div className="flex shrink-0 items-center gap-1">
+                          <span className="hidden shrink-0 font-semibold sm:inline">{item.quantity}</span>
+                          <div className="col-start-2 flex flex-wrap items-center gap-1 sm:col-auto sm:shrink-0">
                             {lookups?.can_manage_warehouses && hasPermission('kams.products.update') && item.product ? (
                               <button
                                 type="button"
@@ -1174,12 +1176,13 @@ export function KamsDepots() {
                     <div className="font-semibold">{row.name}</div>
                     <div className="text-sm text-muted">{row.office?.name || '—'} · {row.code || '—'}</div>
                     <div className="mt-1 text-xs text-muted">
-                      {products.length} {t('kams.products').toLowerCase()}
+                      {t('kams.products')}: {products.length}
+                      {' · '}
+                      {t('kams.quantity')}: {locationUnits(row)}
                     </div>
                   </div>
                 </button>
                 <div className="flex shrink-0 items-center gap-1">
-                  <Badge tone={row.status === 'active' ? 'green' : 'slate'}>{locationUnits(row)}</Badge>
                   {hasPermission('kams.products.update') ? (
                     <button
                       type="button"
@@ -1209,22 +1212,25 @@ export function KamsDepots() {
                   ) : (
                     <div className="space-y-3">
                       {products.map((item) => (
-                        <div key={item.id} className="flex items-center gap-3 text-sm">
+                        <div key={item.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 text-sm sm:flex sm:items-center sm:gap-3">
                           <ProductThumb name={item.product?.name || ''} url={item.product?.image_url} />
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 sm:flex-1">
                             <div className="text-base font-bold">
                               {item.product?.name}
                               {item.condition && item.condition !== 'available' ? ` (${item.condition})` : ''}
                             </div>
                             {item.product ? (
-                              <div className="mt-0.5 text-xs text-muted">
-                                {t('kams.fieldPrice')} {money(item.product.field_price || item.product.price)}
-                                {item.product.sku ? ` · ${item.product.sku}` : ''}
+                              <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
+                                <span>
+                                  {item.product.sku ? `${item.product.sku} · ` : ''}
+                                  {t('kams.price')} {money(item.product.field_price || item.product.price)}
+                                </span>
+                                <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
                               </div>
                             ) : null}
                           </div>
-                          <span className="shrink-0 font-semibold">{item.quantity}</span>
-                          <div className="flex shrink-0 items-center gap-1">
+                          <span className="hidden shrink-0 font-semibold sm:inline">{item.quantity}</span>
+                          <div className="col-start-2 flex flex-wrap items-center gap-1 sm:col-auto sm:shrink-0">
                             <button
                               type="button"
                               aria-label={t('kams.productInfo')}
@@ -1235,50 +1241,50 @@ export function KamsDepots() {
                               <Info size={16} />
                             </button>
                             {hasPermission('kams.products.update') ? (
-                              <>
-                                <button
-                                  type="button"
-                                  aria-label={t('kams.supplyStock')}
-                                  title={t('kams.supplyStock')}
-                                  className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
-                                  onClick={() => {
-                                    if (!item.product) return
-                                    setSupplyTarget({ depot: row, product: item.product })
-                                    setSupplyForm({
-                                      warehouse_id: lookups?.warehouses[0] ? String(lookups.warehouses[0].id) : '',
-                                      quantity: '1',
-                                    })
-                                    setSupplyError('')
-                                  }}
-                                >
-                                  <Truck size={16} />
-                                </button>
-                                <button
-                                  type="button"
-                                  aria-label={t('kams.adjustStock')}
-                                  title={t('kams.adjustStock')}
-                                  className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
-                                  onClick={() => {
-                                    if (!item.product) return
-                                    setAdjustTarget({ location: row, product: item.product, quantity: item.quantity })
-                                    setAdjustForm({ type: 'defective', quantity: '1', reason: '' })
-                                    setAdjustError('')
-                                  }}
-                                >
-                                  <Scale size={16} />
-                                </button>
-                                {item.product && item.quantity > 0 ? (
-                                  <button
-                                    type="button"
-                                    aria-label={t('kams.removeFromDepot')}
-                                    title={t('kams.removeFromDepot')}
-                                    className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white"
-                                    onClick={() => item.product && openRemove(row, item.product, item.quantity)}
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
-                                ) : null}
-                              </>
+                              <button
+                                type="button"
+                                aria-label={t('kams.supplyStock')}
+                                title={t('kams.supplyStock')}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
+                                onClick={() => {
+                                  if (!item.product) return
+                                  setSupplyTarget({ depot: row, product: item.product })
+                                  setSupplyForm({
+                                    warehouse_id: lookups?.warehouses[0] ? String(lookups.warehouses[0].id) : '',
+                                    quantity: '1',
+                                  })
+                                  setSupplyError('')
+                                }}
+                              >
+                                <PackagePlus size={16} />
+                              </button>
+                            ) : null}
+                            {item.product && item.quantity > 0 && hasPermission('kams.products.update') ? (
+                              <button
+                                type="button"
+                                aria-label={t('kams.removeFromDepot')}
+                                title={t('kams.removeFromDepot')}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
+                                onClick={() => item.product && openRemove(row, item.product, item.quantity)}
+                              >
+                                <Truck size={16} />
+                              </button>
+                            ) : null}
+                            {hasPermission('kams.products.update') ? (
+                              <button
+                                type="button"
+                                aria-label={t('kams.adjustStock')}
+                                title={t('kams.adjustStock')}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
+                                onClick={() => {
+                                  if (!item.product) return
+                                  setAdjustTarget({ location: row, product: item.product, quantity: item.quantity })
+                                  setAdjustForm({ type: 'defective', quantity: '1', reason: '' })
+                                  setAdjustError('')
+                                }}
+                              >
+                                <Scale size={16} />
+                              </button>
                             ) : null}
                           </div>
                         </div>

@@ -112,7 +112,7 @@ export function KamsFinanceWorkspace() {
         tabs={[
           { to: '/modules/kams/finance', end: true, label: t('nav.dashboard'), show: hasPermission('kams.finance.dashboard.view') },
           { to: '/modules/kams/finance/account', end: true, label: t('kams.myAccount'), show: hasPermission('kams.finance.account.view') },
-          { to: '/modules/kams/finance/accounts', end: true, label: t('kams.memberAccounts'), show: hasPermission('kams.finance.dashboard.view') },
+          { to: '/modules/kams/finance/accounts', end: true, label: t('kams.agentAccounts'), show: hasPermission('kams.finance.dashboard.view') },
           { to: '/modules/kams/finance/company', end: true, label: t('kams.companyAccount'), show: hasPermission('kams.finance.company.view') },
         ]}
       />

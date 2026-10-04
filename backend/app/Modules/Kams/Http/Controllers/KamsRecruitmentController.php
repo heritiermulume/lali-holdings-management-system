@@ -147,11 +147,19 @@ class KamsRecruitmentController extends Controller
 
     public function candidates(Request $request): JsonResponse
     {
+        $report = $request->boolean('report');
         $query = $this->scopedCandidates($request)
-            ->with(['office', 'sponsor', 'guardian', 'member', 'latestInterview', 'latestObservationDay'])
-            ->whereNull('member_id')
-            ->whereNotIn('status', ['registered', 'approved'])
-            ->latest('applied_at');
+            ->with(['office', 'sponsor', 'guardian', 'member', 'latestInterview', 'latestObservationDay']);
+
+        if ($report) {
+            $query->where(function (Builder $q) {
+                $q->whereNotNull('member_id')->orWhereIn('status', ['registered', 'approved', 'rejected']);
+            })->latest('updated_at');
+        } else {
+            $query->whereNull('member_id')
+                ->whereNotIn('status', ['registered', 'approved', 'rejected'])
+                ->latest('applied_at');
+        }
 
         if ($status = $request->string('status')->toString()) {
             $query->where('status', $status);
@@ -159,10 +167,26 @@ class KamsRecruitmentController extends Controller
         $from = $request->string('from')->toString();
         $to = $request->string('to')->toString();
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to)) {
-            $query->whereBetween('applied_at', [$from.' 00:00:00', $to.' 23:59:59']);
+            if ($report) {
+                $start = $from.' 00:00:00';
+                $end = $to.' 23:59:59';
+                $query->where(function (Builder $q) use ($from, $to, $start, $end) {
+                    $q->whereHas('member', function (Builder $member) use ($from, $to) {
+                        $member->whereBetween('joined_on', [$from, $to]);
+                    })->orWhereHas('observationDays', function (Builder $day) use ($start, $end) {
+                        $day->where('decision', 'rejected')->whereBetween('recorded_at', [$start, $end]);
+                    })->orWhereHas('interviews', function (Builder $interview) use ($start, $end) {
+                        $interview->where('result', 'rejected')->whereBetween('recorded_at', [$start, $end]);
+                    });
+                });
+            } else {
+                $query->whereBetween('applied_at', [$from.' 00:00:00', $to.' 23:59:59']);
+            }
         }
 
-        return $this->paginated($query->paginate($request->integer('per_page', 20)));
+        $perPage = min(100, max(1, $request->integer('per_page', 20)));
+
+        return $this->paginated($query->paginate($perPage));
     }
 
     public function storeCandidate(Request $request): JsonResponse

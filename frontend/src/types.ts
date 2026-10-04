@@ -34,6 +34,12 @@ export type User = {
   primary_company?: { id: number; name: string } | null
   primary_office?: { id: number; name: string } | null
   last_login_at?: string | null
+  preferences?: {
+    decimal_places?: number
+    date_format?: string
+    timezone?: string
+    group_name?: string
+  } | null
   features?: Record<string, boolean>
   account?: {
     email?: string | null

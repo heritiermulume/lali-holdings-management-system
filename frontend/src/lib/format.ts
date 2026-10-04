@@ -1,23 +1,63 @@
-export function money(value?: number | null, currency = 'USD', digits = 2) {
+type DisplayPrefs = {
+  decimalPlaces: number
+  dateFormat: string
+  timeZone: string
+}
+
+const displayPrefs: DisplayPrefs = {
+  decimalPlaces: 2,
+  dateFormat: 'DD/MM/YYYY',
+  timeZone: 'Africa/Kinshasa',
+}
+
+export function applyDisplayPrefs(input?: {
+  decimal_places?: number | string | null
+  date_format?: string | null
+  timezone?: string | null
+} | null) {
+  const places = Number(input?.decimal_places)
+  if (Number.isFinite(places)) displayPrefs.decimalPlaces = Math.max(0, Math.min(6, Math.trunc(places)))
+  if (input?.date_format) displayPrefs.dateFormat = input.date_format
+  if (input?.timezone) displayPrefs.timeZone = input.timezone
+}
+
+function formatDay(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: displayPrefs.timeZone,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(date)
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ''
+  return displayPrefs.dateFormat
+    .replace('YYYY', pick('year'))
+    .replace('MM', pick('month'))
+    .replace('DD', pick('day'))
+}
+
+export function money(value?: number | null, currency = 'USD', digits?: number) {
+  const places = digits ?? displayPrefs.decimalPlaces
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
       currency,
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
+      minimumFractionDigits: places,
+      maximumFractionDigits: places,
     }).format(value ?? 0)
   } catch {
-    return `${(value ?? 0).toFixed(digits)} ${currency}`
+    return `${(value ?? 0).toFixed(places)} ${currency}`
   }
 }
 
 export function dateTime(date?: string | null, at?: string | null) {
-  const day = (date || at || '').slice(0, 10)
-  if (!day) return '—'
-  if (!at) return day
-  const parsed = new Date(at)
-  if (Number.isNaN(parsed.getTime())) return day
+  const source = at || date
+  if (!source) return '—'
+  const parsed = new Date(source.length <= 10 ? `${source.slice(0, 10)}T00:00:00` : source)
+  if (Number.isNaN(parsed.getTime())) return (date || at || '').slice(0, 10) || '—'
+  const day = formatDay(parsed)
+  if (!at || source.length <= 10) return day
   const time = new Intl.DateTimeFormat(undefined, {
+    timeZone: displayPrefs.timeZone,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,

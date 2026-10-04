@@ -1,6 +1,7 @@
-import { Ban, MapPin, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Ban, MapPin, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { SearchCombobox, type SearchComboboxItem } from '../components/SearchCombobox'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
@@ -93,7 +94,9 @@ function officeChildren(offices: Office[], parentId: number) {
 
 export function CompaniesPage() {
   const { t, i18n } = useTranslation()
+  const navigate = useNavigate()
   const { hasPermission } = useAuth()
+  const canSettings = hasPermission('settings.manage')
   const canCreate = hasPermission('organization.create')
   const canUpdate = hasPermission('organization.update')
   const canDelete = hasPermission('organization.delete')
@@ -290,6 +293,17 @@ export function CompaniesPage() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {canSettings && row.module ? (
+                  <button
+                    type="button"
+                    aria-label={t('settings.module')}
+                    title={t('settings.module')}
+                    className="grid h-10 w-10 place-items-center rounded-xl text-ink hover:bg-white"
+                    onClick={() => navigate(`/administration/settings/modules/${row.module?.slug}`)}
+                  >
+                    <Settings size={18} />
+                  </button>
+                ) : null}
                 <Badge>{row.is_active ? t('org.active') : t('org.inactive')}</Badge>
                 {row.module ? <Badge tone="slate">{t(`modules.${row.module.status}`)}</Badge> : null}
                 {canCreate ? (
@@ -438,6 +452,8 @@ export function CompaniesPage() {
             <option value="">—</option>
             {neighborhoods.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
           </Select>
+          <Field label={t('org.address')} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+          <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <Select label={t('org.parentOffice')} value={form.parent_office_id} onChange={(e) => setForm({ ...form, parent_office_id: e.target.value })}>
             <option value="">{t('org.noParentOffice')}</option>
             {parentOptions.filter((office) => office.id !== editing?.id).map((office) => (
@@ -460,9 +476,6 @@ export function CompaniesPage() {
             emptyLabel={t('common.empty')}
             onSelect={(item) => setForm({ ...form, manager_user_id: item?.id || '' })}
           />
-          <p className="text-xs text-muted">{t('org.officeActorsHint')}</p>
-          <Field label={t('org.address')} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
-          <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <Button className="w-full" disabled={saving || !form.name || !form.code || (company?.module?.slug === 'kams' && !editing && (!form.creator_user_id || !form.manager_user_id))} onClick={() => void saveOffice()}>
             {saving ? t('common.loading') : t('common.save')}
           </Button>

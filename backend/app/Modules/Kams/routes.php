@@ -30,6 +30,8 @@ Route::get('stock/assignments', [KamsStockController::class, 'assignments'])->mi
 Route::get('stock/assignments/report', [KamsStockController::class, 'assignmentsReport'])->middleware(EnsurePermission::class.':kams.products.view');
 Route::get('stock/journal', [KamsStockController::class, 'journal'])->middleware(EnsurePermission::class.':kams.products.view');
 Route::post('stock/assignments', [KamsStockController::class, 'storeAssignment'])->middleware(EnsurePermission::class.':kams.products.update');
+Route::post('stock/assignments/close-day', [KamsStockController::class, 'closeAssignmentDay'])->middleware(EnsurePermission::class.':kams.products.update');
+Route::post('stock/assignments/{assignment}/close', [KamsStockController::class, 'closeAssignment'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::post('stock/assignments/{assignment}/items', [KamsStockController::class, 'addAssignmentItems'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::put('stock/assignments/{assignment}', [KamsStockController::class, 'updateAssignment'])->middleware(EnsurePermission::class.':kams.products.update');
 Route::post('stock/assignments/{assignment}/settle', [KamsStockController::class, 'settleAssignment'])->middleware(EnsurePermission::class.':kams.products.update');

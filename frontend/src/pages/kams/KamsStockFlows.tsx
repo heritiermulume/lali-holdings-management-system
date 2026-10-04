@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Package, Search } from 'lucide-react'
+import { Info, Package, Search } from 'lucide-react'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { useAuth } from '../../context/AuthContext'
@@ -327,11 +327,95 @@ export function KamsAssignmentsWorkspace() {
       <KamsWorkspaceTabs
         tabs={[
           { to: '/modules/kams/stock/assignments', end: true, label: t('kams.assignments'), show: canView },
-          { to: '/modules/kams/stock/assignments/reports', end: true, label: t('kams.assignmentReports'), show: canView },
+          { to: '/modules/kams/stock/assignments/reports', label: t('kams.assignmentReports'), show: canView },
           { to: '/modules/kams/stock/assignments/journal', end: true, label: t('kams.stockJournal'), show: canView },
         ]}
       />
       <Outlet context={{ officeId } satisfies OperationsOfficeFilter} />
+    </div>
+  )
+}
+
+function AssignmentDetailLine({ label, value, emphasis = false }: { label: string; value: string; emphasis?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-line py-2.5 text-sm last:border-b-0">
+      <span className={emphasis ? 'font-semibold text-ink' : 'text-muted'}>{label}</span>
+      <span className={cn('max-w-[60%] text-right', emphasis ? 'text-base font-bold' : 'font-medium')}>{value}</span>
+    </div>
+  )
+}
+
+function AssignmentDetails({ assignment }: { assignment: Assignment }) {
+  const { t } = useTranslation()
+  const items = assignment.items || []
+  const closed = assignment.status === 'closed' || assignment.status === 'settled'
+  const totalValue = items.reduce((sum, item) => sum + Number(item.quantity_out || 0) * Number(item.unit_price || 0), 0)
+  const soldValue = items.reduce((sum, item) => {
+    const sold = Math.max(0, item.quantity_out - item.quantity_returned - item.quantity_lost)
+    return sum + sold * Number(item.unit_price || 0)
+  }, 0)
+  const surplus = Math.max(0, Number(assignment.collected_amount || 0) - Number(assignment.expected_amount || 0))
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <AssignmentDetailLine label={t('kams.agents')} value={assignment.member?.full_name || assignment.reference} />
+        {assignment.member?.phone ? <AssignmentDetailLine label={t('kams.phone')} value={assignment.member.phone} /> : null}
+        {assignment.office?.name ? <AssignmentDetailLine label={t('kams.filterOffice')} value={assignment.office.name} /> : null}
+        <AssignmentDetailLine label={t('kams.reference')} value={assignment.reference} />
+        <AssignmentDetailLine label={t('common.status')} value={t(`kams.status.${assignment.status}`, { defaultValue: assignment.status })} />
+      </div>
+      {items.length === 0 ? <p className="text-sm text-muted">{t('common.empty')}</p> : (
+        <div className="overflow-hidden rounded-2xl border border-line">
+          {items.map((item, index) => {
+            const sold = Math.max(0, item.quantity_out - item.quantity_returned - item.quantity_lost)
+            const lineValue = Number(item.quantity_out || 0) * Number(item.unit_price || 0)
+            const lineDue = sold * Number(item.unit_price || 0)
+            return (
+              <div key={item.id} className={cn('flex items-center gap-3 border-b border-line px-3 py-3 last:border-b-0', index % 2 === 0 ? 'bg-white' : 'bg-emerald-50')}>
+                <span className="grid h-11 w-11 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
+                  {item.product?.image_url ? (
+                    <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />
+                  ) : (
+                    <Package size={16} />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold">{item.product?.name || '—'}</div>
+                  <div className="truncate text-xs text-muted">
+                    {item.product?.sku ? `${item.product.sku} · ` : ''}
+                    {t('kams.quantity')}: {item.quantity_out} · {t('kams.unitPrice')}: {money(item.unit_price)}
+                  </div>
+                  {closed ? (
+                    <div className="truncate text-xs text-muted">
+                      {t('kams.sold')} {sold} · {t('kams.returned')} {item.quantity_returned} · {t('kams.lost')} {item.quantity_lost}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-sm font-medium tabular-nums">{money(closed ? lineDue : lineValue)}</div>
+                  {closed ? <div className="text-xs text-muted tabular-nums">{money(lineValue)}</div> : null}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <div>
+        <AssignmentDetailLine emphasis label={t('kams.totalQuantity')} value={String(items.reduce((sum, item) => sum + Number(item.quantity_out || 0), 0))} />
+        <AssignmentDetailLine emphasis label={t('kams.assignmentValue')} value={money(totalValue)} />
+        {closed ? (
+          <>
+            <AssignmentDetailLine label={t('kams.amountDue')} value={money(assignment.expected_amount || soldValue)} />
+            <AssignmentDetailLine label={t('kams.cashCollected')} value={money(assignment.collected_amount || 0)} />
+            {surplus > 0 ? <AssignmentDetailLine label={t('kams.surplus')} value={money(surplus)} /> : null}
+            <AssignmentDetailLine label={t('kams.profit')} value={money(assignment.profit_amount || 0)} />
+            <AssignmentDetailLine label={t('kams.loss')} value={money(assignment.loss_amount || 0)} />
+          </>
+        ) : (assignment.collected_amount || 0) > 0 ? (
+          <AssignmentDetailLine label={t('kams.prepaidCash')} value={money(assignment.collected_amount)} />
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -349,8 +433,10 @@ export function KamsAssignments() {
   const [adding, setAdding] = useState<Assignment | null>(null)
   const [editing, setEditing] = useState<Assignment | null>(null)
   const [editLines, setEditLines] = useState<Array<{ id: number; quantity: string }>>([])
-  const [expandedIds, setExpandedIds] = useState<number[]>([])
   const [settling, setSettling] = useState<Assignment | null>(null)
+  const [details, setDetails] = useState<Assignment | null>(null)
+  const [closeDayOpen, setCloseDayOpen] = useState(false)
+  const [dayCounts, setDayCounts] = useState({ open: 0, closed: 0 })
   const [surplusConfirm, setSurplusConfirm] = useState<{ amount: number } | null>(null)
   const [memberId, setMemberId] = useState('')
   const [lines, setLines] = useState<Line[]>([emptyLine()])
@@ -364,11 +450,17 @@ export function KamsAssignments() {
   const load = (term = query) =>
     api.get('/modules/kams/stock/assignments', {
       params: {
-        status: 'open',
+        status: 'open,closed',
         ...(officeId ? { office_id: officeId } : {}),
         ...(term ? { search: term } : {}),
       },
-    }).then((res) => setRows(res.data.data))
+    }).then((res) => {
+      setRows(res.data.data)
+      setDayCounts({
+        open: Number(res.data.meta?.open_count || 0),
+        closed: Number(res.data.meta?.closed_count || 0),
+      })
+    })
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 300)
@@ -395,7 +487,8 @@ export function KamsAssignments() {
       return sum + soldQty * Number(item.unit_price || 0)
     }, 0)
     const prepaidAmount = Number(settling.collected_amount || 0)
-    const collectedAmount = Number(collected || 0)
+    const extraAmount = Number(collected || 0)
+    const collectedAmount = prepaidAmount + extraAmount
     const surplus = Math.max(0, collectedAmount - amountDue)
     const shortfall = Math.max(0, amountDue - collectedAmount)
     return {
@@ -459,8 +552,8 @@ export function KamsAssignments() {
     setError('')
     setSaving(true)
     try {
-      await api.post(`/modules/kams/stock/assignments/${settling.id}/settle`, {
-        collected_amount: Number(collected),
+      await api.post(`/modules/kams/stock/assignments/${settling.id}/close`, {
+        collected_amount: settleTotals.collectedAmount,
         deposit_surplus: depositSurplus,
         items: (settling.items || []).map((item) => ({
           id: item.id,
@@ -528,10 +621,6 @@ export function KamsAssignments() {
     setError('')
   }
 
-  const toggleExpanded = (id: number) => {
-    setExpandedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
-  }
-
   const submitEdit = async (event: FormEvent) => {
     event.preventDefault()
     if (!editing) return
@@ -555,10 +644,29 @@ export function KamsAssignments() {
     }
   }
 
+  const canCloseDay = dayCounts.closed > 0 && dayCounts.open === 0
+
+  const submitCloseDay = async () => {
+    setError('')
+    setSaving(true)
+    try {
+      await api.post('/modules/kams/stock/assignments/close-day', {
+        ...(officeId ? { office_id: Number(officeId) } : {}),
+      })
+      setCloseDayOpen(false)
+      void load()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const openSettle = (row: Assignment) => {
     setSettling(row)
     setError('')
-    setCollected(row.collected_amount > 0 ? String(row.collected_amount) : '')
+    setCollected('')
     setReturns({})
     setSurplusConfirm(null)
   }
@@ -576,108 +684,65 @@ export function KamsAssignments() {
             className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted"
           />
         </div>
-        {hasPermission('kams.products.update') ? <Button className="shrink-0" onClick={() => { setError(''); setOpen(true) }}>{t('kams.newAssignment')}</Button> : null}
+        {hasPermission('kams.products.update') ? (
+          <>
+            <Button className="shrink-0" onClick={() => { setError(''); setOpen(true) }}>{t('kams.newAssignment')}</Button>
+            <span className="h-8 w-px shrink-0 bg-line" aria-hidden />
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              disabled={!canCloseDay || saving}
+              onClick={() => { setError(''); setCloseDayOpen(true) }}
+            >
+              {t('kams.closeTheDay')}
+            </Button>
+          </>
+        ) : null}
       </div>
-      <div className="grid gap-3">
+      <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {rows.map((row) => {
-          const expanded = expandedIds.includes(row.id)
           const items = row.items || []
           const itemCount = items.length
           const quantityTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0), 0)
           const valueTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0) * Number(item.unit_price || 0), 0)
           return (
-            <Card key={row.id} className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => toggleExpanded(row.id)}
-                aria-expanded={expanded}
-                className="flex w-full items-start justify-between gap-3 p-5 text-left hover:bg-surface/60"
-              >
+            <Card key={row.id} className={cn('flex h-48 flex-col overflow-hidden', row.status === 'closed' && 'border-emerald-200 bg-emerald-50')}>
+              <div className="flex min-h-0 flex-1 items-start justify-between gap-2 px-4 pb-2 pt-3">
                 <div className="min-w-0">
-                  <div className="font-semibold">
+                  <div className="truncate text-base font-semibold">
                     {row.member?.full_name || row.reference}
                   </div>
-                  {row.member?.phone || row.office?.name ? (
-                    <div className="text-sm text-muted">
-                      {[row.member?.phone, row.office?.name].filter(Boolean).join(' · ')}
-                    </div>
-                  ) : null}
-                  <div className="mt-1 text-xs text-muted">
-                    {t('kams.products')}: {itemCount}
-                    {' · '}
-                    {t('kams.quantity')}: {quantityTotal}
-                    {' · '}
-                    {t('kams.assignmentValue')}: {money(valueTotal)}
-                    {row.status === 'open' && row.collected_amount > 0
-                      ? ` · ${t('kams.prepaidCash')} ${money(row.collected_amount)}`
-                      : ''}
+                  <div className="truncate text-xs text-muted">
+                    {[row.member?.phone, row.office?.name].filter(Boolean).join(' · ') || '—'}
+                  </div>
+                  <div className="mt-1 space-y-0 text-xs leading-4 text-muted">
+                    <div className="truncate">{t('kams.products')}: {itemCount}</div>
+                    <div className="truncate">{t('kams.totalQuantity')}: {quantityTotal}</div>
+                    <div className="truncate">{t('kams.assignmentValue')}: {money(valueTotal)}</div>
+                    {row.status === 'open' && row.collected_amount > 0 ? (
+                      <div className="truncate">{t('kams.prepaidCash')}: {money(row.collected_amount)}</div>
+                    ) : null}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <Badge tone={row.status === 'open' ? 'amber' : 'green'}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
-                  <ChevronDown size={18} className={cn('text-muted transition', expanded ? 'rotate-0' : '-rotate-90')} />
+                  <Button
+                    variant="ghost"
+                    className={cn('!h-8 !min-h-0 w-8 !p-0', row.status === 'closed' ? 'bg-white text-lhms hover:bg-emerald-100' : 'bg-lhms/10 text-lhms hover:bg-lhms/20')}
+                    aria-label={t('kams.assignmentDetails')}
+                    onClick={() => setDetails(row)}
+                  >
+                    <Info size={20} strokeWidth={2.25} />
+                  </Button>
                 </div>
-              </button>
-              {expanded ? (
-                <div className="border-t border-line bg-surface px-5 py-4">
-                  {itemCount === 0 ? (
-                    <p className="text-sm text-muted">{t('common.empty')}</p>
-                  ) : (
-                    <div className={cn(
-                      'grid overflow-hidden rounded-xl border border-line bg-white shadow-sm',
-                      row.status === 'settled'
-                        ? 'grid-cols-[minmax(0,1fr)_minmax(6.5rem,max-content)_minmax(4.5rem,max-content)_minmax(4.5rem,max-content)]'
-                        : 'grid-cols-[minmax(0,1fr)_minmax(6.5rem,max-content)_minmax(4.5rem,max-content)]',
-                    )}>
-                      <div className="col-span-full grid grid-cols-subgrid items-end gap-x-3 border-b border-line bg-[#f4faf5] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                        <span>{t('kams.product')}</span>
-                        <span className="text-right">{t('kams.salePrice')}</span>
-                        <span className="text-right">{t('kams.quantity')}</span>
-                        {row.status === 'settled' ? <span className="text-right">{t('kams.sold')}</span> : null}
-                      </div>
-                      {(row.items || []).map((item) => {
-                        const sold = Math.max(0, item.quantity_out - item.quantity_returned - item.quantity_lost)
-                        return (
-                          <div
-                            key={item.id}
-                            className="col-span-full grid grid-cols-subgrid items-center gap-x-3 border-t border-line px-4 py-3 text-sm"
-                          >
-                            <div className="flex min-w-0 items-center gap-3">
-                              <span className="grid h-10 w-10 shrink-0 overflow-hidden place-items-center rounded-lg bg-lhms-soft text-lhms">
-                                {item.product?.image_url ? (
-                                  <img src={item.product.image_url} alt={item.product.name || ''} className="h-full w-full object-cover" />
-                                ) : (
-                                  <Package size={16} />
-                                )}
-                              </span>
-                              <div className="min-w-0">
-                                <div className="truncate font-semibold text-ink">{item.product?.name || '—'}</div>
-                                {item.product?.sku ? <div className="truncate text-xs text-muted">{item.product.sku}</div> : null}
-                              </div>
-                            </div>
-                            <span className="text-right tabular-nums text-muted">{money(item.unit_price)}</span>
-                            <span className="text-right font-semibold tabular-nums">{item.quantity_out}</span>
-                            {row.status === 'settled' ? <span className="text-right font-semibold tabular-nums text-lhms">{sold}</span> : null}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {row.status === 'settled' ? (
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.amountDue')}: <b>{money(row.expected_amount)}</b></div>
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.cashCollected')}: <b>{money(row.collected_amount)}</b></div>
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.profit')}: <b>{money(row.profit_amount)}</b></div>
-                      <div className="rounded-xl border border-line bg-white px-3 py-2">{t('kams.loss')}: <b>{money(row.loss_amount)}</b></div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {row.status === 'open' && hasPermission('kams.products.update') ? (
-                <div className="flex flex-wrap gap-2 border-t border-line px-5 py-4">
-                  <Button variant="secondary" onClick={() => openAdd(row)}>{t('common.add')}</Button>
-                  <Button variant="ghost" className="bg-lhms/15 text-lhms hover:bg-lhms/25" onClick={() => openEdit(row)}>{t('common.edit')}</Button>
-                  <Button onClick={() => openSettle(row)}>{t('kams.settleAssignment')}</Button>
+              </div>
+              {hasPermission('kams.products.update') && (row.status === 'open' || row.status === 'closed') ? (
+                <div className={cn('mt-auto flex flex-wrap gap-1.5 border-t px-4 py-2', row.status === 'closed' ? 'border-emerald-100' : 'border-line')}>
+                  <Button variant="secondary" className="!min-h-9 h-9 px-3" disabled={row.status === 'closed'} onClick={() => openAdd(row)}>{t('common.add')}</Button>
+                  <Button variant="ghost" className="!min-h-9 h-9 bg-lhms/15 px-3 text-lhms hover:bg-lhms/25" disabled={row.status === 'closed'} onClick={() => openEdit(row)}>{t('common.edit')}</Button>
+                  <Button className="!min-h-9 h-9 px-3" disabled={row.status === 'closed'} onClick={() => openSettle(row)}>
+                    {row.status === 'closed' ? t('kams.assignmentClosed') : t('kams.settleAssignment')}
+                  </Button>
                 </div>
               ) : null}
             </Card>
@@ -856,12 +921,26 @@ export function KamsAssignments() {
               </div>
             ) : null}
           </div>
-          <Field label={t('kams.cashCollected')} type="number" min="0" step="0.01" value={collected} onChange={(e) => setCollected(e.target.value)} required />
-          {settleTotals.prepaidAmount > 0 ? (
-            <p className="text-xs text-muted">{t('kams.cashCollectedIncludesPrepaid')}</p>
-          ) : null}
+          <Field label={t('kams.cashCollectedNow')} type="number" min="0" step="0.01" value={collected} onChange={(e) => setCollected(e.target.value)} />
           <Button type="submit" className="w-full" disabled={saving || settleTotals.shortfall > 0}>{t('kams.settleNow')}</Button>
         </form>
+      </Modal>
+
+      <Modal open={closeDayOpen} title={t('kams.closeTheDay')} onClose={() => { if (!saving) { setCloseDayOpen(false); setError('') } }}>
+        <div className="space-y-4">
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <p className="text-sm text-muted">{t('kams.closeTheDayBody', { count: dayCounts.closed })}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" variant="secondary" disabled={saving} onClick={() => setCloseDayOpen(false)}>{t('common.cancel')}</Button>
+            <Button type="button" disabled={saving || !canCloseDay} onClick={() => void submitCloseDay()}>{t('kams.closeTheDay')}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={Boolean(details)} title={t('kams.assignmentDetails')} onClose={() => setDetails(null)}>
+        {details ? (
+          <AssignmentDetails assignment={details} />
+        ) : null}
       </Modal>
 
       <Modal open={Boolean(surplusConfirm)} title={t('kams.surplusConfirmTitle')} onClose={() => { if (!saving) setSurplusConfirm(null) }}>

@@ -273,6 +273,14 @@ class KamsStockController extends Controller
     {
         $companyId = $this->kamsCompanyId($request);
         $search = trim($request->string('search')->toString());
+        $scoped = KamsStockAssignment::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
+            ->when($request->filled('office_id'), function ($q) use ($request) {
+                $officeId = (int) $request->integer('office_id');
+                abort_unless($request->user()->canAccessOffice($officeId), 403);
+                $q->where('office_id', $officeId);
+            });
         $query = KamsStockAssignment::query()
             ->with(['member:id,full_name,member_code,phone,office_id', 'office:id,name,code', 'depot:id,name', 'items.product:id,name,sku,price,cost,image_path'])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
@@ -282,7 +290,10 @@ class KamsStockController extends Controller
                 abort_unless($request->user()->canAccessOffice($officeId), 403);
                 $q->where('office_id', $officeId);
             })
-            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')->toString()))
+            ->when($request->filled('status'), function ($q) use ($request) {
+                $statuses = array_values(array_filter(array_map('trim', explode(',', $request->string('status')->toString()))));
+                $q->whereIn('status', $statuses !== [] ? $statuses : ['open']);
+            })
             ->when($search !== '', function ($q) use ($search) {
                 $q->where(function ($inner) use ($search) {
                     $inner->where('reference', 'like', "%{$search}%")
@@ -304,7 +315,10 @@ class KamsStockController extends Controller
             })
             ->latest();
 
-        return $this->paginated($query->paginate($request->integer('per_page', 50)));
+        return $this->paginated($query->paginate($request->integer('per_page', 50)), 'OK', [
+            'open_count' => (clone $scoped)->where('status', 'open')->count(),
+            'closed_count' => (clone $scoped)->where('status', 'closed')->count(),
+        ]);
     }
 
     public function assignmentsReport(Request $request): JsonResponse
@@ -344,6 +358,8 @@ class KamsStockController extends Controller
                 'member:id,full_name,member_code,phone,office_id',
                 'office:id,name,code',
                 'depot:id,name',
+                'closedBy:id,name',
+                'dayClosedBy:id,name',
                 'items.product:id,name,sku,price,cost,image_path',
             ])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
@@ -391,6 +407,7 @@ class KamsStockController extends Controller
                         'lost_units' => 0,
                     ],
                     'assignments' => [],
+                    'day_closed_by' => [],
                 ];
             }
 
@@ -424,6 +441,10 @@ class KamsStockController extends Controller
                 $days[$date]['totals']['agents'][$memberId] = true;
             }
             $days[$date]['assignments'][] = $assignment;
+            $closer = $assignment->dayClosedBy?->name;
+            if ($closer) {
+                $days[$date]['day_closed_by'][$closer] = true;
+            }
 
             $totals['assignments']++;
             $totals['expected_amount'] += $expected;
@@ -455,6 +476,7 @@ class KamsStockController extends Controller
 
         $dayRows = array_values(array_map(function (array $day) use ($normalize) {
             $day['totals'] = $normalize($day['totals']);
+            $day['day_closed_by'] = implode(', ', array_keys($day['day_closed_by'] ?? []));
 
             return $day;
         }, $days));
@@ -544,6 +566,53 @@ class KamsStockController extends Controller
         AuditLogger::record('update', $updated, $before, $data);
 
         return $this->ok($updated);
+    }
+
+    public function closeAssignment(Request $request, KamsStockAssignment $assignment): JsonResponse
+    {
+        $this->assertCompany($request, (int) $assignment->company_id);
+        abort_unless($request->user()->canAccessOffice((int) $assignment->office_id), 403);
+        $data = $request->validate([
+            'collected_amount' => ['required', 'numeric', 'min:0'],
+            'deposit_surplus' => ['sometimes', 'boolean'],
+            'notes' => ['nullable', 'string'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['required', 'exists:kams_stock_assignment_items,id'],
+            'items.*.quantity_returned' => ['required', 'integer', 'min:0'],
+            'items.*.quantity_lost' => ['required', 'integer', 'min:0'],
+        ]);
+        $before = $this->assignmentAuditSnapshot($assignment, true);
+        $closed = $this->inventory->close(
+            $assignment,
+            $data['items'],
+            (float) $data['collected_amount'],
+            $data['notes'] ?? null,
+            (bool) ($data['deposit_surplus'] ?? false),
+            $request->user()->id,
+        );
+        AuditLogger::record('update', $closed, $before, $data);
+
+        return $this->ok($closed);
+    }
+
+    public function closeAssignmentDay(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'office_id' => ['nullable', 'integer', 'exists:offices,id'],
+        ]);
+        $officeId = isset($data['office_id']) ? (int) $data['office_id'] : null;
+        if ($officeId) {
+            abort_unless($request->user()->canAccessOffice($officeId), 403);
+        }
+        $companyId = $this->kamsCompanyId($request);
+        $posted = $this->inventory->closeDay($companyId, $officeId, $request->user()->id, $request->user()->isOfficeScoped() ? ($request->user()->accessibleOfficeIds() ?: [0]) : null);
+        foreach ($posted as $settled) {
+            AuditLogger::record('update', $settled, ['status' => 'closed'], ['status' => 'settled']);
+        }
+
+        return $this->ok([
+            'settled_count' => count($posted),
+        ]);
     }
 
     public function settleAssignment(Request $request, KamsStockAssignment $assignment): JsonResponse

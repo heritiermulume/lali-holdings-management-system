@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 #[Fillable([
-    'company_id', 'account_id', 'office_id', 'member_id', 'related_entry_id', 'type', 'status', 'amount',
+    'company_id', 'account_id', 'office_id', 'member_id', 'related_entry_id', 'savings_entry_id', 'type', 'status', 'amount', 'balance_after',
     'occurred_on', 'notes', 'decision_notes', 'created_by', 'requested_by', 'performed_by',
 ])]
 class KamsTreasuryEntry extends Model
@@ -18,6 +18,7 @@ class KamsTreasuryEntry extends Model
     {
         return [
             'amount' => 'float',
+            'balance_after' => 'float',
             'occurred_on' => 'date:Y-m-d',
         ];
     }

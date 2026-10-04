@@ -7,6 +7,7 @@ use App\Core\Support\TaxSettings;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
+use App\Models\Setting;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
@@ -539,7 +540,7 @@ class KamsResourceController extends Controller
         $order = KamsOrder::query()->create([
             'company_id' => $data['company_id'],
             'client_id' => $data['client_id'],
-            'reference' => 'KA-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
+            'reference' => $this->orderReference(),
             'status' => $data['status'] ?? 'confirmed',
             'subtotal' => $taxed['subtotal'],
             'tax' => $taxed['tax'],
@@ -675,6 +676,13 @@ class KamsResourceController extends Controller
         }
 
         return $query;
+    }
+
+    private function orderReference(): string
+    {
+        $prefix = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', (string) Setting::getValue('kams', 'order_prefix', 'KA')));
+
+        return ($prefix !== '' ? $prefix : 'KA').'-'.now()->format('ymd').'-'.strtoupper(Str::random(4));
     }
 
     private function store(string $class, array $data, Request $request): JsonResponse

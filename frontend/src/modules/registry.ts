@@ -19,7 +19,6 @@ import {
   Wheat,
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import type { SystemModule } from '../types'
 
 export type ModuleNavItem = {
   to: string
@@ -123,26 +122,13 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
       { to: '/administration/settings/companies', labelKey: 'nav.companies', descriptionKey: 'settings.companiesHint', icon: Building2, perm: 'companies.view' },
       { to: '/administration/settings/roles', labelKey: 'nav.roles', descriptionKey: 'settings.rolesNavHint', icon: UserCog, perm: 'roles.manage' },
       { to: '/administration/settings/finance', labelKey: 'settings.finance', descriptionKey: 'settings.financeHint', icon: Landmark, perm: 'settings.manage' },
-      { to: '/administration/settings/notifications', labelKey: 'settings.notifications', descriptionKey: 'settings.notificationsHint', icon: Bell, perm: 'settings.manage' },
       { to: '/administration/settings/security', labelKey: 'settings.security', descriptionKey: 'settings.securityHint', icon: Shield, perm: 'settings.manage' },
     ],
   },
 }
 
-export function settingsNavItems(modules: SystemModule[], locale: string): ModuleNavItem[] {
-  const langFr = locale.startsWith('fr')
-  return [
-    ...moduleRegistry.settings.items,
-    ...modules.map((module) => ({
-      to: `/administration/settings/modules/${module.slug}`,
-      labelKey: 'settings.module',
-      descriptionKey: 'settings.moduleHint',
-      label: langFr ? module.name_fr : module.name,
-      description: (langFr ? module.description_fr : module.description) || undefined,
-      icon: businessModuleIcon(module.slug),
-      perm: 'settings.manage',
-    })),
-  ]
+export function settingsNavItems(): ModuleNavItem[] {
+  return moduleRegistry.settings.items
 }
 
 const platformPrefixes: Array<[string, string]> = [
@@ -160,11 +146,6 @@ export function moduleFromPath(pathname: string): ModuleDefinition | null {
   if (match) return moduleRegistry[match[1]] ?? null
   const found = platformPrefixes.find(([prefix]) => pathname === prefix || pathname.startsWith(`${prefix}/`))
   return found ? moduleRegistry[found[1]] ?? null : null
-}
-
-export function settingsModuleSlug(pathname: string): string | null {
-  const match = pathname.match(/^\/(?:administration\/)?settings\/modules\/([^/]+)$/)
-  return match?.[1] ?? null
 }
 
 const businessIcons: Record<string, LucideIcon> = {

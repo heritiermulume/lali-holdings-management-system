@@ -1,6 +1,7 @@
+import { ArrowLeft } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Navigate, Outlet, useParams } from 'react-router-dom'
+import { Link, Navigate, Outlet, useParams } from 'react-router-dom'
 import { Button, Card, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { SettingsMobileTabs } from '../../components/layout/SettingsMobileTabs'
@@ -38,6 +39,7 @@ export function SettingsForm({
   fields: SettingField[]
 }) {
   const { t } = useTranslation()
+  const { refresh } = useAuth()
   const [values, setValues] = useState<Record<string, string>>({})
   const [baseline, setBaseline] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -87,6 +89,7 @@ export function SettingsForm({
         })),
       })
       setBaseline({ ...values })
+      await refresh()
     } finally {
       setSaving(false)
     }
@@ -184,6 +187,28 @@ export function GroupSettingsPage({ group }: { group: SettingGroupId }) {
   return <SettingsForm group={group} fields={settingGroups[group]} />
 }
 
+function ModuleSettingsHeading({ slug }: { slug: string }) {
+  const { t, i18n } = useTranslation()
+  const { modules } = useSystemModules()
+  const module = modules.find((entry) => entry.slug === slug)
+  const name = module
+    ? (i18n.language.startsWith('fr') ? module.name_fr : module.name)
+    : slug
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+      <Link
+        to="/administration/settings/companies"
+        className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-lhms hover:underline"
+      >
+        <ArrowLeft size={16} />
+        {t('settings.backToCompanies')}
+      </Link>
+      <h2 className="text-xl font-bold text-ink">{t('settings.parameter')} - {name}</h2>
+    </div>
+  )
+}
+
 export function ModuleSettingsPage() {
   const { slug = '' } = useParams()
   const { t } = useTranslation()
@@ -191,20 +216,26 @@ export function ModuleSettingsPage() {
 
   if (fields.length === 0) {
     return (
-      <Card className="p-6">
-        <p className="text-sm text-muted">{t('settings.moduleEmpty')}</p>
-      </Card>
+      <div>
+        <ModuleSettingsHeading slug={slug} />
+        <Card className="p-6">
+          <p className="text-sm text-muted">{t('settings.moduleEmpty')}</p>
+        </Card>
+      </div>
     )
   }
 
-  return <SettingsForm group={slug} fields={fields} />
+  return (
+    <div>
+      <ModuleSettingsHeading slug={slug} />
+      <SettingsForm group={slug} fields={fields} />
+    </div>
+  )
 }
 
 export function SettingsWorkspace() {
-  const { i18n } = useTranslation()
   const { hasPermission } = useAuth()
-  const { modules } = useSystemModules()
-  const items = settingsNavItems(modules, i18n.language).filter((item) => (
+  const items = settingsNavItems().filter((item) => (
     item.anyPerm?.length ? item.anyPerm.some((perm) => hasPermission(perm)) : Boolean(!item.perm || hasPermission(item.perm))
   ))
 

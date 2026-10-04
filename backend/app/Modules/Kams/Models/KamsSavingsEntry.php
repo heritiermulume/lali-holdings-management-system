@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 #[Fillable([
-    'company_id', 'account_id', 'member_id', 'kind', 'type', 'status', 'amount',
+    'company_id', 'account_id', 'member_id', 'kind', 'type', 'status', 'amount', 'balance_after',
     'source_type', 'source_id', 'occurred_on', 'notes', 'decision_notes', 'created_by', 'requested_by', 'performed_by',
 ])]
 class KamsSavingsEntry extends Model
@@ -18,6 +18,7 @@ class KamsSavingsEntry extends Model
     {
         return [
             'amount' => 'float',
+            'balance_after' => 'float',
             'occurred_on' => 'date:Y-m-d',
         ];
     }

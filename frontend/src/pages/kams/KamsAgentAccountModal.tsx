@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Empty, Field, Modal } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
-import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { money, roleLabel } from '../../lib/format'
@@ -66,16 +65,15 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
   const [missing, setMissing] = useState(false)
   const [loading, setLoading] = useState(false)
   const [memberId, setMemberId] = useState<number | ''>('')
-  const [agents, setAgents] = useState<AgentOption[]>([])
-  const [canBrowseAgents, setCanBrowseAgents] = useState(false)
   const [action, setAction] = useState<Action | null>(null)
   const [amount, setAmount] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const transactionsRef = useRef<KamsAccountTransactionsHandle>(null)
+  const [hasPrintableRows, setHasPrintableRows] = useState(false)
 
-  const load = (id?: number | '', preferredId?: number | null) => {
+  const load = (id?: number | '') => {
     setLoading(true)
     setError('')
     const params: Record<string, number> = {}
@@ -85,32 +83,6 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
       .then((res) => {
         setMissing(!res.data.data)
         const next = (res.data.data || null) as Account | null
-        const nextAgents = next?.can_browse_agents ? (next.agents || []) : []
-        setCanBrowseAgents(Boolean(next?.can_browse_agents))
-        setAgents(nextAgents)
-
-        const preferred = preferredId || id || null
-        const preferredInList = preferred && nextAgents.some((agent) => agent.id === preferred)
-        const fallbackId = preferredInList
-          ? Number(preferred)
-          : (nextAgents[0]?.id || next?.member?.id || null)
-
-        if (fallbackId && next && fallbackId !== next.member.id) {
-          return api.get('/modules/kams/finance/account', {
-            params: {
-              member_id: fallbackId,
-              ...(officeId ? { office_id: officeId } : {}),
-            },
-          }).then((second) => {
-            const selected = (second.data.data || null) as Account | null
-            setMissing(!selected)
-            setData(selected)
-            setCanBrowseAgents(Boolean(selected?.can_browse_agents))
-            setAgents(selected?.can_browse_agents ? (selected.agents || nextAgents) : nextAgents)
-            if (selected?.member?.id) setMemberId(selected.member.id)
-          })
-        }
-
         setData(next)
         if (next?.member?.id) setMemberId(next.member.id)
       })
@@ -131,7 +103,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
       setNotes('')
       return
     }
-    load(initialMemberId || '', initialMemberId)
+    load(initialMemberId || '')
   }, [open, initialMemberId, officeId])
 
   const available = Math.max(0, (data?.balance ?? 0) - (data?.pending_withdrawals ?? 0))
@@ -157,7 +129,6 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
         ...(officeId ? { office_id: officeId } : {}),
       })
       setData(res.data.data)
-      setAgents(res.data.data?.can_browse_agents ? (res.data.data.agents || agents) : agents)
       setAction(null)
       setAmount('')
       setNotes('')
@@ -174,36 +145,10 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
     withdraw: t('kams.makeWithdrawal'),
   }
 
-  const agentItems: SearchComboboxItem[] = agents.map((agent) => ({
-    id: String(agent.id),
-    label: agent.full_name,
-    hint: [agent.member_code, agent.office?.name, agent.phone].filter(Boolean).join(' · '),
-  }))
-  const selectedAgent = agentItems.find((item) => item.id === String(memberId))
-    ?? agentItems.find((item) => item.id === String(data?.member.id))
-    ?? null
-
   return (
     <>
-      <Modal open={open} title={t('kams.agentAccounts')} onClose={onClose} size="lg">
+      <Modal open={open} title={t('kams.agentAccount')} onClose={onClose} size="lg">
         <div className="space-y-4">
-          {canBrowseAgents ? (
-            <SearchCombobox
-              label={t('kams.selectAgent')}
-              value={selectedAgent}
-              items={agentItems}
-              placeholder={t('kams.searchAgents')}
-              emptyLabel={t('common.empty')}
-              onSelect={(item) => {
-                if (!item) return
-                const next = Number(item.id)
-                if (!next || next === memberId) return
-                setMemberId(next)
-                load(next)
-              }}
-            />
-          ) : null}
-
           {loading ? <LoadingScreen /> : null}
           {!loading && missing ? <Empty>{t('kams.noAgentAccount')}</Empty> : null}
 
@@ -224,7 +169,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                   </Button>
                 ) : null}
                 {data.can_post_withdraw ? (
-                  <Button variant="secondary" onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>
+                  <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>
                     {t('kams.makeWithdrawal')}
                   </Button>
                 ) : null}
@@ -233,6 +178,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                   canPrint={hasPermission('kams.finance.account.print')}
                   onPreview={() => transactionsRef.current?.preview()}
                   onPrint={() => transactionsRef.current?.print()}
+                  disabled={!hasPrintableRows}
                 />
               </div>
 
@@ -254,6 +200,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                 subtitle={data.member.full_name}
                 entries={data.entries}
                 showMember={false}
+                onRowsChange={(count) => setHasPrintableRows(count > 0)}
               />
             </>
           ) : null}

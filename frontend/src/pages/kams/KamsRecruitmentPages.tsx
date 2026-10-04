@@ -1,6 +1,6 @@
-import { Camera, Check, CheckCircle2, Download, Eye, EyeOff, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { Camera, Check, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, EyeOff, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
@@ -404,6 +404,105 @@ function agentImportRow(row: Member): string[] {
   ]
 }
 
+export type RecruitmentListFilters = {
+  period: ListPeriod
+  from: string
+  to: string
+  officeId: string
+  offices: LookupOffice[]
+}
+
+export function KamsRecruitmentWorkspace() {
+  const { t, i18n } = useTranslation()
+  const { hasPermission } = useAuth()
+  const today = isoDate(new Date())
+  const [period, setPeriod] = useState<ListPeriod>('week')
+  const [from, setFrom] = useState(today)
+  const [to, setTo] = useState(today)
+  const [officeId, setOfficeId] = useState('')
+  const [offices, setOffices] = useState<LookupOffice[]>([])
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const range = period === 'custom' ? { from, to } : presetRange(period)
+  const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
+
+  useEffect(() => {
+    api.get('/modules/kams/recruitment/lookups').then((res) => {
+      setOffices(res.data.data.offices ?? [])
+    })
+  }, [])
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-col gap-3 sm:items-end">
+        <div className="flex w-full items-center justify-between gap-3">
+          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+            {range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : null}
+          </p>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('w-fit shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
+        </div>
+        {filtersOpen ? (
+          <div className="flex w-full flex-col gap-3 sm:items-end">
+            {offices.length > 1 ? (
+              <Select
+                className="w-full min-w-0 sm:w-72"
+                label={t('kams.filterOffice')}
+                value={officeId}
+                onChange={(e) => setOfficeId(e.target.value)}
+              >
+                <option value="">{t('kams.allOffices')}</option>
+                {offices.map((office) => (
+                  <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
+                ))}
+              </Select>
+            ) : null}
+            <div className="flex flex-col gap-2 sm:items-end">
+              <div className="flex w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+                {(['day', 'week', 'month'] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setPeriod(item)}
+                    className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                  >
+                    {t(`kams.period.${item}`)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPeriod('custom')}
+                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                >
+                  {t('dashboard.customPeriod')}
+                </button>
+              </div>
+              {period === 'custom' ? (
+                <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                  <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
+                  <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <KamsWorkspaceTabs
+        tabs={[
+          { to: '/modules/kams/members/recruitment', end: true, label: t('kams.applications'), show: hasPermission('kams.recruitment.view') },
+          { to: '/modules/kams/members/recruitment/reports', end: true, label: t('kams.recruitmentReports'), show: hasPermission('kams.recruitment.view') },
+        ]}
+      />
+      <Outlet context={{ period, from, to, officeId, offices } satisfies RecruitmentListFilters} />
+    </div>
+  )
+}
+
 export function KamsMembersWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
@@ -413,7 +512,7 @@ export function KamsMembersWorkspace() {
       <KamsWorkspaceTabs
         tabs={[
           { to: '/modules/kams/members', end: true, label: t('kams.statistics'), show: hasPermission('kams.members.view') },
-          { to: '/modules/kams/members/recruitment', end: true, label: t('kams.recruitment'), show: hasPermission('kams.recruitment.view') },
+          { to: '/modules/kams/members/recruitment', label: t('kams.recruitment'), show: hasPermission('kams.recruitment.view') },
           { to: '/modules/kams/members/agents', end: true, label: t('kams.agents'), show: hasPermission('kams.members.view') },
         ]}
       />
@@ -426,6 +525,8 @@ export function KamsAgents() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
   const [rows, setRows] = useState<Member[]>([])
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
   const [companies, setCompanies] = useState<LookupCompany[]>([])
   const [offices, setOffices] = useState<LookupOffice[]>([])
   const [users, setUsers] = useState<LookupUser[]>([])
@@ -483,6 +584,7 @@ export function KamsAgents() {
   }, [])
 
   useEffect(() => {
+    setPage(1)
     void load()
   }, [origin, officeId, query])
 
@@ -764,6 +866,10 @@ export function KamsAgents() {
   const selectedManager = memberOptions.find((item) => item.id === form.manager_member_id) || null
   const selectedAssistant = memberOptions.find((item) => item.id === form.assistant_manager_member_id) || null
   const selectedRoleSlug = roles.find((role) => String(role.id) === form.role_id)?.slug
+  const agentLastPage = Math.max(1, Math.ceil(rows.length / perPage) || 1)
+  const agentPage = Math.min(page, agentLastPage)
+  const agentRangeStart = rows.length === 0 ? 0 : (agentPage - 1) * perPage + 1
+  const agentRangeEnd = Math.min(agentPage * perPage, rows.length)
 
   return (
     <div>
@@ -901,22 +1007,43 @@ export function KamsAgents() {
         </div>
       </div>
 
-      <Card className="overflow-hidden p-0">
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
         {loading && rows.length === 0 ? <LoadingScreen /> : (
           <>
-        {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
-        {rows.map((row) => (
-          <div key={row.id} className="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-surface/70">
-            <PersonPhoto name={personName(row)} url={row.photo_url} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-semibold">{personName(row)}</div>
-              <div className="truncate text-xs text-muted sm:text-sm">
-                {row.member_code} · {row.office?.name || '—'} · {row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender)}
+        <div className="overflow-x-auto">
+          <table className="min-w-full table-fixed text-sm">
+            <thead className="bg-lhms text-white">
+              <tr className="text-left text-xs font-semibold tracking-wide">
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.agents')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.memberId')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.phoneWhatsapp')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.office')}</th>
+                <th className="w-28 bg-lhms px-4 py-1.5 font-semibold">{t('users.role')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.status')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                </tr>
+              ) : rows.slice((agentPage - 1) * perPage, agentPage * perPage).map((row, index) => (
+          <tr key={row.id} className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
+            <td className="px-4 py-1.5">
+              <div className="flex items-center gap-3">
+                <PersonPhoto name={personName(row)} url={row.photo_url} className="h-7 w-7 text-xs" />
+                <div className="min-w-0 font-semibold">{personName(row)}</div>
               </div>
-            </div>
-            <div className="hidden shrink-0 items-center gap-2 sm:flex">
+            </td>
+            <td className="px-4 py-1.5 whitespace-nowrap text-muted">{row.member_code}</td>
+            <td className="px-4 py-1.5 whitespace-nowrap">{row.phone || '—'}</td>
+            <td className="px-4 py-1.5 whitespace-nowrap">{row.office?.name || '—'}</td>
+            <td className="w-28 max-w-28 truncate px-4 py-1.5" title={row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender)}>{row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender)}</td>
+            <td className="px-4 py-1.5 whitespace-nowrap">
               <Badge tone={toneFor(row.status)}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
-            </div>
+            </td>
+            <td className="px-4 py-1.5">
             <div className="flex shrink-0 items-center gap-1">
               {hasPermission('kams.members.activate') ? (
               <button
@@ -925,7 +1052,7 @@ export function KamsAgents() {
                 aria-checked={Boolean(row.account?.is_active)}
                 aria-label={t('kams.accountAccess')}
                 title={row.account?.is_active ? t('kams.accountOn') : t('kams.accountOff')}
-                className="grid h-9 w-9 place-items-center rounded-lg hover:bg-white"
+                className="grid h-7 w-7 place-items-center rounded-lg hover:bg-white"
                 onClick={() => void toggleAccount(row)}
               >
                 <span className={cn('relative block h-4 w-7 rounded-full transition', row.account?.is_active ? 'bg-lhms' : 'bg-line')}>
@@ -933,35 +1060,61 @@ export function KamsAgents() {
                 </span>
               </button>
               ) : null}
-              <button type="button" aria-label={t('common.view')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white" onClick={() => void openView(row)}>
+              <button type="button" aria-label={t('common.view')} className="grid h-7 w-7 place-items-center rounded-lg text-ink hover:bg-white" onClick={() => void openView(row)}>
                 <Eye size={16} />
               </button>
               {hasPermission('kams.members.update') ? (
-              <button type="button" aria-label={t('common.edit')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white" onClick={() => openEdit(row)}>
+              <button type="button" aria-label={t('common.edit')} className="grid h-7 w-7 place-items-center rounded-lg text-ink hover:bg-white" onClick={() => openEdit(row)}>
                 <Pencil size={16} />
               </button>
               ) : null}
               {row.status === 'pending_verification' && hasPermission('kams.members.update') ? (
-                <button type="button" aria-label={t('kams.verify')} className="grid h-9 w-9 place-items-center rounded-lg text-lhms hover:bg-white" onClick={() => void api.put(`/modules/kams/members/${row.id}`, { status: 'verified', reason: 'Verified from agents list' }).then(() => load())}>
+                <button type="button" aria-label={t('kams.verify')} className="grid h-7 w-7 place-items-center rounded-lg text-lhms hover:bg-white" onClick={() => void api.put(`/modules/kams/members/${row.id}`, { status: 'verified', reason: 'Verified from agents list' }).then(() => load())}>
                   <CheckCircle2 size={16} />
                 </button>
               ) : null}
               {row.status === 'verified' && hasPermission('kams.members.activate') ? (
-                <button type="button" aria-label={t('kams.activate')} className="grid h-9 w-9 place-items-center rounded-lg text-lhms hover:bg-white" onClick={() => void api.put(`/modules/kams/members/${row.id}`, { status: 'active', reason: 'Activated from agents list' }).then(() => load())}>
+                <button type="button" aria-label={t('kams.activate')} className="grid h-7 w-7 place-items-center rounded-lg text-lhms hover:bg-white" onClick={() => void api.put(`/modules/kams/members/${row.id}`, { status: 'active', reason: 'Activated from agents list' }).then(() => load())}>
                   <Check size={16} />
                 </button>
               ) : null}
               {hasPermission('kams.members.delete') ? (
-              <button type="button" aria-label={t('common.delete')} className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white" onClick={() => setDeleting(row)}>
+              <button type="button" aria-label={t('common.delete')} className="grid h-7 w-7 place-items-center rounded-lg text-danger hover:bg-white" onClick={() => setDeleting(row)}>
                 <Trash2 size={16} />
               </button>
               ) : null}
             </div>
-          </div>
+            </td>
+          </tr>
         ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted">{t('kams.pageRange', { from: agentRangeStart, to: agentRangeEnd, total: rows.length })}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              {t('kams.rowsPerPage')}
+              <select
+                value={perPage}
+                onChange={(event) => { setPerPage(Number(event.target.value)); setPage(1) }}
+                className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+              >
+                {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', agentPage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={agentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+              <ChevronLeft size={16} /> {t('common.prev')}
+            </button>
+            <span className="px-1 text-sm font-semibold">{agentPage} / {agentLastPage}</span>
+            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', agentPage >= agentLastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={agentPage >= agentLastPage} onClick={() => setPage((value) => Math.min(agentLastPage, value + 1))}>
+              {t('common.next')} <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
           </>
         )}
-      </Card>
+      </div>
 
       <Modal open={formOpen} title={editing ? t('kams.editAgent') : t('kams.addAgent')} onClose={() => { setFormOpen(false); resetForm() }}>
         <form className="space-y-3" onSubmit={(e) => void submitAgent(e)}>
@@ -1100,7 +1253,7 @@ export function KamsAgents() {
             <div>{t('kams.phoneWhatsapp')}: <strong>{String(detail.phone || '—')}</strong></div>
             <div>{t('kams.joinedOn')}: {String(detail.joined_on || '—')}</div>
             {detail.migrated_at ? <div>{t('kams.migratedOn')}: {String(detail.migrated_at)}</div> : null}
-            <div>{t('users.role')}: <strong>{typeof detail.role === 'object' && detail.role ? roleLabel(t, detail.role as { slug?: string; name?: string }, typeof detail.gender === 'string' ? detail.gender : null) : '—'}</strong></div>
+            <div>{t('users.role')}: <strong>{typeof detail.role === 'object' && detail.role ? roleLabel(t, detail.role as { slug?: string; name?: string }, typeof detail.gender === 'string' ? detail.gender : null) : memberRankLabel(t, typeof detail.rank === 'string' ? detail.rank : null, typeof detail.gender === 'string' ? detail.gender : null)}</strong></div>
             <div>{t('kams.trainerCoach')}: {typeof detail.trainer === 'object' && detail.trainer && 'name' in detail.trainer ? String((detail.trainer as { name: string }).name) : String(detail.trainer_name || '—')}</div>
             <AgentCredentialsCard
               key={viewing?.id}
@@ -1159,8 +1312,9 @@ export function KamsAgents() {
 export { KamsRecruitmentDashboard } from './KamsRecapPage'
 
 export function KamsCandidates() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { user, hasPermission } = useAuth()
+  const { period, from, to, officeId } = useOutletContext<RecruitmentListFilters>()
   const canCreate = hasPermission('kams.recruitment.create')
   const canUpdate = hasPermission('kams.recruitment.update')
   const canDelete = hasPermission('kams.recruitment.delete')
@@ -1182,12 +1336,6 @@ export function KamsCandidates() {
   const [formError, setFormError] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
-  const today = isoDate(new Date())
-  const [period, setPeriod] = useState<ListPeriod>('week')
-  const [from, setFrom] = useState(today)
-  const [to, setTo] = useState(today)
-  const [officeId, setOfficeId] = useState('')
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const photoInput = useRef<HTMLInputElement>(null)
   const [action, setAction] = useState<'interview' | 'observation' | null>(null)
   const [pickingSupervisor, setPickingSupervisor] = useState(false)
@@ -1459,68 +1607,9 @@ export function KamsCandidates() {
   }))
   const selectedInterviewer = interviewerOptions.find((item) => item.id === form.interviewer_user_id) ?? null
   const companySelected = Boolean(form.company_id)
-  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
-  const range = period === 'custom' ? { from, to } : presetRange(period)
-  const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
 
   return (
     <div>
-      <div className="mb-4 flex flex-col gap-3 sm:items-end">
-        <div className="flex w-full items-center justify-between gap-3">
-          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
-            {range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : null}
-          </p>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((open) => !open)}
-            className={cn('w-fit shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
-          >
-            {filtersOpen ? t('common.hide') : t('common.filter')}
-          </button>
-        </div>
-        {filtersOpen ? <div className="flex w-full flex-col gap-3 sm:items-end">
-          {offices.length > 1 ? (
-            <Select
-              className="w-full min-w-0 sm:w-72"
-              label={t('kams.filterOffice')}
-              value={officeId}
-              onChange={(e) => setOfficeId(e.target.value)}
-            >
-              <option value="">{t('kams.allOffices')}</option>
-              {offices.map((office) => (
-                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
-              ))}
-            </Select>
-          ) : null}
-          <div className="flex flex-col gap-2 sm:items-end">
-            <div className="flex w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
-              {(['day', 'week', 'month'] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setPeriod(item)}
-                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-                >
-                  {t(`kams.period.${item}`)}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPeriod('custom')}
-                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-              >
-                {t('dashboard.customPeriod')}
-              </button>
-            </div>
-            {period === 'custom' ? (
-              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
-                <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
-                <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
-              </div>
-            ) : null}
-          </div>
-        </div> : null}
-      </div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />
@@ -1964,6 +2053,263 @@ export function KamsCommunications() {
           </Card>
         ))}
       </div>
+    </div>
+  )
+}
+
+export function KamsRecruitmentReports() {
+  const { t, i18n } = useTranslation()
+  const { period, from, to, officeId, offices } = useOutletContext<RecruitmentListFilters>()
+  const [rows, setRows] = useState<Candidate[]>([])
+  const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
+  const [lastPage, setLastPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [printMenuOpen, setPrintMenuOpen] = useState(false)
+  const [printPreviewHtml, setPrintPreviewHtml] = useState('')
+  const printMenuRef = useRef<HTMLDivElement>(null)
+  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+
+  const reportParams = (pageNumber: number, pageSize: number) => {
+    const range = period === 'custom' ? { from, to } : presetRange(period)
+    return {
+      report: 1,
+      page: pageNumber,
+      per_page: pageSize,
+      ...(officeId ? { office_id: officeId } : {}),
+      ...range,
+    }
+  }
+
+  useEffect(() => {
+    setPage(1)
+  }, [period, from, to, officeId, perPage])
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    api.get('/modules/kams/candidates', { params: reportParams(page, perPage) })
+      .then((res) => {
+        if (!active) return
+        setRows(res.data.data ?? [])
+        setLastPage(Math.max(1, Number(res.data.meta?.last_page || 1)))
+        setTotal(Number(res.data.meta?.total || 0))
+      })
+      .catch(() => {
+        if (!active) return
+        setRows([])
+        setLastPage(1)
+        setTotal(0)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [page, perPage, period, from, to, officeId])
+
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (!printMenuRef.current?.contains(event.target as Node)) setPrintMenuOpen(false)
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  }, [])
+
+  const range = period === 'custom' ? { from, to } : presetRange(period)
+  const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
+
+  const printOptions = (list: Candidate[]) => ({
+    title: t('kams.recruitmentReports'),
+    module: t('kams.title'),
+    subtitle: t('kams.recruitmentHint'),
+    meta: [
+      { label: t('common.filter'), value: range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : '—' },
+      { label: t('kams.filterOffice'), value: offices.find((office) => String(office.id) === officeId)?.name || t('kams.allOffices') },
+      { label: t('common.records'), value: String(list.length) },
+      { label: t('common.printedOn'), value: new Date().toLocaleString() },
+    ],
+    headers: [
+      t('kams.candidateId'),
+      `${t('users.firstName')} / ${t('users.lastName')}`,
+      t('kams.phoneWhatsapp'),
+      t('kams.office'),
+      t('kams.recruitmentSource'),
+      t('common.status'),
+      t('kams.appliedOn'),
+    ],
+    rows: list.map((row) => [
+      row.candidate_id || '',
+      personName(row),
+      row.phone || '',
+      row.office?.name || '',
+      t(`kams.source.${row.source}`, { defaultValue: row.source }),
+      t(`kams.status.${row.status}`, { defaultValue: row.status }),
+      row.applied_at ? formatDay(row.applied_at.slice(0, 10)) : '',
+    ]),
+    emptyLabel: t('common.empty'),
+    footerNote: t('common.confidential'),
+    orientation: 'landscape' as const,
+  })
+
+  const loadAllForPrint = () => withBusy('data', async () => {
+    const collected: Candidate[] = []
+    let current = 1
+    let pages = 1
+    do {
+      const res = await api.get('/modules/kams/candidates', { params: reportParams(current, 100) })
+      collected.push(...((res.data.data ?? []) as Candidate[]))
+      pages = Math.max(1, Number(res.data.meta?.last_page || 1))
+      current += 1
+    } while (current <= pages && current <= 50)
+    return collected
+  })
+
+  const printReport = async () => {
+    const list = await loadAllForPrint()
+    printHtml(buildBrandedTableHtml(printOptions(list)))
+  }
+  const previewReport = async () => {
+    const list = await loadAllForPrint()
+    setPrintPreviewHtml(buildBrandedTableHtml(printOptions(list)))
+  }
+
+  const rangeStart = total === 0 ? 0 : (page - 1) * perPage + 1
+  const rangeEnd = Math.min(page * perPage, total)
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <p className="min-w-0 text-sm text-muted">{t('kams.recruitmentReportsHint')}</p>
+        <div ref={printMenuRef} className="relative shrink-0" onMouseDown={(event) => event.stopPropagation()}>
+          <Button
+            variant="secondary"
+            className="h-11 px-4"
+            title={t('common.print')}
+            aria-label={t('common.print')}
+            aria-expanded={printMenuOpen}
+            onClick={() => setPrintMenuOpen((open) => !open)}
+          >
+            <Printer size={16} /> {t('common.print')}
+          </Button>
+          {printMenuOpen ? (
+            <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setPrintMenuOpen(false)
+                  printReport()
+                }}
+              >
+                <Printer size={16} className="text-lhms" /> {t('common.print')}
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setPrintMenuOpen(false)
+                  previewReport()
+                }}
+              >
+                <Eye size={16} className="text-lhms" /> {t('common.preview')}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+        {loading && rows.length === 0 ? <LoadingScreen /> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-lhms text-white">
+                <tr className="text-left text-xs font-semibold tracking-wide">
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.candidateId')}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{`${t('users.firstName')} / ${t('users.lastName')}`}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.phoneWhatsapp')}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.office')}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.recruitmentSource')}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.status')}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.appliedOn')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                  </tr>
+                ) : rows.map((row, index) => (
+                  <tr key={row.id} className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
+                    <td className="px-4 py-1.5 whitespace-nowrap text-muted">{row.candidate_id}</td>
+                    <td className="px-4 py-1.5 font-semibold whitespace-nowrap">{personName(row)}</td>
+                    <td className="px-4 py-1.5 whitespace-nowrap">{row.phone || '—'}</td>
+                    <td className="px-4 py-1.5 whitespace-nowrap">{row.office?.name || '—'}</td>
+                    <td className="px-4 py-1.5 whitespace-nowrap">{t(`kams.source.${row.source}`, { defaultValue: row.source })}</td>
+                    <td className="px-4 py-1.5 whitespace-nowrap">
+                      <Badge tone={toneFor(row.status)}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
+                    </td>
+                    <td className="px-4 py-1.5 whitespace-nowrap text-muted">{row.applied_at ? formatDay(row.applied_at.slice(0, 10)) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted">
+            {t('kams.pageRange', { from: rangeStart, to: rangeEnd, total })}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              {t('kams.rowsPerPage')}
+              <select
+                value={perPage}
+                onChange={(event) => setPerPage(Number(event.target.value))}
+                className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+              >
+                {[10, 20, 50].map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className={cn(
+                'inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold',
+                loading || page <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white',
+              )}
+              disabled={loading || page <= 1}
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+            >
+              <ChevronLeft size={16} />
+              {t('common.prev')}
+            </button>
+            <span className="px-1 text-sm font-semibold">{page} / {lastPage}</span>
+            <button
+              type="button"
+              className={cn(
+                'inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold',
+                loading || page >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white',
+              )}
+              disabled={loading || page >= lastPage}
+              onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
+            >
+              {t('common.next')}
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+      <PrintPreviewModal
+        open={Boolean(printPreviewHtml)}
+        title={t('common.printPreview')}
+        html={printPreviewHtml}
+        onClose={() => setPrintPreviewHtml('')}
+      />
     </div>
   )
 }
