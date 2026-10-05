@@ -2,6 +2,7 @@
 
 namespace App\Modules\Kams\Services;
 
+use App\Models\Office;
 use App\Modules\Kams\Models\KamsSavingsAccount;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockBalance;
@@ -52,6 +53,42 @@ class KamsFinanceService
             'receivables' => max(0, $receivables),
             'payables' => $payables,
         ];
+    }
+
+    /**
+     * Revenue per office for the given period (sales subtotal minus validated returns).
+     *
+     * @param  list<int>  $officeIds
+     * @return list<array{id: int, name: string, code: ?string, revenue: float}>
+     */
+    public function revenueByOffice(?int $companyId, string $from, string $to, array $officeIds = []): array
+    {
+        $offices = Office::query()
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($query) => $query->whereIn('id', $officeIds))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        return $offices
+            ->map(function (Office $office) use ($companyId, $from, $to) {
+                $ids = [(int) $office->id];
+                $revenue = round(
+                    (float) $this->sales($companyId, $ids, $from, $to)->sum('subtotal')
+                    - $this->returnedRevenue($companyId, $ids, $from, $to),
+                    2
+                );
+
+                return [
+                    'id' => (int) $office->id,
+                    'name' => $office->name,
+                    'code' => $office->code,
+                    'revenue' => $revenue,
+                ];
+            })
+            ->sortByDesc('revenue')
+            ->values()
+            ->all();
     }
 
     /**

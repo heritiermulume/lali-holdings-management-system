@@ -1,16 +1,35 @@
-import { ChevronDown, Shield } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  Check,
+  ChevronDown,
+  Minus,
+  Search,
+  Shield,
+  ShieldCheck,
+} from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { permissionLabel, roleLabel } from '../../lib/format'
 import { businessModuleIcon } from '../../modules/registry'
 import type { SystemModule } from '../../types'
+import {
+  buildPermissionTree,
+  collectPermissions,
+  filterTreeByQuery,
+  isPermissionEnabled,
+  isPermissionGatedOff,
+  setSectionPermissionIds,
+  togglePermissionIds,
+  type Permission,
+  type PermissionNode,
+  type PermissionSection,
+} from './rolePermissionTree'
 
-type Permission = { id: number; slug: string; name: string; group: string }
 type RoleRow = {
   id: number
   name: string
@@ -22,87 +41,8 @@ type RoleRow = {
   permissions: Permission[]
 }
 
-const MODULE_AREA_ORDER: Record<string, string[]> = {
-  kams: ['kams.dashboard', 'kams.members', 'kams.recruitment', 'kams.clients', 'kams.products', 'kams.orders', 'kams.finance', 'kams.campaigns'],
-}
-
-const DASHBOARD_PAGE_ORDER = ['products', 'orders', 'finance', 'recruitment']
-const DASHBOARD_VIEW_SLUG = 'kams.dashboard.view'
-
-const FINANCE_PAGE_ORDER = ['dashboard', 'account', 'company']
-const ADMIN_PAGE_ORDER = ['users', 'settings']
-const ADMIN_SETTINGS_ROOTS = ['settings', 'organization', 'companies', 'roles']
-const ADMIN_VIEW_SLUG = 'administration.view'
-
 function isPlatformRole(role: RoleRow) {
   return role.full_access || !role.module_slug || role.module_slug === 'system'
-}
-
-function permissionAction(slug: string) {
-  return slug.split('.').at(-1) || ''
-}
-
-function permissionPrefix(slug: string) {
-  return slug.split('.').slice(0, -1).join('.')
-}
-
-function dashboardPage(slug: string) {
-  const parts = slug.split('.')
-  if (parts[0] !== 'kams' || parts[1] !== 'dashboard') return 'other'
-  return parts.length === 3 ? 'root' : parts[2]
-}
-
-function permissionPage(slug: string) {
-  const parts = slug.split('.')
-  return parts.length >= 4 && parts[1] === 'finance' ? parts[2] : null
-}
-
-function administrationPage(slug: string) {
-  const root = slug.split('.')[0] || ''
-  if (slug === ADMIN_VIEW_SLUG) return 'root'
-  if (root === 'users') return 'users'
-  if (ADMIN_SETTINGS_ROOTS.includes(root)) return 'settings'
-  return 'other'
-}
-
-function isViewPermission(permission: Permission) {
-  return permissionAction(permission.slug) === 'view'
-}
-
-function viewFor(group: Permission[], permission: Permission) {
-  return group.find((item) => item.slug === `${permissionPrefix(permission.slug)}.view`) ?? null
-}
-
-function siblingsOf(group: Permission[], permission: Permission) {
-  const prefix = permissionPrefix(permission.slug)
-  return group.filter((item) => permissionPrefix(item.slug) === prefix)
-}
-
-function groupedPages(permissions: Permission[], pageOf: (slug: string) => string, order: string[]) {
-  const pages = new Map<string, Permission[]>()
-  for (const permission of permissions) {
-    const page = pageOf(permission.slug) || 'other'
-    const current = pages.get(page) ?? []
-    current.push(permission)
-    pages.set(page, current)
-  }
-  return [...pages.entries()].sort((a, b) => {
-    const indexA = order.indexOf(a[0])
-    const indexB = order.indexOf(b[0])
-    return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB)
-  })
-}
-
-function financePages(permissions: Permission[]) {
-  return groupedPages(permissions, (slug) => permissionPage(slug) || 'other', FINANCE_PAGE_ORDER)
-}
-
-function dashboardPages(permissions: Permission[]) {
-  return groupedPages(permissions, dashboardPage, ['root', ...DASHBOARD_PAGE_ORDER])
-}
-
-function administrationPages(permissions: Permission[]) {
-  return groupedPages(permissions, administrationPage, ADMIN_PAGE_ORDER)
 }
 
 function moduleTitle(module: SystemModule | undefined, slug: string, localeFr: boolean, t: (key: string) => string) {
@@ -110,19 +50,87 @@ function moduleTitle(module: SystemModule | undefined, slug: string, localeFr: b
   return t(`nav.${slug}`)
 }
 
+function sectionStats(section: PermissionSection, permissionIds: number[], allVisible: Permission[]) {
+  const total = section.permissions.length
+  const enabled = section.permissions.filter((permission) => isPermissionEnabled(permissionIds, permission, allVisible)).length
+  return { total, enabled, all: total > 0 && enabled === total, some: enabled > 0 && enabled < total }
+}
+
+function PermissionToggle({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean
+  disabled?: boolean
+  onChange: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        'grid h-5 w-5 shrink-0 place-items-center rounded-md border transition',
+        checked ? 'border-lhms bg-lhms text-white' : 'border-line bg-white text-transparent',
+        disabled && 'cursor-not-allowed opacity-40',
+        !disabled && !checked && 'hover:border-lhms/50',
+      )}
+    >
+      <Check size={12} strokeWidth={3} />
+    </button>
+  )
+}
+
+function SectionCheckbox({
+  all,
+  some,
+  disabled,
+  onChange,
+}: {
+  all: boolean
+  some: boolean
+  disabled?: boolean
+  onChange: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={all ? true : some ? 'mixed' : false}
+      disabled={disabled}
+      onClick={onChange}
+      className={cn(
+        'grid h-5 w-5 shrink-0 place-items-center rounded-md border transition',
+        all || some ? 'border-lhms bg-lhms text-white' : 'border-line bg-white text-transparent',
+        disabled && 'cursor-not-allowed opacity-40',
+      )}
+    >
+      {all ? <Check size={12} strokeWidth={3} /> : some ? <Minus size={12} strokeWidth={3} /> : null}
+    </button>
+  )
+}
+
 export function RolesSettingsPage() {
   const { t, i18n } = useTranslation()
   const { modules } = useSystemModules()
+  const { user, hasPermission } = useAuth()
   const localeFr = i18n.language.startsWith('fr')
   const [roles, setRoles] = useState<RoleRow[]>([])
   const [permissionGroups, setPermissionGroups] = useState<Record<string, Permission[]>>({})
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [permissionIds, setPermissionIds] = useState<number[]>([])
   const [openModules, setOpenModules] = useState<string[]>(['system', 'kams'])
+  const [openSections, setOpenSections] = useState<string[]>(['administration', 'kams', 'platform'])
+  const [query, setQuery] = useState('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const selected = roles.find((role) => role.id === selectedId) ?? null
+  const canGrantAll = Boolean(user?.is_super_admin || user?.is_group_admin)
+  const canSeePermission = (slug: string) => canGrantAll || hasPermission(slug)
 
   const load = () => {
     setLoading(true)
@@ -149,11 +157,11 @@ export function RolesSettingsPage() {
     if (group) {
       setOpenModules((current) => current.includes(group) ? current : [...current, group])
     }
+    setQuery('')
   }, [selectedId, roles])
 
   const moduleSections = useMemo(() => {
     const known = [...modules].sort((a, b) => a.sort_order - b.sort_order)
-
     return known.map((module) => ({
       module,
       roles: roles.filter((role) => !isPlatformRole(role) && role.module_slug === module.slug),
@@ -162,73 +170,103 @@ export function RolesSettingsPage() {
 
   const platformRoles = useMemo(() => roles.filter(isPlatformRole), [roles])
 
-  const visiblePermissionGroups = useMemo(() => {
+  const relevantPermissionGroups = useMemo(() => {
     const moduleSlug = selected?.module_slug
-    if (!selected || selected.full_access || !moduleSlug) {
-      return {}
-    }
+    if (!selected || selected.full_access || !moduleSlug) return {}
+
     const hasAreas = Object.keys(permissionGroups).some((group) => group.startsWith(`${moduleSlug}.`))
     const entries = Object.entries(permissionGroups).filter(([group]) => (
       group === 'administration'
-      || (hasAreas ? group.startsWith(`${moduleSlug}.`) : group === moduleSlug)
+      || group === moduleSlug
+      || (hasAreas ? group.startsWith(`${moduleSlug}.`) : false)
+      || ['notifications', 'reports', 'finance', 'modules', 'files'].includes(group)
     ))
-    const order = MODULE_AREA_ORDER[moduleSlug] ?? []
-    entries.sort((a, b) => {
-      if (a[0] === 'administration') return -1
-      if (b[0] === 'administration') return 1
-      const indexA = order.indexOf(a[0])
-      const indexB = order.indexOf(b[0])
-      return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB)
-    })
+
     return Object.fromEntries(entries)
   }, [permissionGroups, selected])
 
+  const permissionTree = useMemo(() => {
+    if (!selected || selected.full_access) return []
+    return buildPermissionTree(relevantPermissionGroups, selected.module_slug, canSeePermission)
+  }, [relevantPermissionGroups, selected, canGrantAll, user?.permissions])
+
+  useEffect(() => {
+    if (permissionTree.length === 0) return
+    const keys: string[] = []
+    for (const root of permissionTree) {
+      keys.push(root.key)
+      for (const child of root.children) {
+        if (child.kind === 'section') keys.push(child.key)
+      }
+    }
+    setOpenSections(keys)
+  }, [selectedId, permissionTree])
+
+  const allVisiblePermissions = useMemo(
+    () => collectPermissions(permissionTree),
+    [permissionTree],
+  )
+
+  const visibleTree = useMemo(
+    () => filterTreeByQuery(
+      permissionTree,
+      query,
+      (permission) => permissionLabel(t, permission),
+      (node) => t(node.labelKey, { defaultValue: node.labelDefault }),
+    ),
+    [permissionTree, query, t],
+  )
+
   const dirty = useMemo(() => {
     if (!selected) return false
-    const currentPerms = [...permissionIds].sort().join(',')
-    const savedPerms = selected.permissions.map((permission) => permission.id).sort().join(',')
-    return currentPerms !== savedPerms
-  }, [selected, permissionIds])
+    const visibleIds = new Set(allVisiblePermissions.map((permission) => permission.id))
+    const currentVisible = permissionIds.filter((id) => visibleIds.has(id)).sort().join(',')
+    const savedVisible = selected.permissions
+      .map((permission) => permission.id)
+      .filter((id) => visibleIds.has(id))
+      .sort()
+      .join(',')
+    return currentVisible !== savedVisible
+  }, [selected, permissionIds, allVisiblePermissions])
 
-  const togglePermission = (group: Permission[], permission: Permission) => {
-    const adminView = group.find((item) => item.slug === ADMIN_VIEW_SLUG)
-    const adminIds = adminView ? group.map((item) => item.id) : []
-    const dashboardView = group.find((item) => item.slug === DASHBOARD_VIEW_SLUG)
-    const dashboardIds = dashboardView ? group.map((item) => item.id) : []
-    const view = viewFor(group, permission)
-    const siblingIds = siblingsOf(group, permission).map((item) => item.id)
+  const grantedCount = useMemo(
+    () => allVisiblePermissions.filter((permission) => isPermissionEnabled(permissionIds, permission, allVisiblePermissions)).length,
+    [allVisiblePermissions, permissionIds],
+  )
 
-    setPermissionIds((current) => {
-      const enabled = current.includes(permission.id)
-      if (permission.slug === ADMIN_VIEW_SLUG) {
-        if (enabled) return current.filter((id) => !adminIds.includes(id))
-        return [...current, permission.id]
-      }
-      if (permission.slug === DASHBOARD_VIEW_SLUG) {
-        if (enabled) return current.filter((id) => !dashboardIds.includes(id))
-        return [...current, permission.id]
-      }
-      if (adminView && !current.includes(adminView.id)) {
-        return current
-      }
-      if (dashboardView && permission.slug.startsWith('kams.dashboard.') && !current.includes(dashboardView.id)) {
-        return current
-      }
-      if (isViewPermission(permission)) {
-        if (enabled) {
-          return current.filter((id) => !siblingIds.includes(id))
-        }
-        return [...current, permission.id]
-      }
-      if (!view || !current.includes(view.id)) {
-        return current
-      }
-      return enabled ? current.filter((id) => id !== permission.id) : [...current, permission.id]
-    })
+  const togglePermission = (permission: Permission) => {
+    setPermissionIds((current) => togglePermissionIds(current, permission, allVisiblePermissions))
+  }
+
+  const toggleSection = (section: PermissionSection) => {
+    const stats = sectionStats(section, permissionIds, allVisiblePermissions)
+    setPermissionIds((current) => setSectionPermissionIds(current, section.permissions, !stats.all, allVisiblePermissions))
   }
 
   const toggleModule = (slug: string) => {
     setOpenModules((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug])
+  }
+
+  const toggleOpenSection = (key: string) => {
+    setOpenSections((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])
+  }
+
+  const expandAllSections = () => {
+    const keys: string[] = []
+    const walk = (nodes: PermissionNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === 'section') {
+          keys.push(node.key)
+          walk(node.children)
+        }
+      }
+    }
+    walk(permissionTree)
+    setOpenSections(keys)
+  }
+
+  const collapseAllSections = () => {
+    setOpenSections(permissionTree.map((node) => node.key))
   }
 
   const selectRole = (role: RoleRow) => {
@@ -240,16 +278,111 @@ export function RolesSettingsPage() {
     if (!selected || !dirty) return
     setSaving(true)
     try {
+      const visibleIds = new Set(allVisiblePermissions.map((permission) => permission.id))
+      const preserved = selected.permissions
+        .map((permission) => permission.id)
+        .filter((id) => !visibleIds.has(id))
+      const nextIds = [...new Set([
+        ...preserved,
+        ...permissionIds.filter((id) => visibleIds.has(id)),
+      ])]
+
       const res = await api.put(`/roles/${selected.id}`, {
         permission_ids: selected.full_access
           ? selected.permissions.map((permission) => permission.id)
-          : permissionIds,
+          : nextIds,
       })
       const updated = res.data.data as RoleRow
       setRoles((current) => current.map((role) => (role.id === updated.id ? { ...role, ...updated } : role)))
     } finally {
       setSaving(false)
     }
+  }
+
+  const renderNode = (node: PermissionNode, depth = 0): ReactNode => {
+    if (node.kind === 'leaf') {
+      const gatedOff = isPermissionGatedOff(permissionIds, node.permission, allVisiblePermissions)
+      const checked = isPermissionEnabled(permissionIds, node.permission, allVisiblePermissions)
+      return (
+        <label
+          key={node.key}
+          className={cn(
+            'flex min-h-10 items-center gap-3 rounded-xl px-3 py-1.5 text-sm transition',
+            gatedOff ? 'text-muted' : 'hover:bg-lhms/5',
+            node.indent && 'ml-4',
+          )}
+        >
+          <PermissionToggle
+            checked={checked}
+            disabled={gatedOff}
+            onChange={() => togglePermission(node.permission)}
+          />
+          <span className="min-w-0 flex-1 leading-snug">{permissionLabel(t, node.permission)}</span>
+        </label>
+      )
+    }
+
+    const open = openSections.includes(node.key) || Boolean(query.trim())
+    const stats = sectionStats(node, permissionIds, allVisiblePermissions)
+    const isRoot = depth === 0
+    const gate = node.gateSlug
+      ? allVisiblePermissions.find((permission) => permission.slug === node.gateSlug) ?? null
+      : null
+    const gateOn = !gate || permissionIds.includes(gate.id)
+
+    return (
+      <div
+        key={node.key}
+        className={cn(
+          isRoot
+            ? 'overflow-hidden rounded-2xl border border-line bg-white'
+            : 'rounded-xl border border-line/80 bg-surface/40',
+        )}
+      >
+        <div className={cn('flex items-center gap-2 px-3', isRoot ? 'bg-lhms/[0.04] py-3' : 'py-2.5')}>
+          <SectionCheckbox
+            all={stats.all}
+            some={stats.some}
+            onChange={() => {
+              if (gate && !gateOn) {
+                setPermissionIds((current) => {
+                  const withGate = togglePermissionIds(current, gate, allVisiblePermissions)
+                  return setSectionPermissionIds(withGate, node.permissions, true, allVisiblePermissions)
+                })
+                return
+              }
+              toggleSection(node)
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => toggleOpenSection(node.key)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            {isRoot ? (
+              <span className="grid h-8 w-8 place-items-center rounded-xl bg-lhms text-white">
+                <ShieldCheck size={15} />
+              </span>
+            ) : null}
+            <span className={cn('min-w-0 flex-1 truncate', isRoot ? 'text-sm font-bold' : 'text-sm font-semibold')}>
+              {t(node.labelKey, { defaultValue: node.labelDefault })}
+            </span>
+            <span className={cn(
+              'rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+              stats.enabled > 0 ? 'bg-lhms-soft text-lhms' : 'bg-white text-muted',
+            )}>
+              {stats.enabled}/{stats.total}
+            </span>
+            <ChevronDown size={16} className={cn('shrink-0 text-muted transition', open ? 'rotate-0' : '-rotate-90')} />
+          </button>
+        </div>
+        {open ? (
+          <div className={cn('space-y-2', isRoot ? 'p-3 pt-0' : 'px-2 pb-2')}>
+            {node.children.map((child) => renderNode(child, depth + 1))}
+          </div>
+        ) : null}
+      </div>
+    )
   }
 
   if (loading) {
@@ -325,117 +458,88 @@ export function RolesSettingsPage() {
 
       {selected ? (
         <div className="space-y-4">
-          <Card className="p-4 sm:p-6">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted">
-              {isPlatformRole(selected)
-                ? t('settings.rolesAllModules')
-                : moduleTitle(modules.find((entry) => entry.slug === selected.module_slug), selected.module_slug || '', localeFr, t)}
+          <Card className="overflow-hidden p-0">
+            <div className="border-b border-line bg-gradient-to-br from-lhms/[0.07] via-white to-white px-4 py-5 sm:px-6">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">
+                {isPlatformRole(selected)
+                  ? t('settings.rolesAllModules')
+                  : moduleTitle(modules.find((entry) => entry.slug === selected.module_slug), selected.module_slug || '', localeFr, t)}
+              </div>
+              <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-bold tracking-tight">{roleLabel(t, selected)}</h2>
+                  <p className="mt-1 max-w-2xl text-sm text-muted">
+                    {selected.full_access
+                      ? t(selected.slug === 'president' ? 'settings.rolesPresidentHint' : 'settings.rolesFullAccessHint')
+                      : selected.office_scoped
+                        ? t('settings.rolesOfficeScopedHint')
+                        : t('settings.rolesModuleHint')}
+                  </p>
+                </div>
+                {!selected.full_access ? (
+                  <div className="rounded-2xl border border-lhms/15 bg-white px-3 py-2 text-right shadow-sm">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">{t('settings.rolesPermissions')}</div>
+                    <div className="text-lg font-extrabold tabular-nums text-lhms">
+                      {grantedCount}
+                      <span className="text-sm font-semibold text-muted">/{allVisiblePermissions.length}</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
-            <h2 className="mt-1 text-base font-bold">{roleLabel(t, selected)}</h2>
-            <p className="mt-1 text-sm text-muted">
-              {selected.full_access
-                ? t(selected.slug === 'president' ? 'settings.rolesPresidentHint' : 'settings.rolesFullAccessHint')
-                : selected.office_scoped
-                  ? t('settings.rolesOfficeScopedHint')
-                  : t('settings.rolesModuleHint')}
-            </p>
           </Card>
 
           <Card className="p-4 sm:p-6">
-            <h3 className="text-sm font-bold">{t('settings.rolesPermissions')}</h3>
-            {selected.full_access ? (
-              <p className="mt-2 text-sm text-muted">{t('settings.rolesPermissionsLocked')}</p>
-            ) : (
-              <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                {Object.entries(visiblePermissionGroups).map(([group, permissions]) => {
-                  const adminView = permissions.find((item) => item.slug === ADMIN_VIEW_SLUG)
-                  const adminOn = !adminView || permissionIds.includes(adminView.id)
-                  const dashboardView = permissions.find((item) => item.slug === DASHBOARD_VIEW_SLUG)
-                  const dashboardOn = !dashboardView || permissionIds.includes(dashboardView.id)
-                  const paged = group === 'administration'
-                    ? administrationPages(permissions.filter((item) => item.slug !== ADMIN_VIEW_SLUG))
-                    : group === 'kams.finance'
-                      ? financePages(permissions)
-                      : group === 'kams.dashboard'
-                        ? dashboardPages(permissions.filter((item) => item.slug !== DASHBOARD_VIEW_SLUG))
-                        : [['all', permissions] as const]
-                  const wide = group === 'administration' || group === 'kams.finance' || group === 'kams.dashboard'
-                  return (
-                  <fieldset key={group} className={cn('rounded-2xl border border-line p-3', wide && 'sm:col-span-2')}>
-                    <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                      {t(`settings.permissionGroups.${group}`, { defaultValue: group })}
-                    </legend>
-                    {group === 'administration' && adminView ? (
-                      <label className="mb-3 flex min-h-9 items-center gap-2 text-sm font-medium">
-                        <input
-                          type="checkbox"
-                          checked={adminOn}
-                          onChange={() => togglePermission(permissions, adminView)}
-                        />
-                        {permissionLabel(t, adminView)}
-                      </label>
-                    ) : null}
-                    {group === 'kams.dashboard' && dashboardView ? (
-                      <label className="mb-3 flex min-h-9 items-center gap-2 text-sm font-medium">
-                        <input
-                          type="checkbox"
-                          checked={dashboardOn}
-                          onChange={() => togglePermission(permissions, dashboardView)}
-                        />
-                        {permissionLabel(t, dashboardView)}
-                      </label>
-                    ) : null}
-                    <div className={cn(
-                      group === 'administration' && 'grid gap-4 sm:grid-cols-3',
-                      (group === 'kams.finance' || group === 'kams.dashboard') && 'grid gap-4 sm:grid-cols-2 xl:grid-cols-4',
-                      !wide && 'space-y-1',
-                    )}>
-                      {paged.map(([page, items]) => (
-                        <div key={page} className="space-y-1">
-                          {wide && page !== 'other' && page !== 'root' ? (
-                            <div className="text-[11px] font-semibold uppercase tracking-wide text-ink/70">
-                              {t(
-                                group === 'administration'
-                                  ? `settings.permissionGroups.administrationPages.${page}`
-                                  : group === 'kams.dashboard'
-                                    ? `settings.permissionGroups.kams.dashboardPages.${page}`
-                                    : `settings.permissionGroups.kams.financePages.${page}`,
-                                { defaultValue: page },
-                              )}
-                            </div>
-                          ) : null}
-                          {items.map((permission) => {
-                            const view = viewFor(items, permission)
-                            const viewOn = !view || permissionIds.includes(view.id)
-                            const pageDependent = Boolean(view) && !isViewPermission(permission)
-                            const adminDependent = group === 'administration' && permission.slug !== ADMIN_VIEW_SLUG
-                            const dashboardDependent = group === 'kams.dashboard' && permission.slug !== DASHBOARD_VIEW_SLUG
-                            const gatedOff = (adminDependent && !adminOn) || (dashboardDependent && !dashboardOn) || (pageDependent && !viewOn)
-                            const checked = permissionIds.includes(permission.id) && !gatedOff
-                            return (
-                            <label key={permission.id} className={cn('flex min-h-9 items-center gap-2 text-sm', pageDependent && 'pl-5', gatedOff && 'text-muted')}>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={gatedOff}
-                                onChange={() => togglePermission(permissions, permission)}
-                              />
-                              {permissionLabel(t, permission)}
-                            </label>
-                            )
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                  </fieldset>
-                  )
-                })}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold">{t('settings.rolesPermissions')}</h3>
+                <p className="mt-0.5 text-xs text-muted">{t('settings.rolesPermissionsHint')}</p>
               </div>
+              {!selected.full_access && allVisiblePermissions.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="ghost" className="min-h-9 px-3 text-xs" onClick={expandAllSections}>
+                    {t('settings.rolesExpandAll')}
+                  </Button>
+                  <Button type="button" variant="ghost" className="min-h-9 px-3 text-xs" onClick={collapseAllSections}>
+                    {t('settings.rolesCollapseAll')}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            {selected.full_access ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-lhms/25 bg-lhms/[0.03] px-4 py-8 text-center">
+                <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-lhms text-white">
+                  <Shield size={20} />
+                </div>
+                <p className="mt-3 text-sm font-medium text-ink">{t('settings.rolesPermissionsLocked')}</p>
+              </div>
+            ) : (
+              <>
+                <div className="relative mt-4">
+                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={t('settings.rolesSearchPermissions')}
+                    className="min-h-11 w-full rounded-xl border border-line bg-white py-2 pl-10 pr-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4"
+                  />
+                </div>
+
+                {visibleTree.length === 0 ? (
+                  <p className="mt-6 text-center text-sm text-muted">{t('settings.rolesNoVisiblePermissions')}</p>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {visibleTree.map((node) => renderNode(node))}
+                  </div>
+                )}
+              </>
             )}
           </Card>
 
-          <div className="flex justify-end">
-            <Button type="button" disabled={!dirty || saving} onClick={() => void save()}>
+          <div className="sticky bottom-20 z-10 flex justify-end lg:bottom-4">
+            <Button type="button" disabled={!dirty || saving} onClick={() => void save()} className="shadow-lg shadow-lhms/20">
               {saving ? t('common.loading') : dirty ? t('common.save') : t('common.saved')}
             </Button>
           </div>

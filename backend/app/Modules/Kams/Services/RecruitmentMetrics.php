@@ -2,6 +2,7 @@
 
 namespace App\Modules\Kams\Services;
 
+use App\Models\Office;
 use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsInterview;
 use App\Modules\Kams\Models\KamsMember;
@@ -205,6 +206,40 @@ class RecruitmentMetrics
                     ->count(),
             ],
         ];
+    }
+
+    /**
+     * Recruitment KPIs per office for the given period.
+     *
+     * @param  list<int>  $officeIds
+     * @return list<array{id: int, name: string, code: ?string, applications: int, interviews: int, observations: int, approved: int}>
+     */
+    public function byOffice(?int $companyId, string $from, string $to, array $officeIds = []): array
+    {
+        $offices = Office::query()
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($query) => $query->whereIn('id', $officeIds))
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code']);
+
+        return $offices
+            ->map(function (Office $office) use ($companyId, $from, $to) {
+                $stats = $this->summarize($companyId, [(int) $office->id], $from, $to)['recruitment'];
+
+                return [
+                    'id' => (int) $office->id,
+                    'name' => $office->name,
+                    'code' => $office->code,
+                    'applications' => (int) $stats['applications'],
+                    'interviews' => (int) $stats['interviews'],
+                    'observations' => (int) $stats['observations'],
+                    'approved' => (int) $stats['approved'],
+                ];
+            })
+            ->sortByDesc('applications')
+            ->values()
+            ->all();
     }
 
     /**

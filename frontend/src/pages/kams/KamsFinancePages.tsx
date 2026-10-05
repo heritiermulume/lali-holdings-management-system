@@ -406,37 +406,20 @@ export function KamsFinanceDashboard() {
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
       <Card className="overflow-hidden border-lhms/20 bg-[linear-gradient(135deg,#043711_0%,#0d6b36_55%,#1a8f4d_100%)] p-4 text-white sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0 lg:max-w-lg">
-            <div className="text-[10px] font-semibold tracking-[0.22em] text-white/60 sm:text-xs">KAMS · FINANCE</div>
-            <h2 className="mt-2 text-xl font-bold tracking-tight sm:text-2xl">{t('kams.financeDashboard')}</h2>
-            <p className="mt-1 max-w-2xl text-sm text-white/75">
-              {t('kams.financeDashboardHint')}
-              {selectedOffice ? ` · ${selectedOffice.name}` : ` · ${t('kams.allOffices')}`}
-            </p>
-            <p className="mt-2 text-xs text-white/60">
-              {t('kams.periodRange', {
-                start: parseDate(data.range.from).toLocaleDateString(locale),
-                end: parseDate(data.range.to).toLocaleDateString(locale),
-              })}
-              {data.previous_range ? ` · ${t('kams.vsPreviousPeriod')}` : ''}
-            </p>
-          </div>
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              { label: t('dashboard.revenue'), value: money(position?.revenue) },
-              { label: t('dashboard.profit'), value: money(position?.profit) },
-              { label: t('dashboard.cash'), value: money(position?.cash ?? data.treasury?.balance) },
-              { label: t('kams.netMargin'), value: money(position?.net_margin) },
-            ].map((item) => (
-              <div key={item.label} className="min-w-0 rounded-2xl bg-white/10 px-3 py-3 backdrop-blur sm:px-4">
-                <div className="text-[11px] text-white/70">{item.label}</div>
-                <div className="mt-1.5 break-words text-base font-extrabold leading-snug tracking-tight tabular-nums sm:text-xl">
-                  {item.value}
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold tracking-[0.22em] text-white/60 sm:text-xs">KAMS · FINANCE</div>
+          <h2 className="mt-2 text-xl font-bold tracking-tight sm:text-2xl">{t('kams.financeDashboard')}</h2>
+          <p className="mt-1 max-w-2xl text-sm text-white/75">
+            {t('kams.financeDashboardHint')}
+            {selectedOffice ? ` · ${selectedOffice.name}` : ` · ${t('kams.allOffices')}`}
+          </p>
+          <p className="mt-2 text-xs text-white/60">
+            {t('kams.periodRange', {
+              start: parseDate(data.range.from).toLocaleDateString(locale),
+              end: parseDate(data.range.to).toLocaleDateString(locale),
+            })}
+            {data.previous_range ? ` · ${t('kams.vsPreviousPeriod')}` : ''}
+          </p>
         </div>
       </Card>
 

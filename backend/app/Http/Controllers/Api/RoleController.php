@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -25,15 +26,20 @@ class RoleController extends Controller
         return $this->ok($roles);
     }
 
-    public function permissions(): JsonResponse
+    public function permissions(Request $request): JsonResponse
     {
         $actionOrder = array_flip(['view', 'create', 'deposit', 'withdraw', 'expense', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate', 'approve', 'manage', 'group', 'company']);
         $pageOrder = array_flip(['view', 'users', 'settings', 'account', 'company']);
+        $user = $request->user();
+        $grantableSlugs = $user && ! $user->hasFullAccess()
+            ? $user->permissionSlugs()
+            : null;
 
         $groups = Permission::query()
             ->orderBy('group')
             ->orderBy('slug')
             ->get()
+            ->when($grantableSlugs !== null, fn ($permissions) => $permissions->whereIn('slug', $grantableSlugs))
             ->groupBy('group')
             ->map(fn ($permissions) => $permissions->sortBy(function (Permission $permission) use ($actionOrder, $pageOrder) {
                 $parts = explode('.', $permission->slug);
@@ -47,7 +53,8 @@ class RoleController extends Controller
                 };
 
                 return (($pageOrder[$page] ?? 99) * 100) + ($actionOrder[$action] ?? 99);
-            })->values());
+            })->values())
+            ->filter(fn ($permissions) => $permissions->isNotEmpty());
 
         return $this->ok($groups);
     }
@@ -68,10 +75,43 @@ class RoleController extends Controller
         if ($role->hasFullAccess()) {
             $role->permissions()->sync(Permission::query()->pluck('id'));
         } elseif ($request->has('permission_ids')) {
-            $role->permissions()->sync($this->dependentPermissionIds($request->input('permission_ids', [])));
+            $role->permissions()->sync($this->grantablePermissionIds(
+                $request->user(),
+                $role,
+                $request->input('permission_ids', []),
+            ));
         }
 
         return $this->ok($this->present($role->fresh(['permissions'])), __('Role updated.'));
+    }
+
+    /**
+     * @param  list<int|string>  $ids
+     * @return list<int>
+     */
+    private function grantablePermissionIds(?User $user, Role $role, array $ids): array
+    {
+        $selected = collect($ids)->map(fn ($id) => (int) $id)->unique()->values();
+
+        if (! $user || $user->hasFullAccess()) {
+            return $this->dependentPermissionIds($selected->all());
+        }
+
+        $grantableIds = Permission::query()
+            ->whereIn('slug', $user->permissionSlugs() ?: [''])
+            ->pluck('id');
+
+        $untouchable = $role->permissions()
+            ->whereNotIn('permissions.id', $grantableIds->all() ?: [0])
+            ->pluck('permissions.id');
+
+        $selected = $selected
+            ->intersect($grantableIds)
+            ->merge($untouchable)
+            ->unique()
+            ->values();
+
+        return $this->dependentPermissionIds($selected->all());
     }
 
     /**
@@ -112,6 +152,14 @@ class RoleController extends Controller
         if ($adminView && ! $selected->contains($adminView->id)) {
             $adminIds = Permission::query()->where('group', 'administration')->pluck('id');
             $selected = $selected->reject(fn ($id) => $adminIds->contains($id))->values();
+        }
+
+        $dashboardView = Permission::query()->where('slug', 'kams.dashboard.view')->first();
+        if ($dashboardView && ! $selected->contains($dashboardView->id)) {
+            $dashboardIds = Permission::query()
+                ->where('slug', 'like', 'kams.dashboard.%')
+                ->pluck('id');
+            $selected = $selected->reject(fn ($id) => $dashboardIds->contains($id))->values();
         }
 
         return $selected->all();

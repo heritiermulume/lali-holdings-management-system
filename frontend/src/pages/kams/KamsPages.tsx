@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Navigate } from 'react-router-dom'
-import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { showAlert } from '../../lib/alert'
@@ -33,6 +33,8 @@ export function KamsEntry() {
 
 type DashboardPeriod = 'day' | 'week' | 'month' | 'custom'
 
+const OFFICE_REVENUE_COLORS = ['#043711', '#1a6b3c', '#2d8a5a', '#5b8a72', '#c9a227', '#1d4ed8', '#0f766e', '#854d0e']
+
 function isoDate(value: Date) {
   const year = value.getFullYear()
   const month = String(value.getMonth() + 1).padStart(2, '0')
@@ -63,8 +65,10 @@ export function KamsDashboard() {
     stats: Record<string, number>
     finance: Record<string, number> | null
     trend?: Array<{ from: string; to: string; revenue: number; expenses: number }>
+    revenue_by_office?: Array<{ id: number; name: string; code?: string; revenue: number }>
     recruitment?: Record<string, number>
     recruitment_trend?: Array<{ from: string; to: string; applications: number; interviews: number; observations: number; approved: number }>
+    recruitment_by_office?: Array<{ id: number; name: string; code?: string; applications: number; interviews: number; observations: number; approved: number }>
   } | null>(null)
 
   useEffect(() => {
@@ -212,6 +216,43 @@ export function KamsDashboard() {
         </div>
       </Card>
       ) : null}
+      {canFinance && !officeId && (data.revenue_by_office || []).length > 1 ? (
+      <Card className="p-4 sm:p-5">
+        <div className="mb-1 font-semibold">{t('kams.revenueByOffice')}</div>
+        <p className="mb-4 text-sm text-muted">{t('kams.revenueByOfficeHint')}</p>
+        <div className="h-64 sm:h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              layout="vertical"
+              data={data.revenue_by_office || []}
+              margin={{ top: 4, right: 12, left: 4, bottom: 4 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(value) => compact(Number(value))} />
+              <YAxis
+                type="category"
+                dataKey="name"
+                width={108}
+                tick={{ fontSize: 11 }}
+                tickFormatter={(value) => (String(value).length > 14 ? `${String(value).slice(0, 13)}…` : String(value))}
+              />
+              <Tooltip
+                formatter={(value) => [money(Number(value)), t('dashboard.revenue')]}
+                labelFormatter={(label, payload) => {
+                  const code = payload?.[0]?.payload?.code
+                  return code ? `${label} · ${code}` : String(label)
+                }}
+              />
+              <Bar dataKey="revenue" name={t('dashboard.revenue')} radius={[0, 6, 6, 0]} maxBarSize={28}>
+                {(data.revenue_by_office || []).map((row, index) => (
+                  <Cell key={row.id} fill={OFFICE_REVENUE_COLORS[index % OFFICE_REVENUE_COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      ) : null}
       {canRecruitment && data.recruitment ? (
         <Card className="p-5">
           <div className="mb-3 font-semibold">{t('kams.recruitment')}</div>
@@ -248,6 +289,43 @@ export function KamsDashboard() {
             </ResponsiveContainer>
           </div>
         </Card>
+      ) : null}
+      {canRecruitment && !officeId && (data.recruitment_by_office || []).length > 1 ? (
+      <Card className="p-4 sm:p-5">
+        <div className="mb-1 font-semibold">{t('kams.recruitmentByOffice')}</div>
+        <p className="mb-4 text-sm text-muted">{t('kams.recruitmentByOfficeHint')}</p>
+        <div className="h-72 sm:h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={data.recruitment_by_office || []}
+              margin={{ top: 8, right: 8, left: 0, bottom: 28 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
+              <XAxis
+                dataKey="name"
+                tick={{ fontSize: 11 }}
+                interval={0}
+                angle={-20}
+                textAnchor="end"
+                height={56}
+                tickFormatter={(value) => (String(value).length > 14 ? `${String(value).slice(0, 13)}…` : String(value))}
+              />
+              <YAxis width={36} allowDecimals={false} tick={{ fontSize: 11 }} />
+              <Tooltip
+                labelFormatter={(label, payload) => {
+                  const code = payload?.[0]?.payload?.code
+                  return code ? `${label} · ${code}` : String(label)
+                }}
+              />
+              <Legend />
+              <Bar dataKey="applications" name={t('kams.applications')} fill="#043711" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="interviews" name={t('kams.interviews')} fill="#2d8a5a" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="observations" name={t('kams.observations')} fill="#c9a227" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="approved" name={t('kams.approved')} fill="#1d4ed8" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
       ) : null}
     </div>
   )

@@ -98,6 +98,9 @@ class KamsDashboardController extends Controller
             'stats' => $stats,
             'finance' => $canFinance ? $module->financialSummary($companyId, $from, $to, $officeIds) : null,
             'trend' => $canFinance ? $finance->trend($companyId, $from, $to, $officeIds) : [],
+            'revenue_by_office' => ($canFinance && $canFilter && ! $request->filled('office_id'))
+                ? $finance->revenueByOffice($companyId, $from, $to, $accessibleIds)
+                : [],
             'top_products' => KamsProduct::query()
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
                 ->orderByDesc('stock')
@@ -105,6 +108,9 @@ class KamsDashboardController extends Controller
                 ->get(),
             'recruitment' => $canRecruitment ? $metrics->summarize($companyId, $officeIds, $from, $to)['recruitment'] : null,
             'recruitment_trend' => $canRecruitment ? $metrics->trend($companyId, $officeIds, $from, $to) : [],
+            'recruitment_by_office' => ($canRecruitment && $canFilter && ! $request->filled('office_id'))
+                ? $metrics->byOffice($companyId, $from, $to, $accessibleIds)
+                : [],
         ]);
     }
 
