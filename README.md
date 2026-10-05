@@ -356,7 +356,7 @@ Les routes métier KAMS sont listées plus haut. Laravel ignore le préfixe SPA 
 - **Auth** : `AuthContext` stocke l’utilisateur et le jeton ; les routes hors `/login` passent par un `Guard`.
 - **Layout** : `AppShell` (navigation groupe) + `ModuleWorkspaceLayout` (sous-navigation d’un module).
 - **Modules** : `moduleRegistry` décrit icônes, libellés i18n et items de menu ; `ModulesContext` synchronise le catalogue serveur (activation / statut).
-- **UI** : composants partagés dans `components/ui.tsx`, icônes Lucide, thème vert holding (`#094924`).
+- **UI** : composants partagés dans `components/ui.tsx`, icônes Lucide, thème vert holding (`#043711`).
 
 Routes principales :
 

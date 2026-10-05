@@ -2,7 +2,7 @@
 
 namespace App\Modules\Kams\Services;
 
-use App\Core\Support\AuditLogger;
+use App\Support\SettingsCatalog;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsMemberHistory;
 use App\Modules\Kams\Models\KamsObservationDay;
@@ -17,15 +17,27 @@ class MemberRegistrationService
         private readonly KamsAccountProvisioner $wallets,
     ) {}
 
-    public function registerFromObservation(KamsObservationDay $observation, string $locale = 'fr'): KamsMember
+    /**
+     * @return array{member: KamsMember, credentials: array{email: ?string, phone: ?string, password: ?string, is_active: bool}}
+     */
+    public function registerFromObservation(KamsObservationDay $observation, string $locale = 'fr'): array
     {
         $candidate = $observation->candidate()->firstOrFail();
 
         if ($candidate->member_id) {
-            return $candidate->member()->firstOrFail();
+            $member = $candidate->member()->firstOrFail();
+
+            return [
+                'member' => $member->load(['office', 'user', 'role']),
+                'credentials' => $this->accounts->provision($member),
+            ];
         }
 
         return DB::transaction(function () use ($candidate, $observation, $locale) {
+            $sponsor = $observation->sponsor()->first()
+                ?: ($candidate->sponsor_member_id ? KamsMember::query()->find($candidate->sponsor_member_id) : null);
+            $coach = $observation->supervisor()->first();
+
             $member = KamsMember::query()->create([
                 'company_id' => $candidate->company_id,
                 'office_id' => $observation->office_id ?: $candidate->office_id,
@@ -42,8 +54,11 @@ class MemberRegistrationService
                 'address' => $candidate->address,
                 'guardian_name' => $candidate->guardian_name,
                 'guardian_phone' => $candidate->guardian_phone,
-                'trainer_name' => $observation->supervisor_name,
-                'rank' => 'Distributor',
+                'trainer_name' => $sponsor?->full_name,
+                'trainer_user_id' => $sponsor?->user_id,
+                'coach_member_id' => $coach?->id,
+                'coach_name' => $coach?->full_name ?: $observation->supervisor_name,
+                'rank' => SettingsCatalog::string('kams', 'default_member_rank'),
                 'origin' => 'new_recruit',
                 'status' => 'active',
                 'joined_on' => now()->toDateString(),
@@ -65,12 +80,15 @@ class MemberRegistrationService
                 'changed_at' => now(),
             ]);
 
-            AuditLogger::record('register_member', $member, [], $member->toArray());
             $credentials = $this->accounts->provision($member);
             $this->wallets->ensureWallet($member);
-            $this->communications->notifyFinalApproval($candidate, $member->fresh('user'), $locale, $credentials);
+            $fresh = $member->fresh(['office', 'user', 'role']);
+            $this->communications->notifyFinalApproval($candidate, $fresh, $locale, $credentials);
 
-            return $member->fresh(['office', 'user']);
+            return [
+                'member' => $fresh,
+                'credentials' => $credentials,
+            ];
         });
     }
 
@@ -104,6 +122,5 @@ class MemberRegistrationService
             'changed_at' => now(),
         ]);
 
-        AuditLogger::record('correct_member', $member, [$field => $old], [$field => $new, 'reason' => $reason]);
     }
 }

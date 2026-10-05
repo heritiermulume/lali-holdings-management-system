@@ -22,8 +22,6 @@ type RoleRow = {
   permissions: Permission[]
 }
 
-const BUSINESS_MODULES = ['kams', 'heavy-equipment', 'real-estate', 'rice-mills', 'lali-tv']
-
 const MODULE_AREA_ORDER: Record<string, string[]> = {
   kams: ['kams.dashboard', 'kams.members', 'kams.recruitment', 'kams.clients', 'kams.products', 'kams.orders', 'kams.finance', 'kams.campaigns'],
 }
@@ -32,7 +30,7 @@ const DASHBOARD_PAGE_ORDER = ['products', 'orders', 'finance', 'recruitment']
 const DASHBOARD_VIEW_SLUG = 'kams.dashboard.view'
 
 const FINANCE_PAGE_ORDER = ['dashboard', 'account', 'company']
-const ADMIN_PAGE_ORDER = ['users', 'audit', 'settings']
+const ADMIN_PAGE_ORDER = ['users', 'settings']
 const ADMIN_SETTINGS_ROOTS = ['settings', 'organization', 'companies', 'roles']
 const ADMIN_VIEW_SLUG = 'administration.view'
 
@@ -63,7 +61,6 @@ function administrationPage(slug: string) {
   const root = slug.split('.')[0] || ''
   if (slug === ADMIN_VIEW_SLUG) return 'root'
   if (root === 'users') return 'users'
-  if (root === 'audit') return 'audit'
   if (ADMIN_SETTINGS_ROOTS.includes(root)) return 'settings'
   return 'other'
 }
@@ -155,9 +152,7 @@ export function RolesSettingsPage() {
   }, [selectedId, roles])
 
   const moduleSections = useMemo(() => {
-    const known = modules.length > 0
-      ? [...modules].sort((a, b) => a.sort_order - b.sort_order)
-      : BUSINESS_MODULES.map((slug) => ({ slug, name: slug, name_fr: slug, sort_order: 0 }) as SystemModule)
+    const known = [...modules].sort((a, b) => a.sort_order - b.sort_order)
 
     return known.map((module) => ({
       module,

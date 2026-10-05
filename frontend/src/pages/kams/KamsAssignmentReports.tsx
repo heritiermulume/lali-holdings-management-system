@@ -324,7 +324,7 @@ export function KamsAssignmentReports() {
 
   const dayHtml = (day: DayReport, simplified = false) => `
     <section style="margin:0 0 22px;break-inside:avoid;">
-      <h2 style="margin:0 0 8px;color:#094924;font-size:16px;font-weight:800;text-transform:capitalize;">${escapeHtml(formatDay(day.date, locale))}</h2>
+      <h2 style="margin:0 0 8px;color:#043711;font-size:16px;font-weight:800;text-transform:capitalize;">${escapeHtml(formatDay(day.date, locale))}</h2>
       ${totalsHtml(day.totals)}
       ${simplified
         ? (day.assignments.length
@@ -483,7 +483,7 @@ export function KamsAssignmentReports() {
             </div>
           ) : null}
         </div>
-        <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+        <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-lhms text-white">
@@ -605,7 +605,7 @@ export function KamsAssignmentReports() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-lhms text-white">

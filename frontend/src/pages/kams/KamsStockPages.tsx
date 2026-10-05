@@ -267,7 +267,7 @@ export function KamsStockStats() {
               <YAxis width={36} allowDecimals={false} tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend />
-              <Area type="monotone" dataKey="transfers" name={t('kams.transfers')} stroke="#094924" fill="#09492422" />
+              <Area type="monotone" dataKey="transfers" name={t('kams.transfers')} stroke="#043711" fill="#04371122" />
               <Area type="monotone" dataKey="assignments" name={t('kams.assignments')} stroke="#2d8a5a" fillOpacity={0} />
               <Area type="monotone" dataKey="sales" name={t('kams.sales')} stroke="#c9a227" fillOpacity={0} />
             </AreaChart>

@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'company_id', 'office_id', 'candidate_id', 'interview_date', 'interview_starts_at', 'interview_ends_at',
     'observation_starts_at', 'observation_ends_at', 'interviewer_name', 'interviewer_user_id',
-    'attended', 'notes', 'abandonment_reason', 'result', 'recorded_by', 'recorded_at',
+    'attended', 'notes', 'abandonment_reason', 'rejection_reason', 'result', 'recorded_by', 'recorded_at',
 ])]
 class KamsInterview extends Model
 {

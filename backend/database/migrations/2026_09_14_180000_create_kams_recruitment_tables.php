@@ -24,7 +24,7 @@ return new class extends Migration
             $table->string('manager_name')->nullable();
             $table->string('team_name')->nullable();
             $table->string('rank')->nullable();
-            $table->enum('origin', ['new_recruit', 'migrated'])->default('new_recruit');
+            $table->enum('origin', ['new_recruit', 'migrated', 'staff'])->default('new_recruit');
             $table->enum('status', ['pending_verification', 'verified', 'active', 'inactive', 'disputed'])->default('active');
             $table->date('joined_on')->nullable();
             $table->timestamp('migrated_at')->nullable();

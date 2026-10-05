@@ -27,6 +27,11 @@ return new class extends Migration
         });
 
         Schema::table('kams_stock_balances', function (Blueprint $table) {
+            // Unique (depot_id, product_id) is the supporting index of the depot FK.
+            $table->index('depot_id');
+        });
+
+        Schema::table('kams_stock_balances', function (Blueprint $table) {
             $table->dropUnique(['depot_id', 'product_id']);
             $table->unique(['depot_id', 'product_id', 'condition']);
         });
@@ -208,6 +213,10 @@ return new class extends Migration
             $table->dropUnique(['depot_id', 'product_id', 'condition']);
             $table->unique(['depot_id', 'product_id']);
             $table->dropColumn('condition');
+        });
+
+        Schema::table('kams_stock_balances', function (Blueprint $table) {
+            $table->dropIndex(['depot_id']);
         });
         Schema::table('kams_depots', function (Blueprint $table) {
             $table->dropConstrainedForeignId('manager_user_id');

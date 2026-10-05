@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Mail\PasswordResetMail;
 use App\Models\Concerns\HasLhmsPermissions;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -11,11 +12,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Mail;
 use Laravel\Sanctum\HasApiTokens;
 
 #[Fillable([
     'first_name',
     'last_name',
+    'gender',
     'name',
     'email',
     'phone',
@@ -76,5 +79,10 @@ class User extends Authenticatable
     public function tasks()
     {
         return $this->hasMany(Task::class);
+    }
+
+    public function sendPasswordResetNotification($token): void
+    {
+        Mail::to($this->email)->send(new PasswordResetMail($this, (string) $token));
     }
 }

@@ -204,7 +204,7 @@ export function AppShell() {
             {userMenuOpen ? (
               <div
                 role="menu"
-                className="absolute inset-x-4 bottom-full z-50 mb-2 overflow-hidden rounded-2xl border border-white/10 bg-white py-1 text-ink shadow-[0_16px_40px_rgba(9,73,36,0.18)]"
+                className="absolute inset-x-4 bottom-full z-50 mb-2 overflow-hidden rounded-2xl border border-white/10 bg-white py-1 text-ink shadow-[0_16px_40px_rgba(4,55,17,0.18)]"
               >
                 <button
                   type="button"
@@ -239,7 +239,7 @@ export function AppShell() {
 
       <div className={cn('flex min-w-0 flex-col', isHome ? 'min-h-dvh' : 'pb-20 lg:pb-0')}>
         <header className={cn(
-          'sticky top-0 z-30 flex items-center justify-between gap-3 px-4 py-3 lg:px-8',
+          'sticky top-0 z-30 flex items-center justify-between gap-3 px-4 py-1.5 lg:px-8',
           isHome ? 'border-b border-white/10 bg-black/20 text-white backdrop-blur-xl' : 'border-b border-line bg-white/90 backdrop-blur',
         )}>
           <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -253,7 +253,10 @@ export function AppShell() {
               </button>
             ) : null}
             {isHome ? (
-              <span className="font-semibold tracking-[0.18em] text-white/80">LHMS</span>
+              <div className="flex items-center gap-2.5">
+                <img src="/lali_holdings_logo.png" alt="Lali Holdings" className="h-9 w-auto object-contain drop-shadow-sm sm:h-10" />
+                <span className="font-semibold tracking-[0.18em] text-white/80">LHMS</span>
+              </div>
             ) : currentModule && ModuleIcon ? (
               <div className="flex min-w-0 items-center gap-2 text-lhms">
                 <ModuleIcon size={20} className="shrink-0" aria-hidden />
@@ -272,7 +275,9 @@ export function AppShell() {
               onChange={(e) => setLocale(e.target.value)}
               className={cn(
                 'min-h-10 rounded-xl px-2 text-sm',
-                isHome ? 'border border-white/15 bg-white/90 text-ink' : 'border border-line bg-white',
+                isHome
+                  ? 'border border-white/25 bg-transparent text-white [&>option]:bg-lhms [&>option]:text-white'
+                  : 'border border-line bg-white',
               )}
             >
               <option value="fr">FR</option>
@@ -305,7 +310,7 @@ export function AppShell() {
                   />
                   <div
                     role="menu"
-                    className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-line bg-white py-1 shadow-[0_16px_40px_rgba(9,73,36,0.18)]"
+                    className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-line bg-white py-1 shadow-[0_16px_40px_rgba(4,55,17,0.18)]"
                   >
                     <button
                       type="button"
@@ -387,7 +392,7 @@ export function AppShell() {
       {moreOpen && (plusModule || businessSlug) ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button type="button" className="absolute inset-0 bg-black/40" aria-label={t('common.close')} onClick={() => setMoreOpen(false)} />
-          <div className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_40px_rgba(9,73,36,0.18)]">
+          <div className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_40px_rgba(4,55,17,0.18)]">
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-line" />
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="truncate text-base font-bold text-lhms">{t('nav.moreOptions')}</div>

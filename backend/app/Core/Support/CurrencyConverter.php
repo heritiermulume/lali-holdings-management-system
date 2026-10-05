@@ -4,28 +4,12 @@ namespace App\Core\Support;
 
 use App\Models\Currency;
 use App\Models\ExchangeRate;
-use App\Models\Setting;
+use App\Support\SettingsCatalog;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 class CurrencyConverter
 {
-    private const FALLBACK = [
-        'USD' => 1.0,
-        'EUR' => 0.86,
-        'GBP' => 0.74,
-        'CDF' => 2850.0,
-        'TZS' => 2470.0,
-        'KES' => 129.0,
-        'ZAR' => 17.6,
-        'XAF' => 560.0,
-        'XOF' => 560.0,
-        'AED' => 3.67,
-        'CNY' => 7.12,
-        'CHF' => 0.80,
-        'CAD' => 1.37,
-        'JPY' => 147.0,
-    ];
-
     public function defaultCode(): string
     {
         return Currency::defaultCode();
@@ -33,14 +17,12 @@ class CurrencyConverter
 
     public function spread(): float
     {
-        $percent = (float) Setting::getValue('finance', 'fx_spread_percent', 1.5);
-
-        return max(0, $percent) / 100;
+        return max(0, SettingsCatalog::number('finance', 'fx_spread_percent')) / 100;
     }
 
     public function decimals(): int
     {
-        $places = (int) Setting::getValue('finance', 'decimal_places', 2);
+        $places = (int) SettingsCatalog::number('finance', 'decimal_places');
 
         return max(0, min(6, $places));
     }
@@ -61,7 +43,7 @@ class CurrencyConverter
             return (float) $rate;
         }
 
-        return self::FALLBACK[$code] ?? 1.0;
+        throw new RuntimeException("No exchange rate found for {$code}. Sync market rates first.");
     }
 
     /** How many units of $to equal 1 unit of $from (mid market). */
@@ -76,7 +58,7 @@ class CurrencyConverter
         $fromUsd = $this->usdPer($from);
         $toUsd = $this->usdPer($to);
         if ($fromUsd <= 0) {
-            return 1.0;
+            throw new RuntimeException("Invalid exchange rate for {$from}.");
         }
 
         return $toUsd / $fromUsd;
@@ -125,24 +107,22 @@ class CurrencyConverter
             ->json();
 
         $rates = is_array($payload['rates'] ?? null) ? $payload['rates'] : [];
-        $source = 'open.er-api.com';
-        $fetchedAt = now();
-
         if ($rates === []) {
-            $rates = self::FALLBACK;
-            $source = 'fallback';
+            throw new RuntimeException('Unable to fetch market exchange rates.');
         }
 
+        $source = 'open.er-api.com';
+        $fetchedAt = now();
         $rates['USD'] = 1;
 
         $codes = Currency::query()->pluck('code')->all();
         if ($codes === []) {
-            $codes = array_keys($rates);
+            throw new RuntimeException('No currencies configured in the database.');
         }
 
         foreach (array_unique(array_merge($codes, ['USD'])) as $code) {
             $code = strtoupper((string) $code);
-            $mid = (float) ($rates[$code] ?? self::FALLBACK[$code] ?? 0);
+            $mid = (float) ($rates[$code] ?? 0);
             if ($mid <= 0) {
                 continue;
             }

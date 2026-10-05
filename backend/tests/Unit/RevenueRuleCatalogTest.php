@@ -31,4 +31,10 @@ class RevenueRuleCatalogTest extends TestCase
         $this->assertSame('(400 / 4) × 20%', RevenueRuleCatalog::formula(RevenueRuleCatalog::ASSISTANT_MANAGER, 400, 20, 4));
         $this->assertSame('100 × 20%', RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_SALE, 100, 20));
     }
+
+    public function test_assistant_share_requires_positive_divisor(): void
+    {
+        $this->assertSame(0.0, RevenueRuleCatalog::assistantShare(400, 0, 20));
+        $this->assertSame(0.0, RevenueRuleCatalog::assistantShare(400, -2, 20));
+    }
 }

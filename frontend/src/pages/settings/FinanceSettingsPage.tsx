@@ -66,10 +66,10 @@ export function FinanceSettingsPage() {
   const [drafts, setDrafts] = useState<Record<number, CountryTax>>({})
   const [currencies, setCurrencies] = useState<FxCurrency[]>([])
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
-  const [defaultCode, setDefaultCode] = useState('USD')
-  const [amount, setAmount] = useState('100')
-  const [from, setFrom] = useState('USD')
-  const [to, setTo] = useState('CDF')
+  const [defaultCode, setDefaultCode] = useState('')
+  const [amount, setAmount] = useState('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [converted, setConverted] = useState<{ mid: number; buy: number; sell: number; to: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [savingCountry, setSavingCountry] = useState<number | null>(null)
@@ -94,14 +94,15 @@ export function FinanceSettingsPage() {
     setCountries(countryRows)
     setDrafts(Object.fromEntries(countryRows.map((row) => [row.id, row])))
     setCurrencies(data.currencies ?? [])
-    setDefaultCode(data.default ?? 'USD')
+    setDefaultCode(data.default ?? '')
     setCatalog(list.data.data ?? [])
     const stamp = (data.currencies ?? []).find((item: FxCurrency) => item.fetched_at)?.fetched_at
     if (stamp) setSynced(stamp)
     const active = (data.currencies ?? []).filter((item: FxCurrency) => item.is_active)
     if (active.length) {
-      setFrom((current) => active.some((item: FxCurrency) => item.code === current) ? current : data.default)
-      setTo((current) => active.some((item: FxCurrency) => item.code === current) ? current : (active.find((item: FxCurrency) => item.code !== data.default)?.code ?? data.default))
+      const fallback = data.default || active[0]?.code || ''
+      setFrom((current) => active.some((item: FxCurrency) => item.code === current) ? current : fallback)
+      setTo((current) => active.some((item: FxCurrency) => item.code === current) ? current : (active.find((item: FxCurrency) => item.code !== fallback)?.code ?? fallback))
     }
   }
 

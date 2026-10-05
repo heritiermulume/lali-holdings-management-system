@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\FinanceController;
@@ -16,6 +15,8 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
     Route::post('auth/login', [AuthController::class, 'login']);
+    Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword']);
+    Route::post('auth/reset-password', [AuthController::class, 'resetPassword']);
     Route::get('public/bootstrap', [SettingController::class, 'bootstrap']);
 
     Route::middleware('auth:sanctum')->group(function () {
@@ -101,9 +102,9 @@ Route::prefix('v1')->group(function () {
         Route::put('activities/{activity}', [OrganizationController::class, 'updateActivity'])->middleware(EnsurePermission::class.':organization.update');
         Route::delete('activities/{activity}', [OrganizationController::class, 'destroyActivity'])->middleware(EnsurePermission::class.':organization.delete');
 
-        Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware(EnsurePermission::class.':audit.view');
         Route::get('settings', [SettingController::class, 'index'])->middleware(EnsurePermission::class.':settings.manage');
         Route::put('settings', [SettingController::class, 'update'])->middleware(EnsurePermission::class.':settings.manage');
+        Route::post('settings/mail-test', [SettingController::class, 'testMail'])->middleware(EnsurePermission::class.':settings.manage');
 
         Route::get('finance', [FinanceController::class, 'overview'])->middleware(EnsurePermission::class.':settings.manage');
         Route::get('finance/catalog', [FinanceController::class, 'catalog'])->middleware(EnsurePermission::class.':settings.manage');

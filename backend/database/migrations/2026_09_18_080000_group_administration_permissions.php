@@ -36,7 +36,6 @@ return new class extends Migration
             'companies.create' => 'companies',
             'companies.update' => 'companies',
             'companies.delete' => 'companies',
-            'audit.view' => 'audit',
             'settings.manage' => 'settings',
         ];
 

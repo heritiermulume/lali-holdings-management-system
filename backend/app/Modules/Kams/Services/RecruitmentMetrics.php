@@ -8,8 +8,8 @@ use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsMemberImportRow;
 use App\Modules\Kams\Models\KamsObservationDay;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Carbon;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
 class RecruitmentMetrics
@@ -82,9 +82,6 @@ class RecruitmentMetrics
             if ($row->result === 'abandoned') {
                 $series[$bucket]['abandoned']++;
             }
-            if ($row->result === 'on_hold') {
-                $series[$bucket]['on_hold']++;
-            }
         }
 
         foreach ($observationRows as $row) {
@@ -98,9 +95,6 @@ class RecruitmentMetrics
             }
             if ($row->decision === 'rejected') {
                 $series[$bucket]['rejected']++;
-            }
-            if ($row->decision === 'on_hold') {
-                $series[$bucket]['on_hold']++;
             }
         }
 
@@ -128,7 +122,6 @@ class RecruitmentMetrics
                 'observations' => (int) array_sum(array_column($seriesList, 'observations')),
                 'approved' => $approved,
                 'rejected' => (int) array_sum(array_column($seriesList, 'rejected')),
-                'on_hold' => (int) array_sum(array_column($seriesList, 'on_hold')),
                 'abandoned' => (int) array_sum(array_column($seriesList, 'abandoned')),
                 'new_members' => (int) array_sum(array_column($seriesList, 'new_members')),
                 'conversion_rate' => $applications > 0 ? round(($approved / $applications) * 100, 1) : 0,
@@ -136,9 +129,17 @@ class RecruitmentMetrics
                 'observation_attendance' => $this->attendanceRate($observationRows),
             ],
             'series' => $seriesList,
-            'pipeline' => $this->countBy((clone $candidates)->whereNotIn('status', ['registered']), 'status'),
-            'interview_results' => $this->countBy($interviewRows, 'result'),
-            'observation_decisions' => $this->countBy($observationRows, 'decision'),
+            'pipeline' => collect($this->countBy((clone $candidates)->whereNotIn('status', ['registered', 'on_hold']), 'status'))
+                ->values()
+                ->all(),
+            'interview_results' => collect($this->countBy($interviewRows, 'result'))
+                ->reject(fn (array $row) => ($row['key'] ?? '') === 'on_hold')
+                ->values()
+                ->all(),
+            'observation_decisions' => collect($this->countBy($observationRows, 'decision'))
+                ->reject(fn (array $row) => ($row['key'] ?? '') === 'on_hold')
+                ->values()
+                ->all(),
             'sources' => $this->countBy($applied, 'source'),
             'members' => [
                 'total' => (clone $members)->count(),
@@ -185,7 +186,6 @@ class RecruitmentMetrics
                 'approved' => $approved,
                 'rejected' => (clone $applied)->where('status', 'rejected')->count(),
                 'abandoned' => (clone $applied)->where('status', 'abandoned')->count(),
-                'on_hold' => (clone $applied)->where('status', 'on_hold')->count(),
                 'conversion_rate' => $applications > 0 ? round(($approved / $applications) * 100, 1) : 0,
             ],
             'migration' => [

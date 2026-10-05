@@ -56,7 +56,7 @@ export function PresenceMap({ countries }: { countries: PresenceCountry[] }) {
       const name = localeFr ? country.name_fr : country.name
       L.circleMarker(point, {
         radius: 9,
-        color: '#094924',
+        color: '#043711',
         weight: 2,
         fillColor: '#16a34a',
         fillOpacity: 0.85,
@@ -82,5 +82,5 @@ export function PresenceMap({ countries }: { countries: PresenceCountry[] }) {
     return <p className="text-sm text-muted">{t('dashboard.mapEmpty')}</p>
   }
 
-  return <div ref={container} className="relative z-0 isolate h-80 w-full overflow-hidden rounded-2xl" />
+  return <div ref={container} className="relative z-0 isolate h-56 w-full overflow-hidden rounded-2xl sm:h-72 xl:h-80" />
 }

@@ -57,9 +57,6 @@ function toneFor(status: string): 'green' | 'amber' | 'red' | 'slate' {
   return 'slate'
 }
 
-const SEGMENTS = ['retail', 'wholesale', 'distributor', 'corporate', 'other'] as const
-const STATUSES = ['prospect', 'active', 'inactive'] as const
-
 export function KamsClientsWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
@@ -93,6 +90,8 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   const [rows, setRows] = useState<Client[]>([])
   const [offices, setOffices] = useState<Office[]>([])
   const [warehouses, setWarehouses] = useState<Location[]>([])
+  const [segments, setSegments] = useState<string[]>([])
+  const [statuses, setStatuses] = useState<string[]>([])
   const [canChooseOffice, setCanChooseOffice] = useState(false)
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<number[]>([])
   const [assignAllWarehouses, setAssignAllWarehouses] = useState(true)
@@ -166,6 +165,8 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
       const warehouseList = (res.data.data.warehouses || []) as Location[]
       setOffices(list)
       setWarehouses(warehouseList)
+      setSegments(res.data.data.options?.client_segments ?? [])
+      setStatuses(res.data.data.options?.client_statuses ?? [])
       setCanChooseOffice(Boolean(res.data.data.can_choose_office) || list.length > 1)
       setSelectedWarehouseIds(warehouseList.map((row) => row.id))
       setAssignAllWarehouses(true)
@@ -383,7 +384,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
             </button>
             {filterOpen ? (
               <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
-                {[{ value: '', label: t('common.all') }, ...STATUSES.map((value) => ({ value, label: t(`kams.status.${value}`) }))].map((option) => (
+                {[{ value: '', label: t('common.all') }, ...statuses.map((value) => ({ value, label: t(`kams.status.${value}`) }))].map((option) => (
                   <button
                     key={option.value || 'all'}
                     type="button"
@@ -560,14 +561,14 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
             <Field label={t('kams.city')} value={form.city || ''} onChange={(e) => setForm({ ...form, city: e.target.value })} />
             {!isSupplier ? (
               <Select label={t('kams.segment')} value={form.segment || 'retail'} onChange={(e) => setForm({ ...form, segment: e.target.value })}>
-                {SEGMENTS.map((segment) => (
+                {segments.map((segment) => (
                   <option key={segment} value={segment}>{t(`kams.segmentOption.${segment}`)}</option>
                 ))}
               </Select>
             ) : null}
           </div>
           <Select label={t('common.status')} value={form.status || (isSupplier ? 'active' : 'prospect')} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-            {STATUSES.map((value) => (
+            {statuses.map((value) => (
               <option key={value} value={value}>{t(`kams.status.${value}`)}</option>
             ))}
           </Select>

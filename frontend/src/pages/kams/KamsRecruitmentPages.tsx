@@ -1,4 +1,4 @@
-import { Camera, Check, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, EyeOff, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { Camera, Check, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -6,9 +6,10 @@ import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
+import { showAlert } from '../../lib/alert'
 import { cn } from '../../lib/cn'
 import { initials, roleLabel } from '../../lib/format'
-import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
+import { buildBrandedTableHtml, buildServiceCardHtml, printHtml } from '../../lib/printDocument'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
@@ -45,7 +46,7 @@ function presetRange(period: Exclude<ListPeriod, 'custom'>) {
 
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
 type LookupCompany = { id: number; name: string; code: string }
-type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null }
+type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null; rank?: string | null }
 type LookupUser = { id: number; name: string; email?: string | null; primary_company_id?: number | null }
 type LookupRole = { id: number; name: string; slug?: string; offices?: Array<{ id: number; company_id: number }> }
 type Candidate = {
@@ -66,9 +67,11 @@ type Candidate = {
   guardian_phone?: string | null
   guardian_member_id?: number | null
   sponsor_member_id?: number | null
+  sponsor_name?: string | null
   source: string
   status: string
   applied_at: string
+  notes?: string | null
   office?: { name?: string }
   member?: { member_code?: string } | null
   latest_interview?: {
@@ -102,6 +105,9 @@ type Member = {
   trainer_name?: string | null
   trainer_user_id?: number | null
   trainer?: { id: number; name: string; email?: string | null } | null
+  coach_member_id?: number | null
+  coach_name?: string | null
+  coach?: { id: number; full_name: string; member_code?: string | null } | null
   manager_member_id?: number | null
   assistant_manager_member_id?: number | null
   fixed_salary?: number | null
@@ -112,21 +118,27 @@ type Member = {
   role_id?: number | null
   role?: { id: number; name: string; slug?: string } | null
   first_week_completed?: boolean
+  company?: { id?: number; name?: string; legal_name?: string | null; code?: string } | null
   office?: { name?: string; code?: string }
+  candidate?: {
+    sponsor_name?: string | null
+    sponsor?: { id: number; full_name: string; member_code?: string | null } | null
+  } | null
+  coached_members_count?: number
+  coached_members?: Array<{
+    id: number
+    member_code: string
+    full_name: string
+    phone?: string | null
+    photo_url?: string | null
+    gender?: string | null
+    rank?: string | null
+    role?: { id: number; name: string; slug?: string } | null
+    office?: { name?: string; code?: string } | null
+  }>
   opening_positions?: Array<{ id: number; category: string; amount: string | number; is_opening_balance: boolean }>
   account?: MemberAccount
 }
-function memberAccount(value: unknown): MemberAccount {
-  if (!value || typeof value !== 'object') return {}
-  const account = value as MemberAccount
-  return {
-    email: typeof account.email === 'string' ? account.email : null,
-    phone: typeof account.phone === 'string' ? account.phone : null,
-    password: typeof account.password === 'string' ? account.password : null,
-    is_active: Boolean(account.is_active),
-  }
-}
-
 function membersFromImport(data: { rows?: Array<{ member?: Member }> } | undefined): Member[] {
   return (data?.rows || []).map((row) => row.member).filter((member): member is Member => Boolean(member))
 }
@@ -532,6 +544,8 @@ export function KamsAgents() {
   const [users, setUsers] = useState<LookupUser[]>([])
   const [roles, setRoles] = useState<LookupRole[]>([])
   const [lookupMembers, setLookupMembers] = useState<LookupPerson[]>([])
+  const [memberOrigins, setMemberOrigins] = useState<string[]>([])
+  const [importSources, setImportSources] = useState<string[]>([])
   const [origin, setOrigin] = useState('')
   const [officeId, setOfficeId] = useState('')
   const [search, setSearch] = useState('')
@@ -557,6 +571,8 @@ export function KamsAgents() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [printMenuOpen, setPrintMenuOpen] = useState(false)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
+  const [printPreviewTitle, setPrintPreviewTitle] = useState('')
+  const [coachedOpen, setCoachedOpen] = useState(false)
   const [credentials, setCredentials] = useState<Member[]>([])
   const photoInput = useRef<HTMLInputElement>(null)
   const filterRef = useRef<HTMLDivElement>(null)
@@ -595,6 +611,15 @@ export function KamsAgents() {
       setUsers(res.data.data.users ?? [])
       setRoles(res.data.data.roles ?? [])
       setLookupMembers(res.data.data.members ?? [])
+      setMemberOrigins(res.data.data.options?.member_origins ?? [])
+      setImportSources(res.data.data.options?.import_sources ?? [])
+      const sources = res.data.data.options?.import_sources as string[] | undefined
+      if (sources?.length) {
+        setImportForm((current) => ({
+          ...current,
+          source: sources.includes(current.source) ? current.source : sources[0],
+        }))
+      }
     })
   }, [])
 
@@ -659,6 +684,41 @@ export function KamsAgents() {
     const res = await api.get(`/modules/kams/members/${row.id}`)
     setViewing(row)
     setDetail(res.data.data)
+    setCoachedOpen(false)
+  }
+
+  const memberDetail = detail as Member | null
+  const memberRoleLabel = memberDetail
+    ? (memberDetail.role
+      ? roleLabel(t, memberDetail.role, memberDetail.gender)
+      : memberRankLabel(t, memberDetail.rank, memberDetail.gender))
+    : ''
+  const memberEncadreur = memberDetail
+    ? (memberDetail.coach?.full_name || memberDetail.coach_name || memberDetail.trainer?.name || memberDetail.trainer_name || '—')
+    : '—'
+  const memberParrain = memberDetail
+    ? (memberDetail.candidate?.sponsor?.full_name
+      || memberDetail.candidate?.sponsor_name
+      || memberDetail.trainer?.name
+      || memberDetail.trainer_name
+      || '—')
+    : '—'
+  const coachedMembers = memberDetail?.coached_members || []
+  const coachedCount = memberDetail?.coached_members_count ?? coachedMembers.length
+
+  const previewServiceCard = () => {
+    if (!memberDetail) return
+    const absolutePhoto = memberDetail.photo_url
+      ? (memberDetail.photo_url.startsWith('http') ? memberDetail.photo_url : `${window.location.origin}${memberDetail.photo_url}`)
+      : null
+    setPrintPreviewTitle(t('kams.serviceCardPreview'))
+    setPrintPreviewHtml(buildServiceCardHtml({
+      companyName: memberDetail.company?.name || '',
+      fullName: personName(memberDetail),
+      role: memberRoleLabel,
+      office: memberDetail.office?.name || '—',
+      photoUrl: absolutePhoto,
+    }))
   }
 
   const submitAgent = async (event: FormEvent) => {
@@ -843,6 +903,7 @@ export function KamsAgents() {
   }
 
   const previewAgents = async () => {
+    setPrintPreviewTitle(t('common.printPreview'))
     setPrintPreviewHtml(buildBrandedTableHtml(agentPrintOptions(rows)))
     const list = await loadAgentsForPrint()
     setPrintPreviewHtml(buildBrandedTableHtml(agentPrintOptions(list)))
@@ -900,8 +961,7 @@ export function KamsAgents() {
               <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
                 {[
                   { value: '', label: t('common.all') },
-                  { value: 'new_recruit', label: t('kams.origin.new_recruit') },
-                  { value: 'migrated', label: t('kams.origin.migrated') },
+                  ...memberOrigins.map((value) => ({ value, label: t(`kams.origin.${value}`) })),
                 ].map((option) => (
                   <button
                     key={option.value || 'all'}
@@ -1007,7 +1067,7 @@ export function KamsAgents() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
         {loading && rows.length === 0 ? <LoadingScreen /> : (
           <>
         <div className="overflow-x-auto">
@@ -1205,7 +1265,7 @@ export function KamsAgents() {
             {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
           </Select>
           <Select label={t('kams.dataSource')} value={importForm.source} onChange={(e) => setImportForm({ ...importForm, source: e.target.value })}>
-            {['registry', 'database', 'excel', 'google_sheets', 'other'].map((source) => (
+            {importSources.map((source) => (
               <option key={source} value={source}>{t(`kams.importSource.${source}`)}</option>
             ))}
           </Select>
@@ -1242,38 +1302,55 @@ export function KamsAgents() {
         </form>
       </Modal>
 
-      <Modal open={Boolean(viewing)} title={personName(viewing)} onClose={() => { setViewing(null); setDetail(null) }}>
-        {detail ? (
+      <Modal open={Boolean(viewing)} title={t('kams.member')} onClose={() => { setViewing(null); setDetail(null); setCoachedOpen(false) }}>
+        {memberDetail ? (
           <div className="space-y-3 text-sm">
             <div className="flex justify-center pb-1">
-              <PersonPhoto name={personName({ ...(detail as Member), full_name: String(detail.full_name || viewing?.full_name || '') })} url={typeof detail.photo_url === 'string' ? detail.photo_url : null} className="h-20 w-20 text-xl" />
+              <PersonPhoto name={personName(memberDetail)} url={memberDetail.photo_url} className="h-20 w-20 text-xl" />
             </div>
-            <div>{t('kams.memberId')}: <strong>{String(detail.member_code)}</strong></div>
-            <div>{t('kams.email')}: <strong>{String(detail.email || '—')}</strong></div>
-            <div>{t('kams.phoneWhatsapp')}: <strong>{String(detail.phone || '—')}</strong></div>
-            <div>{t('kams.joinedOn')}: {String(detail.joined_on || '—')}</div>
-            {detail.migrated_at ? <div>{t('kams.migratedOn')}: {String(detail.migrated_at)}</div> : null}
-            <div>{t('users.role')}: <strong>{typeof detail.role === 'object' && detail.role ? roleLabel(t, detail.role as { slug?: string; name?: string }, typeof detail.gender === 'string' ? detail.gender : null) : memberRankLabel(t, typeof detail.rank === 'string' ? detail.rank : null, typeof detail.gender === 'string' ? detail.gender : null)}</strong></div>
-            <div>{t('kams.trainerCoach')}: {typeof detail.trainer === 'object' && detail.trainer && 'name' in detail.trainer ? String((detail.trainer as { name: string }).name) : String(detail.trainer_name || '—')}</div>
-            <AgentCredentialsCard
-              key={viewing?.id}
-              revealable
-              email={memberAccount(detail.account).email}
-              phone={memberAccount(detail.account).phone || (typeof detail.phone === 'string' ? detail.phone : undefined)}
-              password={memberAccount(detail.account).password}
-              isActive={Boolean(memberAccount(detail.account).is_active)}
-            />
-            <div className="font-semibold">{t('kams.openingBalances')}</div>
-            {((detail.opening_positions as Member['opening_positions']) || []).map((position) => (
-              <div key={position.id} className="rounded-xl bg-surface p-3">
-                {position.category}: {position.amount} · {t('kams.notANewTransaction')}
-              </div>
-            ))}
-            {detail.origin === 'new_recruit' && !detail.first_week_completed && hasPermission('kams.members.update') ? (
-              <Button onClick={() => void api.post(`/modules/kams/members/${detail.id}/first-week`).then(() => viewing && openView(viewing))}>{t('kams.completeFirstWeek')}</Button>
-            ) : null}
+            <div>{t('users.firstName')} / {t('users.lastName')}: <strong>{personName(memberDetail)}</strong></div>
+            <div>{t('kams.memberId')}: <strong>{memberDetail.member_code}</strong></div>
+            <div>{t('kams.email')}: <strong>{memberDetail.email || '—'}</strong></div>
+            <div>{t('kams.phoneWhatsapp')}: <strong>{memberDetail.phone || '—'}</strong></div>
+            <div>{t('kams.joinedOn')}: {memberDetail.joined_on || '—'}</div>
+            {memberDetail.migrated_at ? <div>{t('kams.migratedOn')}: {String(memberDetail.migrated_at)}</div> : null}
+            <div>{t('users.role')}: <strong>{memberRoleLabel}</strong></div>
+            <div>{t('kams.trainerCoach')}: <strong>{memberEncadreur}</strong></div>
+            <div>{t('kams.sponsor')}: <strong>{memberParrain}</strong></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{t('kams.coachedMembers')}: <strong>{t('kams.coachedMembersCount', { count: coachedCount })}</strong></span>
+              <Button
+                type="button"
+                variant="secondary"
+                className="!min-h-9 h-9 px-3"
+                disabled={coachedCount === 0}
+                onClick={() => setCoachedOpen(true)}
+              >
+                {t('kams.viewCoachedMembers')}
+              </Button>
+            </div>
+            <Button type="button" className="w-full" onClick={previewServiceCard}>
+              <Printer size={16} /> {t('kams.serviceCard')}
+            </Button>
           </div>
         ) : null}
+      </Modal>
+      <Modal open={coachedOpen} title={t('kams.coachedMembersList')} onClose={() => setCoachedOpen(false)}>
+        <div className="max-h-[60vh] space-y-2 overflow-auto">
+          {coachedMembers.map((item) => (
+            <div key={item.id} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2">
+              <PersonPhoto name={item.full_name} url={item.photo_url} className="h-10 w-10 text-xs" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold">{item.full_name}</div>
+                <div className="truncate text-xs text-muted">
+                  {[item.member_code, item.office?.name, item.role ? roleLabel(t, item.role, item.gender) : memberRankLabel(t, item.rank, item.gender)].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+            </div>
+          ))}
+          {coachedMembers.length === 0 ? <p className="text-sm text-muted">{t('common.empty')}</p> : null}
+        </div>
+        <Button className="mt-4 w-full" variant="secondary" onClick={() => setCoachedOpen(false)}>{t('common.close')}</Button>
       </Modal>
 
       <Modal open={Boolean(deleting)} title={t('kams.deleteAgent')} onClose={() => setDeleting(null)}>
@@ -1301,9 +1378,9 @@ export function KamsAgents() {
       </Modal>
       <PrintPreviewModal
         open={Boolean(printPreviewHtml)}
-        title={t('common.printPreview')}
+        title={printPreviewTitle || t('common.printPreview')}
         html={printPreviewHtml}
-        onClose={() => setPrintPreviewHtml('')}
+        onClose={() => { setPrintPreviewHtml(''); setPrintPreviewTitle('') }}
       />
     </div>
   )
@@ -1323,6 +1400,10 @@ export function KamsCandidates() {
   const [offices, setOffices] = useState<LookupOffice[]>([])
   const [people, setPeople] = useState<LookupPerson[]>([])
   const [users, setUsers] = useState<LookupUser[]>([])
+  const [roles, setRoles] = useState<LookupRole[]>([])
+  const [candidateSources, setCandidateSources] = useState<string[]>([])
+  const [interviewResults, setInterviewResults] = useState<string[]>([])
+  const [observationResults, setObservationResults] = useState<string[]>([])
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<Candidate | null>(null)
@@ -1370,6 +1451,10 @@ export function KamsCandidates() {
       setOffices(res.data.data.offices)
       setPeople(res.data.data.members ?? res.data.data.sponsors ?? [])
       setUsers(res.data.data.users ?? [])
+      setRoles(res.data.data.roles ?? [])
+      setCandidateSources(res.data.data.options?.candidate_sources ?? [])
+      setInterviewResults(res.data.data.options?.interview_results ?? [])
+      setObservationResults(res.data.data.options?.observation_results ?? [])
     })
   }, [])
 
@@ -1381,6 +1466,20 @@ export function KamsCandidates() {
     if (kams) return String(kams.id)
     return String(list[0].id)
   }
+
+  const distributorRoleIds = new Set(
+    roles.filter((role) => role.slug === 'distributor').map((role) => role.id),
+  )
+  const distributorUserIds = new Set(
+    people
+      .filter((person) => (
+        person.rank === 'Distributor'
+        || (person.role_id != null && distributorRoleIds.has(person.role_id))
+      ))
+      .map((person) => person.user_id)
+      .filter((id): id is number => Boolean(id))
+      .map(String),
+  )
 
   const resetCandidateForm = () => {
     setEditingId(null)
@@ -1415,8 +1514,6 @@ export function KamsCandidates() {
       email: row.email || '',
       address: row.address || '',
       source: row.source || '',
-      guardian_member_id: row.guardian_member_id ? String(row.guardian_member_id) : '',
-      sponsor_member_id: row.sponsor_member_id ? String(row.sponsor_member_id) : '',
     })
     setPhotoPreview(row.photo_url || null)
     setOpen(true)
@@ -1471,8 +1568,6 @@ export function KamsCandidates() {
     if (form.birth_date) payload.append('birth_date', form.birth_date)
     if (form.email) payload.append('email', form.email)
     if (form.address) payload.append('address', form.address)
-    if (form.guardian_member_id) payload.append('guardian_member_id', form.guardian_member_id)
-    if (form.sponsor_member_id) payload.append('sponsor_member_id', form.sponsor_member_id)
     if (photo) payload.append('photo', photo)
     if (editingId && photoRemoved && !photo) payload.append('remove_photo', '1')
 
@@ -1504,11 +1599,15 @@ export function KamsCandidates() {
     try {
       if (action === 'interview') {
         if (form.result === 'abandoned' && !form.abandonment_reason?.trim()) {
-          window.alert(t('kams.abandonmentReasonRequired'))
+          void showAlert(t('kams.abandonmentReasonRequired'), { tone: 'warning' })
+          return
+        }
+        if (form.result === 'rejected' && !form.rejection_reason?.trim()) {
+          void showAlert(t('kams.rejectionReasonRequired'), { tone: 'warning' })
           return
         }
         if (!form.interviewer_user_id) {
-          window.alert(t('kams.searchUser'))
+          void showAlert(t('kams.searchUser'), { tone: 'warning' })
           return
         }
         if (!form.result) return
@@ -1520,16 +1619,21 @@ export function KamsCandidates() {
           attended: form.attended === '1',
           notes: form.notes,
           abandonment_reason: form.abandonment_reason || null,
+          rejection_reason: form.rejection_reason || null,
           result: form.result,
         })
       }
       if (action === 'observation') {
         if (!form.supervisor_member_id) {
-          window.alert(t('kams.pickSupervisor'))
+          void showAlert(t('kams.pickSupervisor'), { tone: 'warning' })
+          return
+        }
+        if (form.decision === 'approved' && !form.sponsor_member_id) {
+          void showAlert(t('kams.sponsorRequired'), { tone: 'warning' })
           return
         }
         if (form.decision === 'rejected' && !form.rejection_reason?.trim()) {
-          window.alert(t('kams.rejectionReasonRequired'))
+          void showAlert(t('kams.rejectionReasonRequired'), { tone: 'warning' })
           return
         }
         const res = await api.post('/modules/kams/observation-days', {
@@ -1537,14 +1641,28 @@ export function KamsCandidates() {
           office_id: form.office_id ? Number(form.office_id) : null,
           observation_date: form.observation_date,
           supervisor_member_id: form.supervisor_member_id ? Number(form.supervisor_member_id) : null,
+          sponsor_member_id: form.decision === 'approved' && form.sponsor_member_id ? Number(form.sponsor_member_id) : null,
           attended: form.attended === '1',
           evaluation: form.evaluation,
           notes: form.notes,
           decision: form.decision,
           rejection_reason: form.rejection_reason || null,
         })
-        if (form.decision === 'approved' && res.data.data?.member) {
-          setCredentials([res.data.data.member as Member])
+        if (form.decision === 'approved') {
+          const payload = res.data.data as {
+            member?: Member
+            credentials?: MemberAccount
+          } | undefined
+          const member = payload?.member
+          if (member) {
+            setCredentials([{
+              ...member,
+              account: {
+                ...(member.account || {}),
+                ...(payload?.credentials || {}),
+              },
+            }])
+          }
         }
       }
       setAction(null)
@@ -1552,7 +1670,7 @@ export function KamsCandidates() {
       setPickingSupervisor(false)
       void load()
     } catch {
-      window.alert(t('common.save'))
+      void showAlert(t('kams.saveError'), { tone: 'danger' })
     }
   }
 
@@ -1564,9 +1682,12 @@ export function KamsCandidates() {
       void load()
     } catch (error) {
       const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message
-      window.alert(message === 'This application is already registered as a member.'
-        ? t('kams.cannotDeleteRegistered')
-        : t('kams.saveError'))
+      void showAlert(
+        message === 'This application is already registered as a member.'
+          ? t('kams.cannotDeleteRegistered')
+          : t('kams.saveError'),
+        { tone: 'danger' },
+      )
     }
   }
 
@@ -1578,33 +1699,37 @@ export function KamsCandidates() {
       hint: office.code,
     }))
   const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
-  const peopleOptions = people
-    .filter((person) => !form.company_id || String(person.company_id) === form.company_id)
-    .map((person): SearchComboboxItem => ({
-      id: String(person.id),
-      label: person.full_name,
-      hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
-    }))
-  const selectedGuardian = peopleOptions.find((item) => item.id === form.guardian_member_id) ?? null
-  const selectedSponsor = peopleOptions.find((item) => item.id === form.sponsor_member_id) ?? null
-  const supervisorPeople = people
-    .filter((person) => !detail?.company_id || String(person.company_id) === String(detail.company_id))
-    .map((person): SearchComboboxItem => ({
-      id: String(person.id),
-      label: person.full_name,
-      hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
-    }))
+  const companyPeople = people.filter((person) => !detail?.company_id || String(person.company_id) === String(detail.company_id))
+  const supervisorPeople = companyPeople.map((person): SearchComboboxItem => ({
+    id: String(person.id),
+    label: person.full_name,
+    hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
+  }))
   const selectedSupervisor = supervisorPeople.find((item) => item.id === form.supervisor_member_id) ?? null
   const supervisorQuery = (form.supervisor_query || '').trim().toLowerCase()
   const supervisorResults = supervisorPeople.filter((item) => {
     if (!supervisorQuery) return true
     return [item.label, item.hint ?? ''].join(' ').toLowerCase().includes(supervisorQuery)
   })
-  const interviewerOptions = users.map((item): SearchComboboxItem => ({
-    id: String(item.id),
-    label: item.name,
-    hint: item.email || undefined,
-  }))
+  const sponsorOptions = companyPeople
+    .filter((person) => (
+      person.user_id
+      && person.rank !== 'Distributor'
+      && !(person.role_id != null && distributorRoleIds.has(person.role_id))
+    ))
+    .map((person): SearchComboboxItem => ({
+      id: String(person.id),
+      label: person.full_name,
+      hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
+    }))
+  const selectedSponsor = sponsorOptions.find((item) => item.id === form.sponsor_member_id) ?? null
+  const interviewerOptions = users
+    .filter((item) => !distributorUserIds.has(String(item.id)))
+    .map((item): SearchComboboxItem => ({
+      id: String(item.id),
+      label: item.name,
+      hint: item.email || undefined,
+    }))
   const selectedInterviewer = interviewerOptions.find((item) => item.id === form.interviewer_user_id) ?? null
   const companySelected = Boolean(form.company_id)
 
@@ -1637,6 +1762,7 @@ export function KamsCandidates() {
           const interviewState = interviewStepState(row)
           const observationState = observationStepState(row)
           const openInterview = () => {
+            const defaultInterviewerId = user?.id && !distributorUserIds.has(String(user.id)) ? String(user.id) : ''
             setDetail(row)
             setAction('interview')
             setForm({
@@ -1644,7 +1770,8 @@ export function KamsCandidates() {
               result: '',
               attended: '1',
               abandonment_reason: '',
-              interviewer_user_id: user?.id ? String(user.id) : '',
+              rejection_reason: '',
+              interviewer_user_id: defaultInterviewerId,
               notes: '',
             })
           }
@@ -1659,10 +1786,11 @@ export function KamsCandidates() {
               decision: '',
               attended: '1',
               supervisor_member_id: '',
-                    supervisor_query: '',
-                    evaluation: '',
-                    notes: '',
-                    rejection_reason: '',
+              supervisor_query: '',
+              sponsor_member_id: '',
+              evaluation: '',
+              notes: '',
+              rejection_reason: '',
             })
           }
           const steps: Array<{
@@ -1719,7 +1847,7 @@ export function KamsCandidates() {
                   className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-surface"
                   onClick={() => {
                     if (!canDeleteCandidate(row)) {
-                      window.alert(t('kams.cannotDeleteRegistered'))
+                      void showAlert(t('kams.cannotDeleteRegistered'), { tone: 'warning' })
                       return
                     }
                     setDeleting(row)
@@ -1834,39 +1962,23 @@ export function KamsCandidates() {
             <Field label={t('users.firstName')} value={form.first_name || ''} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
             <Field label={t('users.lastName')} value={form.last_name || ''} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
           </div>
-          <Select label={t('kams.gender')} required value={form.gender || ''} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
-            <option value="">—</option>
-            <option value="male">{t('kams.genderMale')}</option>
-            <option value="female">{t('kams.genderFemale')}</option>
-          </Select>
-          <Field label={t('kams.birthDate')} type="date" value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label={t('kams.gender')} required value={form.gender || ''} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+              <option value="">—</option>
+              <option value="male">{t('kams.genderMale')}</option>
+              <option value="female">{t('kams.genderFemale')}</option>
+            </Select>
+            <Field label={t('kams.birthDate')} type="date" value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
+          </div>
           <Field label={t('kams.phoneWhatsapp')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
           <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <Field label={t('kams.address')} value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
-          <SearchCombobox
-            label={t('kams.guardianName')}
-            value={selectedGuardian}
-            items={peopleOptions}
-            disabled={!companySelected}
-            placeholder={companySelected ? t('kams.searchPerson') : t('kams.selectCompanyFirst')}
-            emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, guardian_member_id: item?.id ?? '' })}
-          />
           <Select label={t('kams.recruitmentSource')} required value={form.source || ''} onChange={(e) => setForm({ ...form, source: e.target.value })}>
             <option value="">—</option>
-            {['poster', 'qr_code', 'online_form', 'sponsorship', 'social_media', 'other'].map((source) => (
+            {candidateSources.map((source) => (
               <option key={source} value={source}>{t(`kams.source.${source}`)}</option>
             ))}
           </Select>
-          <SearchCombobox
-            label={t('kams.sponsor')}
-            value={selectedSponsor}
-            items={peopleOptions}
-            disabled={!companySelected}
-            placeholder={companySelected ? t('kams.searchPerson') : t('kams.selectCompanyFirst')}
-            emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, sponsor_member_id: item?.id ?? '' })}
-          />
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
@@ -1880,8 +1992,13 @@ export function KamsCandidates() {
         </div>
       </Modal>
 
-      <Modal open={Boolean(detail && action)} title={personName(detail as Candidate)} onClose={() => { setDetail(null); setAction(null); setPickingSupervisor(false) }}>
+      <Modal
+        open={Boolean(detail && action)}
+        title={action === 'observation' ? t('kams.observation') : t('kams.interview')}
+        onClose={() => { setDetail(null); setAction(null); setPickingSupervisor(false) }}
+      >
         <form className="space-y-3" onSubmit={(e) => void saveStage(e)}>
+          <p className="text-base font-semibold sm:text-lg">{personName(detail as Candidate)}</p>
           {action === 'interview' ? (
             <>
               <p className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
@@ -1907,11 +2024,21 @@ export function KamsCandidates() {
                 onChange={(e) => setForm({ ...form, result: e.target.value })}
               >
                 <option value="">—</option>
-                <option value="admitted">{t('kams.status.admitted')}</option>
-                <option value="rejected">{t('kams.status.rejected')}</option>
-                <option value="on_hold">{t('kams.status.on_hold')}</option>
-                <option value="abandoned">{t('kams.status.abandoned')}</option>
+                {interviewResults.map((result) => (
+                  <option key={result} value={result}>{t(`kams.status.${result}`)}</option>
+                ))}
               </Select>
+              {form.result === 'rejected' ? (
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">{t('kams.rejectionReason')} <span className="text-danger">*</span></span>
+                  <textarea
+                    required
+                    className="min-h-24 w-full rounded-xl border border-line px-3 py-2 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4"
+                    value={form.rejection_reason || ''}
+                    onChange={(e) => setForm({ ...form, rejection_reason: e.target.value })}
+                  />
+                </label>
+              ) : null}
               {form.result === 'abandoned' ? (
                 <label className="block space-y-1.5">
                   <span className="text-sm font-medium">{t('kams.abandonmentReason')} <span className="text-danger">*</span></span>
@@ -1953,12 +2080,22 @@ export function KamsCandidates() {
                 <option value="0">{t('kams.absent')}</option>
               </Select>
               <Field label={t('kams.evaluation')} value={form.evaluation || ''} onChange={(e) => setForm({ ...form, evaluation: e.target.value })} />
-              <Select label={t('kams.finalDecision')} required value={form.decision || ''} onChange={(e) => setForm({ ...form, decision: e.target.value })}>
+              <Select label={t('kams.finalDecision')} required value={form.decision || ''} onChange={(e) => setForm({ ...form, decision: e.target.value, sponsor_member_id: e.target.value === 'approved' ? form.sponsor_member_id || '' : '' })}>
                 <option value="">—</option>
-                <option value="approved">{t('kams.status.approved')}</option>
-                <option value="rejected">{t('kams.status.rejected')}</option>
-                <option value="on_hold">{t('kams.status.on_hold')}</option>
+                {observationResults.map((result) => (
+                  <option key={result} value={result}>{t(`kams.status.${result}`)}</option>
+                ))}
               </Select>
+              {form.decision === 'approved' ? (
+                <SearchCombobox
+                  label={`${t('kams.sponsor')} *`}
+                  value={selectedSponsor}
+                  items={sponsorOptions}
+                  placeholder={t('kams.pickSponsor')}
+                  emptyLabel={t('common.empty')}
+                  onSelect={(item) => setForm({ ...form, sponsor_member_id: item?.id ?? '' })}
+                />
+              ) : null}
               {form.decision === 'rejected' ? (
                 <label className="block space-y-1.5">
                   <span className="text-sm font-medium">{t('kams.rejectionReason')} <span className="text-danger">*</span></span>
@@ -2068,6 +2205,9 @@ export function KamsRecruitmentReports() {
   const [total, setTotal] = useState(0)
   const [printMenuOpen, setPrintMenuOpen] = useState(false)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
+  const [viewing, setViewing] = useState<Candidate | null>(null)
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const printMenuRef = useRef<HTMLDivElement>(null)
   const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
 
@@ -2176,6 +2316,36 @@ export function KamsRecruitmentReports() {
     setPrintPreviewHtml(buildBrandedTableHtml(printOptions(list)))
   }
 
+  const openCandidateDetails = async (row: Candidate) => {
+    setViewing(row)
+    setDetail(null)
+    setDetailLoading(true)
+    try {
+      const res = await api.get(`/modules/kams/candidates/${row.id}`)
+      setDetail(res.data.data ?? null)
+    } catch {
+      setViewing(null)
+      void showAlert(t('kams.saveError'), { tone: 'danger' })
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  const detailCandidate = (detail || viewing) as Candidate | null
+  const detailSponsor = detail && typeof detail.sponsor === 'object' && detail.sponsor && 'full_name' in detail.sponsor
+    ? String((detail.sponsor as { full_name: string }).full_name)
+    : null
+  const byLatestId = (items: Array<Record<string, unknown>>) =>
+    [...items].sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+  const detailInterviews = Array.isArray(detail?.interviews) ? byLatestId(detail.interviews as Array<Record<string, unknown>>) : []
+  const detailObservations = Array.isArray(detail?.observation_days)
+    ? byLatestId(detail.observation_days as Array<Record<string, unknown>>)
+    : Array.isArray(detail?.observationDays)
+      ? byLatestId(detail.observationDays as Array<Record<string, unknown>>)
+      : []
+  const latestInterview = detailInterviews[0] || null
+  const latestObservation = detailObservations[0] || null
+
   const rangeStart = total === 0 ? 0 : (page - 1) * perPage + 1
   const rangeEnd = Math.min(page * perPage, total)
 
@@ -2222,7 +2392,7 @@ export function KamsRecruitmentReports() {
           ) : null}
         </div>
       </div>
-      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
         {loading && rows.length === 0 ? <LoadingScreen /> : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -2235,12 +2405,13 @@ export function KamsRecruitmentReports() {
                   <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.recruitmentSource')}</th>
                   <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.status')}</th>
                   <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.appliedOn')}</th>
+                  <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                    <td colSpan={8} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
                   </tr>
                 ) : rows.map((row, index) => (
                   <tr key={row.id} className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
@@ -2253,6 +2424,17 @@ export function KamsRecruitmentReports() {
                       <Badge tone={toneFor(row.status)}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
                     </td>
                     <td className="px-4 py-1.5 whitespace-nowrap text-muted">{row.applied_at ? formatDay(row.applied_at.slice(0, 10)) : '—'}</td>
+                    <td className="px-4 py-1.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        aria-label={t('common.view')}
+                        title={t('common.view')}
+                        className="grid h-8 w-8 place-items-center rounded-lg bg-lhms-soft text-lhms hover:bg-[#d7eadb]"
+                        onClick={() => void openCandidateDetails(row)}
+                      >
+                        <Info size={16} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -2304,6 +2486,114 @@ export function KamsRecruitmentReports() {
           </div>
         </div>
       </div>
+      <Modal open={Boolean(viewing)} title={t('kams.candidateDetails')} onClose={() => { setViewing(null); setDetail(null) }}>
+        {detailLoading || !detailCandidate ? (
+          <LoadingScreen />
+        ) : (
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-center pb-1">
+              <PersonPhoto name={personName(detailCandidate)} url={detailCandidate.photo_url} className="h-20 w-20 text-xl" />
+            </div>
+            <div>{t('users.firstName')} / {t('users.lastName')}: <strong>{personName(detailCandidate)}</strong></div>
+            <div>{t('kams.candidateId')}: <strong>{detailCandidate.candidate_id}</strong></div>
+            <div>{t('kams.gender')}: <strong>{detailCandidate.gender ? t(`kams.gender${detailCandidate.gender === 'female' ? 'Female' : 'Male'}`) : '—'}</strong></div>
+            <div>{t('kams.birthDate')}: <strong>{detailCandidate.birth_date ? formatDay(String(detailCandidate.birth_date).slice(0, 10)) : '—'}</strong></div>
+            <div>{t('kams.phoneWhatsapp')}: <strong>{detailCandidate.phone || '—'}</strong></div>
+            <div>{t('kams.email')}: <strong>{detailCandidate.email || '—'}</strong></div>
+            <div>{t('kams.address')}: <strong>{detailCandidate.address || '—'}</strong></div>
+            <div>{t('kams.office')}: <strong>{detailCandidate.office?.name || '—'}</strong></div>
+            <div>{t('kams.recruitmentSource')}: <strong>{t(`kams.source.${detailCandidate.source}`, { defaultValue: detailCandidate.source })}</strong></div>
+            <div>{t('kams.sponsor')}: <strong>{detailSponsor || detailCandidate.sponsor_name || '—'}</strong></div>
+            {detailCandidate.guardian_name ? (
+              <div>{t('kams.guardianName')}: <strong>{detailCandidate.guardian_name}</strong></div>
+            ) : null}
+            {detailCandidate.guardian_phone ? (
+              <div>{t('kams.guardianPhone')}: <strong>{detailCandidate.guardian_phone}</strong></div>
+            ) : null}
+            <div>{t('common.status')}: <Badge tone={toneFor(detailCandidate.status)}>{t(`kams.status.${detailCandidate.status}`, { defaultValue: detailCandidate.status })}</Badge></div>
+            <div>{t('kams.appliedOn')}: <strong>{detailCandidate.applied_at ? formatDay(detailCandidate.applied_at.slice(0, 10)) : '—'}</strong></div>
+            {detailCandidate.member?.member_code ? (
+              <div>{t('kams.memberId')}: <strong>{detailCandidate.member.member_code}</strong></div>
+            ) : null}
+            {detailCandidate.notes ? (
+              <div className="rounded-xl bg-surface p-3">
+                <div className="font-semibold">{t('kams.notes')}</div>
+                <p className="mt-1 whitespace-pre-wrap text-muted">{detailCandidate.notes}</p>
+              </div>
+            ) : null}
+            {latestInterview ? (
+              <div className="rounded-xl bg-surface p-3">
+                <div className="font-semibold">{t('kams.interview')}</div>
+                {latestInterview.interview_date ? (
+                  <div className="mt-1 text-muted">{t('kams.interviewDate')}: {formatDay(String(latestInterview.interview_date).slice(0, 10))}</div>
+                ) : null}
+                {latestInterview.interviewer_name ? (
+                  <div className="mt-1 text-muted">{t('kams.interviewer')}: {String(latestInterview.interviewer_name)}</div>
+                ) : null}
+                <div className="mt-1 text-muted">
+                  {t('kams.attendance')}: {latestInterview.attended === false || latestInterview.attended === 0
+                    ? t('kams.absent')
+                    : latestInterview.attended === true || latestInterview.attended === 1
+                      ? t('kams.present')
+                      : '—'}
+                </div>
+                <div className="mt-1 text-muted">
+                  {t('kams.result')}: {latestInterview.result ? t(`kams.status.${String(latestInterview.result)}`, { defaultValue: String(latestInterview.result) }) : '—'}
+                </div>
+                {latestInterview.notes ? (
+                  <div className="mt-2">
+                    <div className="font-medium">{t('kams.notes')}</div>
+                    <p className="mt-1 whitespace-pre-wrap text-muted">{String(latestInterview.notes)}</p>
+                  </div>
+                ) : null}
+                {latestInterview.rejection_reason ? (
+                  <div className="mt-1 text-muted">{t('kams.rejectionReason')}: {String(latestInterview.rejection_reason)}</div>
+                ) : null}
+                {latestInterview.abandonment_reason ? (
+                  <div className="mt-1 text-muted">{t('kams.abandonmentReason')}: {String(latestInterview.abandonment_reason)}</div>
+                ) : null}
+              </div>
+            ) : null}
+            {latestObservation ? (
+              <div className="rounded-xl bg-surface p-3">
+                <div className="font-semibold">{t('kams.observation')}</div>
+                {latestObservation.observation_date ? (
+                  <div className="mt-1 text-muted">{t('kams.observationDate')}: {formatDay(String(latestObservation.observation_date).slice(0, 10))}</div>
+                ) : null}
+                {latestObservation.supervisor_name ? (
+                  <div className="mt-1 text-muted">{t('kams.supervisor')}: {String(latestObservation.supervisor_name)}</div>
+                ) : null}
+                <div className="mt-1 text-muted">
+                  {t('kams.attendance')}: {latestObservation.attended === false || latestObservation.attended === 0
+                    ? t('kams.absent')
+                    : latestObservation.attended === true || latestObservation.attended === 1
+                      ? t('kams.present')
+                      : '—'}
+                </div>
+                <div className="mt-1 text-muted">
+                  {t('kams.finalDecision')}: {latestObservation.decision ? t(`kams.status.${String(latestObservation.decision)}`, { defaultValue: String(latestObservation.decision) }) : '—'}
+                </div>
+                {latestObservation.evaluation ? (
+                  <div className="mt-2">
+                    <div className="font-medium">{t('kams.evaluation')}</div>
+                    <p className="mt-1 whitespace-pre-wrap text-muted">{String(latestObservation.evaluation)}</p>
+                  </div>
+                ) : null}
+                {latestObservation.notes ? (
+                  <div className="mt-2">
+                    <div className="font-medium">{t('kams.notes')}</div>
+                    <p className="mt-1 whitespace-pre-wrap text-muted">{String(latestObservation.notes)}</p>
+                  </div>
+                ) : null}
+                {latestObservation.rejection_reason ? (
+                  <div className="mt-1 text-muted">{t('kams.rejectionReason')}: {String(latestObservation.rejection_reason)}</div>
+                ) : null}
+              </div>
+            ) : null}
+            <Button className="w-full" variant="secondary" onClick={() => { setViewing(null); setDetail(null) }}>{t('common.close')}</Button>
+          </div>
+        )}
+      </Modal>
       <PrintPreviewModal
         open={Boolean(printPreviewHtml)}
         title={t('common.printPreview')}

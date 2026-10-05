@@ -5,30 +5,35 @@ namespace App\Modules\Kams\Services;
 use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsCommunication;
 use App\Modules\Kams\Models\KamsMember;
+use App\Core\Support\ObservationHours;
+use App\Models\Company;
+use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Model;
 
 class RecruitmentCommunicationService
 {
     public function notifyApplicationReceived(KamsCandidate $candidate, string $locale = 'fr'): void
     {
+        $brand = $this->companyName($candidate->company_id);
         $this->sendPair($candidate, 'application_received', 'recruitment', $locale, [
             'candidate' => [
                 'fr' => ['subject' => 'Candidature reçue', 'body' => "Bonjour {$candidate->full_name}, votre candidature {$candidate->candidate_id} a bien été reçue. Nous vous tiendrons informé(e) des prochaines étapes."],
                 'en' => ['subject' => 'Application received', 'body' => "Hello {$candidate->full_name}, your application {$candidate->candidate_id} has been received. We will keep you informed of the next steps."],
             ],
             'guardian' => [
-                'fr' => ['subject' => 'Candidature de '.$candidate->full_name, 'body' => "La candidature de {$candidate->full_name} ({$candidate->candidate_id}) a été reçue par King Attitude."],
-                'en' => ['subject' => $candidate->full_name.' application', 'body' => "The application of {$candidate->full_name} ({$candidate->candidate_id}) has been received by King Attitude."],
+                'fr' => ['subject' => 'Candidature de '.$candidate->full_name, 'body' => "La candidature de {$candidate->full_name} ({$candidate->candidate_id}) a été reçue par {$brand}."],
+                'en' => ['subject' => $candidate->full_name.' application', 'body' => "The application of {$candidate->full_name} ({$candidate->candidate_id}) has been received by {$brand}."],
             ],
         ]);
     }
 
     public function notifyInterviewPassed(KamsCandidate $candidate, string $locale = 'fr'): void
     {
+        $hours = ObservationHours::label();
         $this->sendPair($candidate, 'interview_passed', 'recruitment', $locale, [
             'candidate' => [
-                'fr' => ['subject' => 'Entretien réussi', 'body' => "Félicitations {$candidate->full_name}. Vous êtes admis(e) à la journée d'observation (07h30 – 17h30). Il s'agit d'une journée d'évaluation, non rémunérée, et ce n'est pas une offre d'emploi."],
-                'en' => ['subject' => 'Interview passed', 'body' => "Congratulations {$candidate->full_name}. You are admitted to Observation Day (07:30 – 17:30). This is an unpaid full-day evaluation and not a job offer."],
+                'fr' => ['subject' => 'Entretien réussi', 'body' => "Félicitations {$candidate->full_name}. Vous êtes admis(e) à la journée d'observation ({$hours}). Il s'agit d'une journée d'évaluation, non rémunérée, et ce n'est pas une offre d'emploi."],
+                'en' => ['subject' => 'Interview passed', 'body' => "Congratulations {$candidate->full_name}. You are admitted to Observation Day ({$hours}). This is an unpaid full-day evaluation and not a job offer."],
             ],
             'guardian' => [
                 'fr' => ['subject' => 'Entretien réussi', 'body' => "{$candidate->full_name} a réussi l'entretien et est convoqué(e) à une journée d'observation."],
@@ -41,32 +46,34 @@ class RecruitmentCommunicationService
     {
         $login = $credentials['email'] ?? $member->account['email'] ?? null;
         $password = $credentials['password'] ?? $member->login_password;
+        $brand = $this->companyName($member->company_id);
         $access = $locale === 'en'
             ? ($login ? " Login: {$login} / Password: {$password}. These credentials were also sent by email." : '')
             : ($login ? " Identifiant : {$login} / Mot de passe : {$password}. Ces identifiants ont aussi été envoyés par e-mail." : '');
 
         $this->sendPair($candidate, 'final_approval', 'recruitment', $locale, [
             'candidate' => [
-                'fr' => ['subject' => 'Bienvenue chez King Attitude', 'body' => "Bienvenue {$candidate->full_name}. Vous êtes enregistré(e) comme membre {$member->member_code}.{$access}"],
-                'en' => ['subject' => 'Welcome to King Attitude', 'body' => "Welcome {$candidate->full_name}. You are registered as member {$member->member_code}.{$access}"],
+                'fr' => ['subject' => "Bienvenue chez {$brand}", 'body' => "Bienvenue {$candidate->full_name}. Vous êtes enregistré(e) comme membre {$member->member_code}.{$access}"],
+                'en' => ['subject' => "Welcome to {$brand}", 'body' => "Welcome {$candidate->full_name}. You are registered as member {$member->member_code}.{$access}"],
             ],
             'guardian' => [
-                'fr' => ['subject' => 'Confirmation d\'adhésion', 'body' => "{$candidate->full_name} a été approuvé(e) et enregistré(e) comme membre King Attitude ({$member->member_code})."],
-                'en' => ['subject' => 'Membership confirmation', 'body' => "{$candidate->full_name} has been approved and registered as a King Attitude member ({$member->member_code})."],
+                'fr' => ['subject' => 'Confirmation d\'adhésion', 'body' => "{$candidate->full_name} a été approuvé(e) et enregistré(e) comme membre {$brand} ({$member->member_code})."],
+                'en' => ['subject' => 'Membership confirmation', 'body' => "{$candidate->full_name} has been approved and registered as a {$brand} member ({$member->member_code})."],
             ],
         ], $member);
     }
 
     public function notifyFirstWeekCompleted(KamsMember $member, string $locale = 'fr'): void
     {
+        $brand = $this->companyName($member->company_id);
         $this->sendPair($member, 'first_week_completed', 'recruitment', $locale, [
             'candidate' => [
                 'fr' => ['subject' => 'Première semaine terminée', 'body' => "Bonjour {$member->full_name}, votre première semaine est terminée. Nous restons à vos côtés pour la suite."],
                 'en' => ['subject' => 'First week completed', 'body' => "Hello {$member->full_name}, your first week is complete. We remain available for the next steps."],
             ],
             'guardian' => [
-                'fr' => ['subject' => 'Suivi première semaine', 'body' => "La première semaine de {$member->full_name} chez King Attitude est terminée."],
-                'en' => ['subject' => 'First week update', 'body' => "{$member->full_name}'s first week at King Attitude is complete."],
+                'fr' => ['subject' => 'Suivi première semaine', 'body' => "La première semaine de {$member->full_name} chez {$brand} est terminée."],
+                'en' => ['subject' => 'First week update', 'body' => "{$member->full_name}'s first week at {$brand} is complete."],
             ],
         ]);
     }
@@ -126,6 +133,18 @@ class RecruitmentCommunicationService
         if ($also) {
             $this->log($also, 'candidate', $name, $phone, $trigger, $trigger, $locale, $category, $candidateCopy['subject'], $candidateCopy['body']);
         }
+    }
+
+    private function companyName(?int $companyId): string
+    {
+        if ($companyId) {
+            $name = Company::query()->where('id', $companyId)->value('name');
+            if ($name) {
+                return (string) $name;
+            }
+        }
+
+        return SettingsCatalog::string('general', 'group_name');
     }
 
     private function log(

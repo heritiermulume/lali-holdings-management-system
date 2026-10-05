@@ -1,4 +1,4 @@
-export type SettingFieldType = 'string' | 'number' | 'boolean' | 'select'
+export type SettingFieldType = 'string' | 'number' | 'boolean' | 'select' | 'password'
 
 export type SettingField = {
   key: string
@@ -17,12 +17,7 @@ export const settingGroups: Record<SettingGroupId, SettingField[]> = {
       { value: 'fr', labelKey: 'settings.options.localeFr' },
       { value: 'en', labelKey: 'settings.options.localeEn' },
     ] },
-    { key: 'default_timezone', type: 'select', options: [
-      { value: 'Africa/Kinshasa', labelKey: 'settings.options.tzKinshasa' },
-      { value: 'Africa/Lubumbashi', labelKey: 'settings.options.tzLubumbashi' },
-      { value: 'Africa/Dar_es_Salaam', labelKey: 'settings.options.tzDar' },
-      { value: 'UTC', labelKey: 'settings.options.tzUtc' },
-    ] },
+    { key: 'default_timezone', type: 'string' },
     { key: 'date_format', type: 'select', options: [
       { value: 'DD/MM/YYYY', labelKey: 'settings.options.dateDmy' },
       { value: 'YYYY-MM-DD', labelKey: 'settings.options.dateIso' },
@@ -31,6 +26,17 @@ export const settingGroups: Record<SettingGroupId, SettingField[]> = {
     { key: 'week_start', type: 'select', options: [
       { value: '1', labelKey: 'settings.options.monday' },
       { value: '0', labelKey: 'settings.options.sunday' },
+    ] },
+    { key: 'mail_from_address', type: 'string' },
+    { key: 'mail_from_name', type: 'string' },
+    { key: 'mail_host', type: 'string' },
+    { key: 'mail_port', type: 'number' },
+    { key: 'mail_username', type: 'string' },
+    { key: 'mail_password', type: 'password' },
+    { key: 'mail_encryption', type: 'select', options: [
+      { value: 'tls', labelKey: 'settings.options.mailTls' },
+      { value: 'ssl', labelKey: 'settings.options.mailSsl' },
+      { value: 'none', labelKey: 'settings.options.mailNone' },
     ] },
   ],
   finance: [
@@ -43,13 +49,15 @@ export const settingGroups: Record<SettingGroupId, SettingField[]> = {
     ] },
     { key: 'tax_inclusive_prices', type: 'boolean' },
     { key: 'fx_spread_percent', type: 'number' },
+    { key: 'tax_name', type: 'string' },
+    { key: 'default_tax_rate', type: 'number' },
+    { key: 'multi_currency', type: 'boolean' },
   ],
   security: [
     { key: 'password_min_length', type: 'number' },
     { key: 'password_require_mixed', type: 'boolean' },
     { key: 'session_lifetime_minutes', type: 'number' },
     { key: 'force_password_reset_days', type: 'number' },
-    { key: 'audit_retention_days', type: 'number' },
   ],
 }
 
@@ -58,11 +66,13 @@ export const moduleSettingFields: Record<string, SettingField[]> = {
     { key: 'order_prefix', type: 'string' },
     { key: 'invoice_prefix', type: 'string' },
     { key: 'stock_alert_threshold', type: 'number' },
+    { key: 'stock_loss_alert_percent', type: 'number' },
     { key: 'default_payment_terms_days', type: 'number' },
     { key: 'allow_backorders', type: 'boolean' },
     { key: 'low_stock_notify', type: 'boolean' },
     { key: 'interview_hours', type: 'string' },
     { key: 'observation_hours', type: 'string' },
+    { key: 'default_member_rank', type: 'string' },
   ],
   'heavy-equipment': [
     { key: 'default_rental_days', type: 'number' },
@@ -80,65 +90,8 @@ export const moduleSettingFields: Record<string, SettingField[]> = {
     { key: 'mill_shift_hours', type: 'number' },
   ],
   'lali-tv': [
-    { key: 'default_broadcast_tz', type: 'select', options: [
-      { value: 'Africa/Kinshasa', labelKey: 'settings.options.tzKinshasa' },
-      { value: 'Africa/Dar_es_Salaam', labelKey: 'settings.options.tzDar' },
-      { value: 'UTC', labelKey: 'settings.options.tzUtc' },
-    ] },
+    { key: 'default_broadcast_tz', type: 'string' },
     { key: 'max_upload_mb', type: 'number' },
     { key: 'content_review_required', type: 'boolean' },
   ],
-}
-
-export const settingDefaults: Record<string, Record<string, string>> = {
-  general: {
-    group_name: 'LALI Holdings',
-    legal_name: 'LALI Holdings SAS',
-    support_email: 'samuel.w@example.com',
-    default_locale: 'fr',
-    default_timezone: 'Africa/Kinshasa',
-    date_format: 'DD/MM/YYYY',
-    week_start: '1',
-  },
-  finance: {
-    decimal_places: '2',
-    fiscal_year_start_month: '1',
-    tax_inclusive_prices: '0',
-    fx_spread_percent: '1.5',
-  },
-  security: {
-    password_min_length: '10',
-    password_require_mixed: '1',
-    session_lifetime_minutes: '120',
-    force_password_reset_days: '90',
-    audit_retention_days: '365',
-  },
-  kams: {
-    order_prefix: 'KA',
-    invoice_prefix: 'KAF',
-    stock_alert_threshold: '5',
-    default_payment_terms_days: '30',
-    allow_backorders: '0',
-    low_stock_notify: '1',
-  },
-  'heavy-equipment': {
-    default_rental_days: '7',
-    maintenance_interval_hours: '250',
-    require_operator_license: '1',
-  },
-  'real-estate': {
-    default_lease_months: '12',
-    occupancy_alert_percent: '80',
-    late_rent_grace_days: '5',
-  },
-  'rice-mills': {
-    standard_bag_kg: '50',
-    moisture_max_percent: '14',
-    mill_shift_hours: '8',
-  },
-  'lali-tv': {
-    default_broadcast_tz: 'Africa/Kinshasa',
-    max_upload_mb: '512',
-    content_review_required: '1',
-  },
 }

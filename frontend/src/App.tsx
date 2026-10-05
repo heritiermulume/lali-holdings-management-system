@@ -6,11 +6,13 @@ import { ModuleWorkspaceLayout } from './components/layout/ModuleWorkspaceLayout
 import { RequireModule, RequirePermission } from './components/RequirePermission'
 import { useAuth } from './context/AuthContext'
 import { DASHBOARD_PERMS, SETTINGS_PERMS, ADMIN_PERMS } from './lib/access'
-import { AuditPage } from './pages/AuditPage'
 import { CompaniesPage } from './pages/CompaniesPage'
 import { DashboardPage } from './pages/DashboardPage'
-import { GroupActionsPage, GroupDashboardWorkspace, GroupModuleDashboardPage, GroupOverviewPage } from './pages/group/GroupDashboardPages'
+import { GroupDashboardWorkspace, GroupModuleDashboardPage, GroupOverviewPage } from './pages/group/GroupDashboardPages'
 import { LoginPage } from './pages/LoginPage'
+import { PrivacyPage } from './pages/legal/PrivacyPage'
+import { TermsPage } from './pages/legal/TermsPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { ModulesPage } from './pages/ModulesPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { OrganizationPage } from './pages/OrganizationPage'
@@ -62,23 +64,23 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Guest><LoginPage /></Guest>} />
+      <Route path="/reset-password" element={<Guest><ResetPasswordPage /></Guest>} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
       <Route element={<Guard><AppShell /></Guard>}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/organization" element={<Navigate to="/administration/settings/organization" replace />} />
         <Route path="/companies" element={<Navigate to="/administration/settings/companies" replace />} />
         <Route path="/users" element={<Navigate to="/administration/users" replace />} />
-        <Route path="/audit" element={<Navigate to="/administration/audit" replace />} />
         <Route path="/settings/*" element={<SettingsLegacyRedirect />} />
         <Route path="/modules/dashboard/*" element={<DashboardLegacyRedirect />} />
         <Route path="/administration" element={<RequirePermission anyPerm={ADMIN_PERMS}><ModuleWorkspaceLayout /></RequirePermission>}>
           <Route index element={<AdministrationIndex />} />
           <Route path="dashboard" element={<RequirePermission anyPerm={DASHBOARD_PERMS}><GroupDashboardWorkspace /></RequirePermission>}>
             <Route index element={<GroupOverviewPage />} />
-            <Route path="actions" element={<GroupActionsPage />} />
             <Route path=":slug" element={<GroupModuleDashboardPage />} />
           </Route>
           <Route path="users" element={<RequirePermission perm="users.view"><UsersPage /></RequirePermission>} />
-          <Route path="audit" element={<RequirePermission perm="audit.view"><AuditPage /></RequirePermission>} />
           <Route path="settings" element={<RequirePermission anyPerm={SETTINGS_PERMS}><SettingsWorkspace /></RequirePermission>}>
             <Route index element={<SettingsHome />} />
             <Route path="organization" element={<RequirePermission perm="organization.view"><OrganizationPage /></RequirePermission>} />

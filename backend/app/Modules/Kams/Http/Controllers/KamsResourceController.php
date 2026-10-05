@@ -2,12 +2,10 @@
 
 namespace App\Modules\Kams\Http\Controllers;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\TaxSettings;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
-use App\Models\Setting;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
@@ -17,6 +15,9 @@ use App\Modules\Kams\Models\KamsOrderItem;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Services\StockInventory;
+use App\Modules\Kams\Services\StockJournal;
+use App\Modules\Kams\Support\DomainOptions;
+use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -49,6 +50,7 @@ class KamsResourceController extends Controller
             'warehouses' => $warehouses,
             'can_choose_office' => $this->canChooseOffice($request, $offices->count()),
             'can_choose_warehouse' => $warehouses->count() > 1 || $this->canManageWarehouses($request),
+            'options' => DomainOptions::all(),
         ]);
     }
 
@@ -106,7 +108,6 @@ class KamsResourceController extends Controller
         if ($data['kind'] === 'supplier') {
             $client->warehouses()->sync($warehouseIds);
         }
-        AuditLogger::record('create', $client, [], $data + ['warehouse_ids' => $warehouseIds]);
 
         return $this->created($client->load(['office', 'warehouses']));
     }
@@ -160,7 +161,6 @@ class KamsResourceController extends Controller
         if ($warehouseIds !== null) {
             $client->warehouses()->sync($warehouseIds);
         }
-        AuditLogger::record('update', $client, [], $data + ['warehouse_ids' => $warehouseIds]);
 
         return $this->ok($client->fresh(['office', 'warehouses']));
     }
@@ -315,13 +315,13 @@ class KamsResourceController extends Controller
             $data['assign_all_depots'],
             $data['image']
         );
-        $data['cost'] = $data['company_price'] ?? $data['cost'] ?? round(((float) $data['price']) * 0.6, 2);
         $data['field_price'] = $data['field_price'] ?? $data['price'];
+        $data['cost'] = $data['cost'] ?? $data['company_price'] ?? 0;
         $data['company_price'] = $data['company_price'] ?? $data['cost'];
-        $data['manager_price'] = $data['manager_price'] ?? round((((float) $data['field_price']) + ((float) $data['company_price'])) / 2, 2);
+        $data['manager_price'] = $data['manager_price'] ?? 0;
         $data['price'] = $data['field_price'];
         $data['avg_cost'] = $data['cost'];
-        $data['seller_share_percent'] = $data['seller_share_percent'] ?? 50;
+        $data['seller_share_percent'] = $data['seller_share_percent'] ?? 0;
         $data['stock'] = 0;
         $data['status'] = $data['status'] ?? 'active';
 
@@ -331,7 +331,7 @@ class KamsResourceController extends Controller
 
         $this->assertCompany($request, (int) $data['company_id']);
         $product = KamsProduct::query()->create($data);
-        AuditLogger::record('create', $product, [], $data);
+        StockJournal::record('create', $product, [], $data);
 
         if ($assignAllWarehouses || $warehouseIds !== null) {
             $this->syncProductWarehouses(
@@ -422,7 +422,7 @@ class KamsResourceController extends Controller
         }
 
         $product->fill($data)->save();
-        AuditLogger::record('update', $product, [], $data);
+        StockJournal::record('update', $product, [], $data);
 
         if ($assignAllWarehouses === true || $warehouseIds !== null) {
             $this->syncProductWarehouses(
@@ -533,9 +533,32 @@ class KamsResourceController extends Controller
 
         $this->assertCompany($request, (int) $data['company_id']);
 
+        if (! SettingsCatalog::bool('kams', 'allow_backorders')) {
+            foreach ($data['items'] as $item) {
+                $product = KamsProduct::query()->find($item['product_id']);
+                $available = (int) ($product?->stock ?? 0);
+                if ($available < (int) $item['quantity']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => __('Insufficient stock for :product (available: :available).', [
+                            'product' => $product?->name ?? '#'.$item['product_id'],
+                            'available' => $available,
+                        ]),
+                    ], 422);
+                }
+            }
+        }
+
         $company = Company::query()->with('country')->find($data['company_id']);
         $subtotalItems = collect($data['items'])->sum(fn ($item) => $item['quantity'] * $item['unit_price']);
         $taxed = TaxSettings::apply((float) $subtotalItems, $company?->country);
+        $terms = (int) SettingsCatalog::number('kams', 'default_payment_terms_days');
+        $notes = $data['notes'] ?? null;
+        if ($terms > 0) {
+            $due = \Illuminate\Support\Carbon::parse($data['ordered_at'])->addDays($terms)->toDateString();
+            $termsNote = 'Payment terms: '.$terms.' days (due '.$due.')';
+            $notes = $notes ? $notes."\n".$termsNote : $termsNote;
+        }
 
         $order = KamsOrder::query()->create([
             'company_id' => $data['company_id'],
@@ -546,7 +569,7 @@ class KamsResourceController extends Controller
             'tax' => $taxed['tax'],
             'total' => $taxed['total'],
             'ordered_at' => $data['ordered_at'],
-            'notes' => $data['notes'] ?? null,
+            'notes' => $notes,
         ]);
 
         foreach ($data['items'] as $item) {
@@ -559,8 +582,6 @@ class KamsResourceController extends Controller
             ]);
         }
 
-        AuditLogger::record('create', $order, [], $order->toArray());
-
         return $this->created($order->load(['client', 'items.product']));
     }
 
@@ -572,8 +593,6 @@ class KamsResourceController extends Controller
             'status' => ['sometimes', 'in:draft,confirmed,fulfilled,cancelled'],
             'notes' => ['nullable', 'string'],
         ]))->save();
-
-        AuditLogger::record('update', $order);
 
         return $this->ok($order->fresh(['client', 'items.product']));
     }
@@ -680,16 +699,25 @@ class KamsResourceController extends Controller
 
     private function orderReference(): string
     {
-        $prefix = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', (string) Setting::getValue('kams', 'order_prefix', 'KA')));
+        $prefix = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', SettingsCatalog::string('kams', 'order_prefix')));
 
         return ($prefix !== '' ? $prefix : 'KA').'-'.now()->format('ymd').'-'.strtoupper(Str::random(4));
+    }
+
+    private function invoiceReference(): string
+    {
+        $prefix = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', SettingsCatalog::string('kams', 'invoice_prefix')));
+
+        return ($prefix !== '' ? $prefix : 'KAF').'-'.now()->format('ymd').'-'.strtoupper(Str::random(4));
     }
 
     private function store(string $class, array $data, Request $request): JsonResponse
     {
         $this->assertCompany($request, (int) $data['company_id']);
         $model = $class::query()->create($data);
-        AuditLogger::record('create', $model, [], $data);
+        if ($model instanceof KamsProduct || $model instanceof KamsDepot) {
+            StockJournal::record('create', $model, [], $data);
+        }
 
         return $this->created($model);
     }
@@ -698,7 +726,9 @@ class KamsResourceController extends Controller
     {
         $this->assertCompany($request, (int) $model->company_id);
         $model->fill($data)->save();
-        AuditLogger::record('update', $model, [], $data);
+        if ($model instanceof KamsProduct || $model instanceof KamsDepot) {
+            StockJournal::record('update', $model, [], $data);
+        }
 
         return $this->ok($model->fresh());
     }
@@ -708,7 +738,9 @@ class KamsResourceController extends Controller
         $this->assertCompany($request, (int) $model->company_id);
         $snapshot = $model->toArray();
         $model->delete();
-        AuditLogger::record('delete', $model, $snapshot);
+        if ($model instanceof KamsProduct || $model instanceof KamsDepot) {
+            StockJournal::record('delete', $model, $snapshot);
+        }
 
         return $this->ok(null, __('Deleted.'));
     }

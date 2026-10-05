@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 #[Fillable([
     'company_id', 'office_id', 'candidate_id', 'observation_date', 'attended',
-    'supervisor_name', 'supervisor_member_id', 'evaluation', 'notes', 'decision', 'rejection_reason', 'recorded_by', 'recorded_at',
+    'supervisor_name', 'supervisor_member_id', 'sponsor_member_id', 'evaluation', 'notes', 'decision', 'rejection_reason', 'recorded_by', 'recorded_at',
 ])]
 class KamsObservationDay extends Model
 {
@@ -36,6 +36,11 @@ class KamsObservationDay extends Model
     public function supervisor(): BelongsTo
     {
         return $this->belongsTo(KamsMember::class, 'supervisor_member_id');
+    }
+
+    public function sponsor(): BelongsTo
+    {
+        return $this->belongsTo(KamsMember::class, 'sponsor_member_id');
     }
 
     public function recorder(): BelongsTo

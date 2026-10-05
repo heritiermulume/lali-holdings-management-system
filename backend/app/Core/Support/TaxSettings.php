@@ -3,7 +3,7 @@
 namespace App\Core\Support;
 
 use App\Models\Country;
-use App\Models\Setting;
+use App\Support\SettingsCatalog;
 
 class TaxSettings
 {
@@ -13,7 +13,7 @@ class TaxSettings
             return (string) $country->tax_name;
         }
 
-        return (string) Setting::getValue('finance', 'tax_name', 'TVA');
+        return SettingsCatalog::string('finance', 'tax_name');
     }
 
     public static function rate(?Country $country = null): float
@@ -22,17 +22,12 @@ class TaxSettings
             return max(0, (float) $country->tax_rate);
         }
 
-        $rate = Setting::getValue('finance', 'default_tax_rate', null);
-        if ($rate === null) {
-            $rate = Setting::getValue('kams', 'default_tax_rate', 16);
-        }
-
-        return max(0, (float) $rate);
+        return max(0, SettingsCatalog::number('finance', 'default_tax_rate'));
     }
 
     public static function inclusive(): bool
     {
-        return (bool) Setting::getValue('finance', 'tax_inclusive_prices', false);
+        return SettingsCatalog::bool('finance', 'tax_inclusive_prices');
     }
 
     /**

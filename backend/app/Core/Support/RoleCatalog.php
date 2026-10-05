@@ -103,7 +103,6 @@ class RoleCatalog
                 'reports.view',
                 'reports.export',
                 'notifications.view',
-                'audit.view',
             ],
             'divisionnaire' => [
                 'kams.*',

@@ -438,7 +438,10 @@ class RevenueShareService
         $amRule = $rules->get(RevenueRuleCatalog::ASSISTANT_MANAGER);
         $assistant = $context['assistant'];
         if ($assistant && $amRule && $managerPercent > 0 && $managerShare) {
-            $divisor = (float) ($amRule->divisor ?: 4);
+            $divisor = (float) ($amRule->divisor ?? 0);
+            if ($divisor <= 0) {
+                $divisor = 0;
+            }
             $amAmount = RevenueRuleCatalog::assistantShare($sales, $divisor, $managerPercent);
             $amAmount = min($amAmount, (float) $managerShare->amount);
             if ($amAmount > 0) {

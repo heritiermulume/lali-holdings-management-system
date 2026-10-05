@@ -12,6 +12,8 @@ class RevenueRuleCatalog
     public const ASSISTANT_MANAGER = 'assistant_manager';
 
     /**
+     * Seed-only defaults. Runtime code must read percents/divisors from kams_revenue_rules.
+     *
      * @return list<array{
      *   code: string,
      *   role_slug: string,
@@ -113,7 +115,9 @@ class RevenueRuleCatalog
 
     public static function assistantShare(float $teamSales, float $divisor, float $managerPercent): float
     {
-        $divisor = $divisor > 0 ? $divisor : 4;
+        if ($divisor <= 0) {
+            return 0.0;
+        }
 
         return round(($teamSales / $divisor) * ($managerPercent / 100), 2);
     }
@@ -121,7 +125,7 @@ class RevenueRuleCatalog
     public static function formula(string $code, float $base, float $percent, ?float $divisor = null): string
     {
         if ($code === self::ASSISTANT_MANAGER) {
-            $div = $divisor && $divisor > 0 ? $divisor : 4;
+            $div = $divisor && $divisor > 0 ? $divisor : 0;
 
             return sprintf('(%s / %s) × %s%%', self::number($base), self::number($div), self::number($percent));
         }

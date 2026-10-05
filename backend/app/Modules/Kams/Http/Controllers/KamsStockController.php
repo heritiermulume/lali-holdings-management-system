@@ -2,14 +2,11 @@
 
 namespace App\Modules\Kams\Http\Controllers;
 
-use App\Core\Support\AuditLogger;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
-use App\Models\AuditLog;
 use App\Models\Province;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsClient;
-use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
@@ -21,10 +18,14 @@ use App\Modules\Kams\Models\KamsStockReceipt;
 use App\Modules\Kams\Models\KamsStockReturn;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockTransfer;
+use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsSavingsEntry;
+use App\Modules\Kams\Models\KamsStockJournalEntry;
 use App\Modules\Kams\Services\SavingsLedger;
+use App\Modules\Kams\Services\StockJournal;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Services\StockMetrics;
+use App\Modules\Kams\Support\DomainOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -96,6 +97,7 @@ class KamsStockController extends Controller
                 ->where('status', 'active')
                 ->orderBy('full_name')
                 ->get(['id', 'company_id', 'office_id', 'member_code', 'full_name']),
+            'options' => DomainOptions::all(),
         ]);
     }
 
@@ -177,10 +179,11 @@ class KamsStockController extends Controller
             'unit_cost' => (float) ($data['unit_cost'] ?? KamsProduct::query()->findOrFail($data['product_id'])->cost),
         ]];
         $receipt = $this->inventory->createReceipt($location, $items, $data['supplier_name'] ?? null, $request->user()->id, $data['notes'] ?? null);
+        StockJournal::record('create', $receipt, [], $data);
         if ($request->boolean('validate', true)) {
             $receipt = $this->inventory->validateReceipt($receipt, $request->user()->id);
+            StockJournal::record('update', $receipt, [], ['status' => 'received']);
         }
-        AuditLogger::record('create', $receipt, [], $data);
 
         return $this->created($receipt);
     }
@@ -190,7 +193,7 @@ class KamsStockController extends Controller
         abort_unless($this->canManageWarehouses($request), 403);
         $this->assertCompany($request, (int) $receipt->company_id);
         $validated = $this->inventory->validateReceipt($receipt, $request->user()->id);
-        AuditLogger::record('update', $validated, [], ['status' => 'received']);
+        StockJournal::record('update', $validated, [], ['status' => 'received']);
 
         return $this->ok($validated);
     }
@@ -200,7 +203,7 @@ class KamsStockController extends Controller
         abort_unless($this->canManageWarehouses($request), 403);
         $this->assertCompany($request, (int) $receipt->company_id);
         $cancelled = $this->inventory->cancelReceipt($receipt);
-        AuditLogger::record('update', $cancelled, [], ['status' => 'cancelled']);
+        StockJournal::record('update', $cancelled, [], ['status' => 'cancelled']);
 
         return $this->ok($cancelled);
     }
@@ -245,12 +248,12 @@ class KamsStockController extends Controller
             abort_unless($request->user()->canAccessOffice((int) $to->office_id), 403);
         }
         $transfer = $this->inventory->transfer($from, $to, $data['items'], $request->user()->id, $data['notes'] ?? null);
-        AuditLogger::record('create', $transfer, [], $data);
+        StockJournal::record('create', $transfer, [], $data);
 
         $autoReceive = array_key_exists('auto_receive', $data) ? (bool) $data['auto_receive'] : true;
         if ($autoReceive && $transfer->status === 'in_transit') {
             $transfer = $this->inventory->receiveTransfer($transfer, $request->user()->id);
-            AuditLogger::record('update', $transfer, [], ['status' => 'received', 'auto_receive' => true]);
+            StockJournal::record('update', $transfer, [], ['status' => 'received', 'auto_receive' => true]);
         }
 
         return $this->created($transfer);
@@ -264,7 +267,7 @@ class KamsStockController extends Controller
             abort_unless($request->user()->canAccessOffice((int) $transfer->toDepot->office_id), 403);
         }
         $received = $this->inventory->receiveTransfer($transfer, $request->user()->id);
-        AuditLogger::record('update', $received, [], ['status' => 'received']);
+        StockJournal::record('update', $received, [], ['status' => 'received']);
 
         return $this->ok($received);
     }
@@ -515,7 +518,7 @@ class KamsStockController extends Controller
             abort_unless($request->user()->canAccessOffice((int) $member->office_id), 403);
         }
         $assignment = $this->inventory->assign($member, $data['items'], $request->user()->id, $data['notes'] ?? null);
-        AuditLogger::record('create', $assignment, [], $data);
+        StockJournal::record('create', $assignment, [], $data);
 
         return $this->created($assignment);
     }
@@ -540,7 +543,7 @@ class KamsStockController extends Controller
             $request->user()->id,
             $data['notes'] ?? null,
         );
-        AuditLogger::record('update', $updated, $before, $data);
+        StockJournal::record('update', $updated, $before, $data);
 
         return $this->ok($updated);
     }
@@ -563,7 +566,7 @@ class KamsStockController extends Controller
             $request->user()->id,
             $data['notes'] ?? null,
         );
-        AuditLogger::record('update', $updated, $before, $data);
+        StockJournal::record('update', $updated, $before, $data);
 
         return $this->ok($updated);
     }
@@ -590,7 +593,7 @@ class KamsStockController extends Controller
             (bool) ($data['deposit_surplus'] ?? false),
             $request->user()->id,
         );
-        AuditLogger::record('update', $closed, $before, $data);
+        StockJournal::record('update', $closed, $before, $data);
 
         return $this->ok($closed);
     }
@@ -607,7 +610,7 @@ class KamsStockController extends Controller
         $companyId = $this->kamsCompanyId($request);
         $posted = $this->inventory->closeDay($companyId, $officeId, $request->user()->id, $request->user()->isOfficeScoped() ? ($request->user()->accessibleOfficeIds() ?: [0]) : null);
         foreach ($posted as $settled) {
-            AuditLogger::record('update', $settled, ['status' => 'closed'], ['status' => 'settled']);
+            StockJournal::record('update', $settled, ['status' => 'closed'], ['status' => 'settled']);
         }
 
         return $this->ok([
@@ -637,13 +640,13 @@ class KamsStockController extends Controller
             $request->user()->id,
             (bool) ($data['deposit_surplus'] ?? false),
         );
-        AuditLogger::record('update', $settled, $before, $data);
+        StockJournal::record('update', $settled, $before, $data);
         if ($settled->getAttribute('surplus_entry')) {
             $entryId = data_get($settled->getAttribute('surplus_entry'), 'id');
             if ($entryId) {
                 $entry = KamsSavingsEntry::query()->find($entryId);
                 if ($entry) {
-                    AuditLogger::record('create', $entry, [], [
+                    StockJournal::record('create', $entry, [], [
                         'reason' => 'day_closing_surplus',
                         'assignment_id' => $settled->id,
                         'amount' => $settled->getAttribute('surplus_deposited'),
@@ -674,7 +677,7 @@ class KamsStockController extends Controller
         $this->assertCompany($request, (int) $sale->company_id);
         $data = $request->validate(['amount' => ['required', 'numeric', 'min:0.01']]);
         $paid = $this->inventory->paySale($sale, (float) $data['amount']);
-        AuditLogger::record('update', $paid, [], $data);
+        StockJournal::record('update', $paid, [], $data);
 
         return $this->ok($paid);
     }
@@ -730,7 +733,7 @@ class KamsStockController extends Controller
                 $request->user()->id,
                 $data['reason'] ?? null,
             );
-            AuditLogger::record('create', $returned, [], $data);
+            StockJournal::record('create', $returned, [], $data);
 
             return $this->created($returned);
         }
@@ -746,12 +749,12 @@ class KamsStockController extends Controller
             $data['reason'] ?? '',
             $request->user()->id,
         );
-        AuditLogger::record('create', $return, [], $data);
+        StockJournal::record('create', $return, [], $data);
 
         $autoAccept = array_key_exists('auto_accept', $data) ? (bool) $data['auto_accept'] : false;
         if ($autoAccept && $return->status === 'requested') {
             $return = $this->inventory->acceptReturn($return, $request->user()->id);
-            AuditLogger::record('update', $return, [], ['status' => $return->status, 'auto_accept' => true]);
+            StockJournal::record('update', $return, [], ['status' => $return->status, 'auto_accept' => true]);
         }
 
         return $this->created($return);
@@ -761,7 +764,7 @@ class KamsStockController extends Controller
     {
         $this->assertCompany($request, (int) $stockReturn->company_id);
         $accepted = $this->inventory->acceptReturn($stockReturn, $request->user()->id);
-        AuditLogger::record('update', $accepted, [], ['status' => $accepted->status]);
+        StockJournal::record('update', $accepted, [], ['status' => $accepted->status]);
 
         return $this->ok($accepted);
     }
@@ -935,7 +938,7 @@ class KamsStockController extends Controller
             $data['reason'],
             $request->user()->id,
         );
-        AuditLogger::record('create', $adjustment, [], $data);
+        StockJournal::record('create', $adjustment, [], $data);
 
         return $this->created($adjustment);
     }
@@ -956,7 +959,7 @@ class KamsStockController extends Controller
         $this->assertCompany($request, (int) $commission->company_id);
         $data = $request->validate(['amount' => ['required', 'numeric', 'min:0.01']]);
         $paid = $this->inventory->payCommission($commission, (float) $data['amount']);
-        AuditLogger::record('update', $paid, [], $data);
+        StockJournal::record('update', $paid, [], $data);
 
         return $this->ok($paid);
     }
@@ -1006,7 +1009,7 @@ class KamsStockController extends Controller
             abort_unless($request->user()->canAccessOffice((int) $data['office_id']), 403);
         }
         $closed = $ledger->closeDay($companyId, $data['date'], $data['office_id'] ?? null, $request->user()->id);
-        AuditLogger::record('create', $closed, [], $data);
+        StockJournal::record('create', $closed, [], $data);
 
         return $this->ok($closed);
     }
@@ -1027,18 +1030,25 @@ class KamsStockController extends Controller
             KamsSavingsEntry::class,
         ];
 
-        $query = AuditLog::query()
+        $companyId = $this->kamsCompanyId($request);
+        $query = KamsStockJournalEntry::query()
             ->with('user:id,name,email')
             ->whereIn('auditable_type', $types)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->latest();
 
-        if ($request->filled('office_id')) {
-            $officeId = (int) $request->integer('office_id');
-            abort_unless($request->user()->canAccessOffice($officeId), 403);
-            $assignmentIds = KamsStockAssignment::query()->where('office_id', $officeId)->pluck('id');
-            $query->where(function ($inner) use ($officeId, $assignmentIds) {
-                $inner->where('new_values->office_id', $officeId)
-                    ->orWhere('old_values->office_id', $officeId)
+        if ($request->filled('office_id') || $request->user()->isOfficeScoped()) {
+            $officeIds = $request->filled('office_id')
+                ? [(int) $request->integer('office_id')]
+                : ($request->user()->accessibleOfficeIds() ?: [0]);
+            foreach ($officeIds as $officeId) {
+                abort_unless($request->user()->canAccessOffice((int) $officeId), 403);
+            }
+            $assignmentIds = KamsStockAssignment::query()->whereIn('office_id', $officeIds)->pluck('id');
+            $query->where(function ($inner) use ($officeIds, $assignmentIds) {
+                $inner->whereIn('office_id', $officeIds)
+                    ->orWhereIn('new_values->office_id', $officeIds)
+                    ->orWhereIn('old_values->office_id', $officeIds)
                     ->orWhere(function ($assignment) use ($assignmentIds) {
                         $assignment->where('auditable_type', KamsStockAssignment::class)
                             ->whereIn('auditable_id', $assignmentIds);
@@ -1074,14 +1084,14 @@ class KamsStockController extends Controller
         $lookups = $this->journalLookups($logs);
         $priors = $this->journalPriorValues($logs);
         $paginator->setCollection(
-            $logs->map(fn (AuditLog $log) => $this->presentJournalEntry($log, $lookups, $priors))
+            $logs->map(fn (KamsStockJournalEntry $log) => $this->presentJournalEntry($log, $lookups, $priors))
         );
 
         return $this->paginated($paginator);
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, AuditLog>  $logs
+     * @param  \Illuminate\Support\Collection<int, KamsStockJournalEntry>  $logs
      * @return array{
      *     assignments: \Illuminate\Support\Collection<int|string, string>,
      *     transfers: \Illuminate\Support\Collection<int|string, string>,
@@ -1182,7 +1192,7 @@ class KamsStockController extends Controller
      * @return array<string, mixed>
      */
     /**
-     * @param  \Illuminate\Support\Collection<int, AuditLog>  $logs
+     * @param  \Illuminate\Support\Collection<int, KamsStockJournalEntry>  $logs
      * @return array<string, array<string, mixed>>
      */
     private function journalPriorValues($logs): array
@@ -1193,7 +1203,7 @@ class KamsStockController extends Controller
             return [];
         }
 
-        $history = AuditLog::query()
+        $history = KamsStockJournalEntry::query()
             ->whereIn('auditable_type', $types)
             ->whereIn('auditable_id', $ids)
             ->orderBy('id')
@@ -1241,7 +1251,7 @@ class KamsStockController extends Controller
      * @param  array<string, array<string, mixed>>  $priors
      * @return array<string, mixed>
      */
-    private function presentJournalEntry(AuditLog $log, array $lookups = [], array $priors = []): array
+    private function presentJournalEntry(KamsStockJournalEntry $log, array $lookups = [], array $priors = []): array
     {
         $entity = class_basename($log->auditable_type);
         $new = is_array($log->new_values) ? $log->new_values : [];

@@ -29,6 +29,7 @@ export function OrganizationPage() {
   const [cities, setCities] = useState<Row[]>([])
   const [communes, setCommunes] = useState<Row[]>([])
   const [companies, setCompanies] = useState<Row[]>([])
+  const [currencyMap, setCurrencyMap] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<Row | null>(null)
@@ -48,6 +49,13 @@ export function OrganizationPage() {
       api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data)),
       api.get('/communes', { params: { per_page: 50 } }).then((res) => setCommunes(res.data.data)),
       api.get('/companies', { params: { per_page: 50 } }).then((res) => setCompanies(res.data.data)),
+      api.get('/finance').then((res) => {
+        const map: Record<string, string> = {}
+        for (const row of (res.data.data?.currencies ?? []) as Array<{ code: string; symbol: string }>) {
+          map[row.code] = row.symbol
+        }
+        setCurrencyMap(map)
+      }).catch(() => setCurrencyMap({})),
     ]).finally(() => setLoading(false))
   }
 
@@ -69,8 +77,12 @@ export function OrganizationPage() {
         payload.name_fr = pickedCountry.nameFr
         payload.iso_code = pickedCountry.iso
         payload.phone_code = pickedCountry.phone ? pickedCountry.phone.slice(0, 8) : null
-        payload.currency_code = pickedCountry.currency
-        payload.currency_symbol = pickedCountry.symbol
+        if (pickedCountry.currency) {
+          payload.currency_code = pickedCountry.currency
+          if (currencyMap[pickedCountry.currency]) {
+            payload.currency_symbol = currencyMap[pickedCountry.currency]
+          }
+        }
         payload.latitude = pickedCountry.lat
         payload.longitude = pickedCountry.lng
       } else {

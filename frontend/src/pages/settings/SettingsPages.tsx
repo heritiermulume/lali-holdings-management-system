@@ -10,7 +10,7 @@ import { useSystemModules } from '../../context/ModulesContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { moduleRegistry, settingsNavItems } from '../../modules/registry'
-import { moduleSettingFields, settingDefaults, settingGroups, type SettingField, type SettingGroupId } from './catalog'
+import { moduleSettingFields, settingGroups, type SettingField, type SettingGroupId } from './catalog'
 
 type SettingRow = { group: string; key: string; value: string | null; type?: string }
 
@@ -31,6 +31,116 @@ function formDirty(fields: SettingField[], saved: Record<string, string>, curren
   return fields.some((field) => (saved[field.key] ?? '') !== (current[field.key] ?? ''))
 }
 
+function splitMailSections(fields: SettingField[]) {
+  const prefix: SettingField[] = []
+  const mail: SettingField[] = []
+  const suffix: SettingField[] = []
+  let phase: 'prefix' | 'mail' | 'suffix' = 'prefix'
+
+  for (const field of fields) {
+    const isMail = field.key.startsWith('mail_')
+    if (phase === 'prefix') {
+      if (isMail) {
+        phase = 'mail'
+        mail.push(field)
+      } else {
+        prefix.push(field)
+      }
+      continue
+    }
+    if (phase === 'mail') {
+      if (isMail) {
+        mail.push(field)
+      } else {
+        phase = 'suffix'
+        suffix.push(field)
+      }
+      continue
+    }
+    suffix.push(field)
+  }
+
+  return { prefix, mail, suffix }
+}
+
+function SettingFieldsGrid({
+  fields,
+  values,
+  onChange,
+}: {
+  fields: SettingField[]
+  values: Record<string, string>
+  onChange: (key: string, value: string) => void
+}) {
+  const { t } = useTranslation()
+
+  if (fields.length === 0) return null
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {fields.map((field) => {
+        const label = t(`settings.fields.${field.key}`)
+        const helpKey = `settings.fields.${field.key}Help`
+        const help = t(helpKey)
+        const helpText = help === helpKey ? null : help
+        if (field.type === 'boolean') {
+          const on = boolValue(values[field.key] ?? '0')
+          return (
+            <label key={field.key} className="flex items-start justify-between gap-4 rounded-2xl border border-line bg-surface/60 px-4 py-3 sm:col-span-2">
+              <span>
+                <span className="block text-sm font-semibold text-ink">{label}</span>
+                {helpText ? <span className="mt-1 block text-xs text-muted">{helpText}</span> : null}
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                onClick={() => onChange(field.key, on ? '0' : '1')}
+                className={cn('relative h-7 w-12 shrink-0 rounded-full transition', on ? 'bg-lhms' : 'bg-line')}
+              >
+                <span
+                  className={cn('absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition', on ? 'left-[1.375rem]' : 'left-0.5')}
+                />
+              </button>
+            </label>
+          )
+        }
+        if (field.type === 'select' && field.options) {
+          return (
+            <div key={field.key} className="space-y-1">
+              <Select label={label} value={values[field.key] ?? ''} onChange={(e) => onChange(field.key, e.target.value)}>
+                {field.options.map((option) => (
+                  <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
+                ))}
+              </Select>
+              {helpText ? <p className="text-xs text-muted">{helpText}</p> : null}
+            </div>
+          )
+        }
+        const inputType = field.type === 'number'
+          ? 'number'
+          : field.type === 'password'
+            ? 'password'
+            : field.key.includes('email') || field.key.endsWith('_address')
+              ? 'email'
+              : 'text'
+        return (
+          <div key={field.key} className="space-y-1">
+            <Field
+              label={label}
+              type={inputType}
+              autoComplete={field.type === 'password' ? 'new-password' : undefined}
+              value={values[field.key] ?? ''}
+              onChange={(e) => onChange(field.key, e.target.value)}
+            />
+            {helpText ? <p className="text-xs text-muted">{helpText}</p> : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function SettingsForm({
   group,
   fields,
@@ -44,6 +154,11 @@ export function SettingsForm({
   const [baseline, setBaseline] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testingMail, setTestingMail] = useState(false)
+  const [mailTestMessage, setMailTestMessage] = useState<string | null>(null)
+  const [mailTestError, setMailTestError] = useState<string | null>(null)
+  const { prefix, mail, suffix } = splitMailSections(fields)
+  const showMailSection = group === 'general' && mail.length > 0
 
   useEffect(() => {
     let cancelled = false
@@ -53,14 +168,13 @@ export function SettingsForm({
       const grouped = (res.data.data ?? {}) as Record<string, SettingRow[]>
       const rows = grouped[group] ?? []
       const next = snapshotValues(fields, {
-        ...(settingDefaults[group] ?? {}),
         ...Object.fromEntries(rows.map((row) => [row.key, row.value ?? ''])),
       })
       setValues(next)
       setBaseline(next)
     }).catch(() => {
       if (!cancelled) {
-        const next = snapshotValues(fields, settingDefaults[group] ?? {})
+        const next = snapshotValues(fields, {})
         setValues(next)
         setBaseline(next)
       }
@@ -79,6 +193,8 @@ export function SettingsForm({
   const submit = async () => {
     if (!dirty) return
     setSaving(true)
+    setMailTestMessage(null)
+    setMailTestError(null)
     try {
       await api.put('/settings', {
         settings: fields.map((field) => ({
@@ -95,64 +211,54 @@ export function SettingsForm({
     }
   }
 
+  const sendTestMail = async () => {
+    if (dirty) {
+      setMailTestError(t('settings.mailTestSaveFirst'))
+      return
+    }
+    setTestingMail(true)
+    setMailTestMessage(null)
+    setMailTestError(null)
+    try {
+      const res = await api.post('/settings/mail-test', {})
+      setMailTestMessage(res.data.message ?? t('settings.mailTestSent'))
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { message?: string } } })?.response?.data?.message
+      setMailTestError(message || t('settings.mailTestFailed'))
+    } finally {
+      setTestingMail(false)
+    }
+  }
+
   if (loading) {
     return <LoadingScreen />
   }
 
   return (
     <Card className="p-4 sm:p-6">
-      <div className="grid gap-4 sm:grid-cols-2">
-        {fields.map((field) => {
-          const label = t(`settings.fields.${field.key}`)
-          const helpKey = `settings.fields.${field.key}Help`
-          const help = t(helpKey)
-          const helpText = help === helpKey ? null : help
-          if (field.type === 'boolean') {
-            const on = boolValue(values[field.key] ?? '0')
-            return (
-              <label key={field.key} className="flex items-start justify-between gap-4 rounded-2xl border border-line bg-surface/60 px-4 py-3 sm:col-span-2">
-                <span>
-                  <span className="block text-sm font-semibold text-ink">{label}</span>
-                  {helpText ? <span className="mt-1 block text-xs text-muted">{helpText}</span> : null}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={on}
-                  onClick={() => setField(field.key, on ? '0' : '1')}
-                  className={cn('relative h-7 w-12 shrink-0 rounded-full transition', on ? 'bg-lhms' : 'bg-line')}
-                >
-                  <span
-                    className={cn('absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition', on ? 'left-[1.375rem]' : 'left-0.5')}
-                  />
-                </button>
-              </label>
-            )
-          }
-          if (field.type === 'select' && field.options) {
-            return (
-              <div key={field.key} className="space-y-1">
-                <Select label={label} value={values[field.key] ?? ''} onChange={(e) => setField(field.key, e.target.value)}>
-                  {field.options.map((option) => (
-                    <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
-                  ))}
-                </Select>
-                {helpText ? <p className="text-xs text-muted">{helpText}</p> : null}
-              </div>
-            )
-          }
-          return (
-            <div key={field.key} className="space-y-1">
-              <Field
-                label={label}
-                type={field.type === 'number' ? 'number' : field.key.includes('email') ? 'email' : 'text'}
-                value={values[field.key] ?? ''}
-                onChange={(e) => setField(field.key, e.target.value)}
-              />
-              {helpText ? <p className="text-xs text-muted">{helpText}</p> : null}
+      <div className="space-y-6">
+        <SettingFieldsGrid fields={prefix} values={values} onChange={setField} />
+
+        {showMailSection ? (
+          <section className="rounded-2xl border border-line bg-surface/40 p-4 sm:p-5">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-ink">{t('settings.mailSection')}</h3>
+              <p className="mt-1 text-xs text-muted">{t('settings.mailSectionHelp')}</p>
             </div>
-          )
-        })}
+            <SettingFieldsGrid fields={mail} values={values} onChange={setField} />
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button type="button" variant="secondary" disabled={saving || testingMail} onClick={() => void sendTestMail()}>
+                {testingMail ? t('common.loading') : t('settings.mailTest')}
+              </Button>
+            </div>
+            {mailTestMessage ? <p className="mt-3 text-sm text-lhms">{mailTestMessage}</p> : null}
+            {mailTestError ? <p className="mt-3 text-sm text-danger">{mailTestError}</p> : null}
+          </section>
+        ) : (
+          <SettingFieldsGrid fields={mail} values={values} onChange={setField} />
+        )}
+
+        <SettingFieldsGrid fields={suffix} values={values} onChange={setField} />
       </div>
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <Button type="button" disabled={!dirty || saving} onClick={() => void submit()}>

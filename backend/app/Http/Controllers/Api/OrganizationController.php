@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\CurrencySync;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
@@ -18,7 +17,7 @@ use App\Models\Province;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Services\OfficeHierarchy;
-use App\Support\CountryTaxCatalog;
+use App\Models\Currency;
 use App\Support\CurrencyCatalog;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
@@ -59,9 +58,12 @@ class OrganizationController extends Controller
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'is_active' => ['boolean'],
         ]);
-        $defaults = CountryTaxCatalog::for($data['iso_code']);
-        $data['tax_name'] = $data['tax_name'] ?? $defaults['tax_name'];
-        $data['tax_rate'] = $data['tax_rate'] ?? $defaults['tax_rate'];
+        if (! empty($data['currency_code']) && empty($data['currency_symbol'])) {
+            $data['currency_symbol'] = Currency::findByCode((string) $data['currency_code'])?->symbol
+                ?? CurrencyCatalog::find((string) $data['currency_code'])['symbol'];
+        }
+        $data['tax_name'] = $data['tax_name'] ?? null;
+        $data['tax_rate'] = $data['tax_rate'] ?? null;
         $response = $this->storeModel(Country::class, $data);
         CurrencySync::ensureFromCountries();
 
@@ -84,7 +86,8 @@ class OrganizationController extends Controller
             'is_active' => ['boolean'],
         ]);
         if (! empty($data['currency_code']) && empty($data['currency_symbol'])) {
-            $data['currency_symbol'] = CurrencyCatalog::find($data['currency_code'])['symbol'];
+            $data['currency_symbol'] = Currency::findByCode((string) $data['currency_code'])?->symbol
+                ?? CurrencyCatalog::find((string) $data['currency_code'])['symbol'];
         }
         $response = $this->updateModel($country, $data);
         CurrencySync::ensureFromCountries();
@@ -342,6 +345,7 @@ class OrganizationController extends Controller
             'offices' => $offices,
             'users' => $users,
             'members' => $members,
+            'office_types' => ['headquarters', 'office', 'agency', 'branch'],
         ]);
     }
 
@@ -355,7 +359,6 @@ class OrganizationController extends Controller
         $data['recorded_by_user_id'] = $request->user()->id;
         $office = Office::query()->create($data);
         $hierarchy->recordHistory($office, [], $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']), $request->user()->id);
-        AuditLogger::record('create', $office, [], $office->toArray());
 
         return $this->created($office->fresh($this->officeRelations()));
     }
@@ -373,7 +376,6 @@ class OrganizationController extends Controller
         $before = $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']);
         $office->fill($data)->save();
         $hierarchy->recordHistory($office->fresh(), $before, $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']), $request->user()->id);
-        AuditLogger::record('update', $office, $before, $data);
 
         return $this->ok($office->fresh($this->officeRelations()));
     }
@@ -457,7 +459,6 @@ class OrganizationController extends Controller
     private function storeModel(string $class, array $data): JsonResponse
     {
         $model = $class::query()->create($data);
-        AuditLogger::record('create', $model, [], $data);
 
         return $this->created($model);
     }
@@ -466,7 +467,6 @@ class OrganizationController extends Controller
     {
         $old = $model->toArray();
         $model->fill($data)->save();
-        AuditLogger::record('update', $model, $old, $data);
 
         return $this->ok($model->fresh());
     }
@@ -493,8 +493,6 @@ class OrganizationController extends Controller
                 'message' => 'This record is still in use and cannot be deleted.',
             ], 409);
         }
-
-        AuditLogger::record('delete', $model);
 
         return $this->ok(null, __('Deleted.'));
     }

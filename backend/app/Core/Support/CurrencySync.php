@@ -22,19 +22,23 @@ class CurrencySync
         $order = (int) Currency::query()->max('sort_order');
 
         foreach ($codes as $code) {
+            $existing = Currency::query()->where('code', $code)->first();
+            if ($existing) {
+                $existing->is_active = true;
+                $existing->save();
+                continue;
+            }
+
             $meta = CurrencyCatalog::find($code);
-            $currency = Currency::query()->firstOrNew(['code' => $code]);
-            $currency->fill([
+            Currency::query()->create([
+                'code' => $code,
                 'name' => $meta['name'],
                 'name_fr' => $meta['name_fr'],
                 'symbol' => $meta['symbol'],
                 'is_active' => true,
+                'is_default' => Currency::query()->doesntExist(),
+                'sort_order' => ++$order,
             ]);
-            if (! $currency->exists) {
-                $currency->is_default = Currency::query()->doesntExist();
-                $currency->sort_order = ++$order;
-            }
-            $currency->save();
         }
 
         if ($codes->isNotEmpty()) {

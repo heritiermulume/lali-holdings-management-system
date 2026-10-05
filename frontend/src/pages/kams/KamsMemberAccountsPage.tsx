@@ -121,7 +121,7 @@ export function KamsMemberAccountsPage() {
         const rangeStart = members.length === 0 ? 0 : (safePage - 1) * perPage + 1
         const rangeEnd = Math.min(safePage * perPage, members.length)
         return (
-      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-lhms text-white">

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 
@@ -18,7 +19,21 @@ class Currency extends Model
 
     public static function defaultCode(): string
     {
-        return static::query()->where('is_default', true)->value('code')
-            ?: (string) Setting::getValue('finance', 'reporting_currency', 'USD');
+        try {
+            $code = static::query()->where('is_default', true)->value('code')
+                ?: static::query()->where('is_active', true)->orderBy('sort_order')->value('code')
+                ?: SettingsCatalog::string('finance', 'reporting_currency');
+
+            return $code ? strtoupper((string) $code) : '';
+        } catch (\Throwable) {
+            $code = SettingsCatalog::string('finance', 'reporting_currency');
+
+            return $code ? strtoupper((string) $code) : '';
+        }
+    }
+
+    public static function findByCode(string $code): ?self
+    {
+        return static::query()->where('code', strtoupper($code))->first();
     }
 }

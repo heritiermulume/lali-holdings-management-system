@@ -65,7 +65,7 @@ type RecapData = {
   sources: CountRow[]
 }
 
-const COLORS = ['#094924', '#2d8a5a', '#c9a227', '#1d4ed8', '#c81e1e', '#7c3aed', '#0f766e']
+const COLORS = ['#043711', '#2d8a5a', '#c9a227', '#1d4ed8', '#c81e1e', '#7c3aed', '#0f766e']
 
 function parseDate(value: string) {
   return new Date(`${value}T12:00:00`)
@@ -123,7 +123,6 @@ export function KamsRecruitmentDashboard() {
     { key: 'observations', value: data.totals.observations },
     { key: 'approved', value: data.totals.approved },
     { key: 'rejected', value: data.totals.rejected },
-    { key: 'onHold', value: data.totals.on_hold },
   ]
 
   const funnel = [
@@ -230,8 +229,8 @@ export function KamsRecruitmentDashboard() {
             <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="recap-apps" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#094924" stopOpacity={0.28} />
-                  <stop offset="95%" stopColor="#094924" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#043711" stopOpacity={0.28} />
+                  <stop offset="95%" stopColor="#043711" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
@@ -239,7 +238,7 @@ export function KamsRecruitmentDashboard() {
               <YAxis width={36} allowDecimals={false} tick={{ fontSize: 11 }} />
               <Tooltip />
               <Legend />
-              <Area type="monotone" dataKey="applications" name={t('kams.applications')} stroke="#094924" fill="url(#recap-apps)" />
+              <Area type="monotone" dataKey="applications" name={t('kams.applications')} stroke="#043711" fill="url(#recap-apps)" />
               <Area type="monotone" dataKey="interviews" name={t('kams.interviews')} stroke="#2d8a5a" fillOpacity={0} />
               <Area type="monotone" dataKey="observations" name={t('kams.observations')} stroke="#c9a227" fillOpacity={0} />
             </AreaChart>
@@ -258,9 +257,8 @@ export function KamsRecruitmentDashboard() {
                 <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="approved" name={t('kams.approved')} fill="#094924" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="approved" name={t('kams.approved')} fill="#043711" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="rejected" name={t('kams.rejected')} fill="#c81e1e" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="on_hold" name={t('kams.onHold')} fill="#c9a227" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="abandoned" name={t('kams.status.abandoned')} fill="#64748b" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -288,19 +286,19 @@ export function KamsRecruitmentDashboard() {
       <div className="grid gap-6 xl:grid-cols-3">
         <BreakdownCard
           title={t('kams.pipelineNow')}
-          rows={data.pipeline}
+          rows={data.pipeline.filter((row) => row.key !== 'on_hold')}
           label={statusLabel}
           empty={t('common.empty')}
         />
         <PieCard
           title={t('kams.interviewResults')}
-          rows={data.interview_results}
+          rows={data.interview_results.filter((row) => row.key !== 'on_hold')}
           label={statusLabel}
           empty={t('common.empty')}
         />
         <PieCard
           title={t('kams.observationDecisions')}
-          rows={data.observation_decisions}
+          rows={data.observation_decisions.filter((row) => row.key !== 'on_hold')}
           label={statusLabel}
           empty={t('common.empty')}
         />

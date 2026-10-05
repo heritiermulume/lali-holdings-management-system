@@ -17,7 +17,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'company_id', 'office_id', 'candidate_id', 'user_id', 'member_code', 'first_name', 'last_name', 'full_name', 'gender', 'birth_date', 'phone', 'email',
-    'login_password', 'photo_path', 'address', 'guardian_name', 'guardian_phone', 'trainer_name', 'trainer_user_id', 'manager_member_id', 'assistant_manager_member_id', 'manager_name', 'team_name',
+    'login_password', 'photo_path', 'address', 'guardian_name', 'guardian_phone', 'trainer_name', 'trainer_user_id', 'coach_member_id', 'coach_name', 'manager_member_id', 'assistant_manager_member_id', 'manager_name', 'team_name',
     'rank', 'role_id', 'origin', 'status', 'joined_on', 'migrated_at', 'first_week_completed',
     'first_week_completed_at', 'documents', 'notes', 'fixed_salary',
 ])]
@@ -65,6 +65,16 @@ class KamsMember extends Model
     public function trainer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'trainer_user_id');
+    }
+
+    public function coach(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'coach_member_id');
+    }
+
+    public function coachedMembers(): HasMany
+    {
+        return $this->hasMany(self::class, 'coach_member_id');
     }
 
     public function managerMember(): BelongsTo

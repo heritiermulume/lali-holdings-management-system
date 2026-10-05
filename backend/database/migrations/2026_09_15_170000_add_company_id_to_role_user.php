@@ -13,6 +13,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('role_user', function (Blueprint $table) {
+            // The unique (role_id, user_id) is the only index covering role_id,
+            // so InnoDB uses it for the foreign key. Add a dedicated index first.
+            $table->index('role_id');
+        });
+
+        Schema::table('role_user', function (Blueprint $table) {
             $table->dropUnique(['role_id', 'user_id']);
         });
 
@@ -27,6 +33,7 @@ return new class extends Migration
             $slug = Role::query()->whereKey($row->role_id)->value('slug');
             if (in_array($slug, $platform, true)) {
                 DB::table('role_user')->where('id', $row->id)->update(['company_id' => null]);
+
                 continue;
             }
 
@@ -40,6 +47,7 @@ return new class extends Migration
         Schema::table('role_user', function (Blueprint $table) {
             $table->dropConstrainedForeignId('company_id');
             $table->unique(['role_id', 'user_id']);
+            $table->dropIndex(['role_id']);
         });
     }
 };

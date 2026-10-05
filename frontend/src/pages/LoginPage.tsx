@@ -1,86 +1,200 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { Button, Field } from '../components/ui'
 import api from '../lib/api'
+
+const laliLogo = '/lali_holdings_logo.png'
 
 export function LoginPage() {
   const { t, i18n } = useTranslation()
   const { login } = useAuth()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('samuel.w@example.com')
-  const [password, setPassword] = useState('Password123!')
+  const [mode, setMode] = useState<'login' | 'forgot'>('login')
+  const [email, setEmail] = useState(() => localStorage.getItem('lhms_remember_login') || '')
+  const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(() => Boolean(localStorage.getItem('lhms_remember_login')))
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
     api.get('/public/bootstrap').then((res) => {
+      if (cancelled || localStorage.getItem('lhms_locale_picked')) return
       const locale = res.data.data?.default_locale === 'en' ? 'en' : 'fr'
       localStorage.setItem('lhms_locale', locale)
       void i18n.changeLanguage(locale)
     }).catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
   }, [i18n])
+
+  const switchLanguage = () => {
+    const next = i18n.language.startsWith('fr') ? 'en' : 'fr'
+    localStorage.setItem('lhms_locale_picked', '1')
+    localStorage.setItem('lhms_locale', next)
+    void i18n.changeLanguage(next)
+  }
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
       <section className="relative hidden overflow-hidden bg-lhms text-white lg:flex lg:flex-col lg:justify-between lg:p-14">
         <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full bg-lime/30 blur-3xl" />
         <div className="absolute bottom-10 left-10 h-64 w-64 rounded-full bg-white/5 blur-2xl" />
-        <div>
-          <div className="text-xs font-semibold tracking-[0.32em] text-white/60">LALI HOLDINGS</div>
-          <h1 className="mt-6 max-w-md text-5xl font-extrabold leading-tight">LHMS</h1>
-          <p className="mt-4 max-w-md text-lg text-white/75">{t('app.tagline')}</p>
+        <div className="relative z-10 flex flex-1 flex-col items-center justify-center text-center">
+          <img src={laliLogo} alt="Lali Holdings" className="h-72 w-auto object-contain drop-shadow-lg" />
+          <h1 className="mt-8 w-full max-w-lg text-center text-4xl font-extrabold leading-tight">{t('app.full')}</h1>
         </div>
-        <ul className="space-y-3 text-sm text-white/80">
-          <li>{t('auth.featureMulti')}</li>
-          <li>{t('auth.featureSecurity')}</li>
-          <li>{t('auth.featureScale')}</li>
+        <ul className="relative z-10 space-y-3 text-center text-sm text-white/80">
+          <li>{t('auth.copyright')}</li>
+          <li>
+            <Link to="/terms" className="hover:text-white hover:underline">
+              {t('auth.terms')}
+            </Link>
+          </li>
+          <li>
+            <Link to="/privacy" className="hover:text-white hover:underline">
+              {t('auth.privacy')}
+            </Link>
+          </li>
         </ul>
       </section>
 
-      <section className="flex items-center justify-center px-5 py-10">
-        <form
-          className="w-full max-w-md space-y-5"
-          onSubmit={async (event) => {
-            event.preventDefault()
-            setError('')
-            setLoading(true)
-            try {
-              await login(email, password)
-              navigate('/')
-            } catch {
-              setError(t('auth.error'))
-            } finally {
-              setLoading(false)
-            }
-          }}
-        >
-          <div>
-            <div className="mb-6 text-xs font-semibold tracking-[0.28em] text-lhms">LHMS</div>
-            <h2 className="text-3xl font-extrabold">{t('auth.welcome')}</h2>
-            <p className="mt-2 text-sm text-muted">{t('auth.signin')}</p>
-          </div>
-          <Field label={t('auth.login')} type="text" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <Field label={t('auth.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-          {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? t('common.loading') : t('auth.submit')}
-          </Button>
-          <div className="flex items-center justify-between text-sm text-muted">
-            <span>{t('auth.hint')}</span>
-            <button
-              type="button"
-              onClick={() => {
-                const next = i18n.language.startsWith('fr') ? 'en' : 'fr'
-                localStorage.setItem('lhms_locale', next)
-                void i18n.changeLanguage(next)
+      <section className="flex min-h-dvh flex-col bg-[radial-gradient(circle_at_top,_#e8f3ea_0%,_#f4f7f5_45%,_#ffffff_100%)] px-5 py-5 lg:min-h-0 lg:items-center lg:justify-center lg:bg-none lg:py-10">
+        <div className="flex flex-1 items-start justify-center lg:flex-none lg:items-center">
+          {mode === 'login' ? (
+            <form
+              className="w-full max-w-md space-y-4 lg:space-y-5"
+              onSubmit={async (event) => {
+                event.preventDefault()
+                setError('')
+                setSuccess('')
+                setLoading(true)
+                try {
+                  await login(email, password)
+                  if (rememberMe) {
+                    localStorage.setItem('lhms_remember_login', email)
+                  } else {
+                    localStorage.removeItem('lhms_remember_login')
+                  }
+                  navigate('/')
+                } catch {
+                  setError(t('auth.error'))
+                } finally {
+                  setLoading(false)
+                }
               }}
             >
-              {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
-            </button>
-          </div>
-        </form>
+              <div className="text-center">
+                <img src={laliLogo} alt="Lali Holdings" className="mx-auto mb-3 h-32 w-auto object-contain lg:hidden" />
+                <div className="mb-2 text-xs font-semibold tracking-wide text-lhms lg:hidden">{t('app.full')}</div>
+                <h2 className="text-3xl font-extrabold">{t('auth.welcome')}</h2>
+              </div>
+              <div className="space-y-5 rounded-3xl border border-white/80 bg-white/90 p-5 shadow-[0_18px_50px_rgba(4,55,17,0.10)] ring-1 ring-lhms/5 backdrop-blur-sm lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:ring-0 lg:backdrop-blur-none">
+                <Field label={t('auth.login')} type="text" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <div className="space-y-1.5">
+                  <Field label={t('auth.password')} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-lhms hover:underline"
+                      onClick={() => {
+                        setMode('forgot')
+                        setError('')
+                        setSuccess('')
+                      }}
+                    >
+                      {t('auth.forgotPassword')}
+                    </button>
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-line text-lhms accent-lhms"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                      />
+                      <span>{t('auth.rememberMe')}</span>
+                    </label>
+                  </div>
+                </div>
+                {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? t('common.loading') : t('auth.submit')}
+                </Button>
+              </div>
+              <div className="flex items-center justify-end text-sm text-muted">
+                <button type="button" onClick={switchLanguage}>
+                  {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form
+              className="w-full max-w-md space-y-5"
+              onSubmit={async (event) => {
+                event.preventDefault()
+                setError('')
+                setSuccess('')
+                setLoading(true)
+                try {
+                  await api.post('/auth/forgot-password', { email })
+                  setSuccess(t('auth.forgotSent'))
+                } catch {
+                  setError(t('auth.forgotError'))
+                } finally {
+                  setLoading(false)
+                }
+              }}
+            >
+              <div className="text-center">
+                <img src={laliLogo} alt="Lali Holdings" className="mx-auto mb-3 h-32 w-auto object-contain lg:hidden" />
+                <div className="mb-2 text-xs font-semibold tracking-wide text-lhms lg:hidden">{t('app.full')}</div>
+                <h2 className="text-3xl font-extrabold">{t('auth.forgotTitle')}</h2>
+                <p className="mt-2 text-sm text-muted">{t('auth.forgotHint')}</p>
+              </div>
+              <div className="space-y-5 rounded-3xl border border-white/80 bg-white/90 p-5 shadow-[0_18px_50px_rgba(4,55,17,0.10)] ring-1 ring-lhms/5 backdrop-blur-sm lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:ring-0 lg:backdrop-blur-none">
+                <Field label={t('auth.email')} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
+                {success ? <div className="rounded-xl bg-lhms-soft px-3 py-2 text-sm text-lhms">{success}</div> : null}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? t('common.loading') : t('auth.forgotSubmit')}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <button
+                  type="button"
+                  className="font-medium text-lhms hover:underline"
+                  onClick={() => {
+                    setMode('login')
+                    setError('')
+                    setSuccess('')
+                  }}
+                >
+                  {t('auth.backToLogin')}
+                </button>
+                <button type="button" className="text-muted" onClick={switchLanguage}>
+                  {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+        <ul className="mt-auto space-y-1.5 pt-6 text-center text-xs text-muted lg:hidden">
+          <li>{t('auth.copyright')}</li>
+          <li>
+            <Link to="/terms" className="hover:text-lhms hover:underline">
+              {t('auth.terms')}
+            </Link>
+          </li>
+          <li>
+            <Link to="/privacy" className="hover:text-lhms hover:underline">
+              {t('auth.privacy')}
+            </Link>
+          </li>
+        </ul>
       </section>
     </div>
   )

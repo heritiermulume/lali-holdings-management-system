@@ -16,7 +16,8 @@ use App\Modules\Kams\Models\KamsStockReceipt;
 use App\Modules\Kams\Models\KamsStockReturn;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockTransfer;
-use App\Models\Setting;
+use App\Support\MailSettings;
+use App\Support\SettingsCatalog;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -31,27 +32,21 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Password::defaults(function () {
-            try {
-                $min = max(6, min(128, (int) Setting::getValue('security', 'password_min_length', 10)));
-                $rule = Password::min($min);
-                if ((bool) Setting::getValue('security', 'password_require_mixed', true)) {
-                    $rule = $rule->mixedCase()->numbers()->symbols();
-                }
-
-                return $rule;
-            } catch (\Throwable) {
-                return Password::min(10);
+            $min = max(6, min(128, (int) SettingsCatalog::number('security', 'password_min_length')));
+            $rule = Password::min($min);
+            if (SettingsCatalog::bool('security', 'password_require_mixed')) {
+                $rule = $rule->mixedCase()->numbers()->symbols();
             }
+
+            return $rule;
         });
 
-        try {
-            $minutes = (int) Setting::getValue('security', 'session_lifetime_minutes', 120);
-            if ($minutes > 0) {
-                config(['sanctum.expiration' => $minutes]);
-            }
-        } catch (\Throwable) {
-            // Settings are unavailable before the database is migrated.
+        $minutes = (int) SettingsCatalog::number('security', 'session_lifetime_minutes');
+        if ($minutes > 0) {
+            config(['sanctum.expiration' => $minutes]);
         }
+
+        MailSettings::apply();
 
         Route::model('module', SystemModule::class);
         Route::model('notification', AppNotification::class);

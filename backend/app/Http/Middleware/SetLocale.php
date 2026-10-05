@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SettingsCatalog;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -10,12 +11,14 @@ class SetLocale
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $locale = $request->user()?->locale
-            ?: $request->header('Accept-Language', 'fr');
+        $locale = $request->header('Accept-Language')
+            ?: $request->user()?->locale
+            ?: SettingsCatalog::defaultLocale();
         $locale = strtolower(substr((string) $locale, 0, 2));
 
-        if (! in_array($locale, config('lhms.supported_locales', ['fr', 'en']), true)) {
-            $locale = 'fr';
+        $supported = config('lhms.supported_locales', ['fr', 'en']);
+        if (! in_array($locale, $supported, true)) {
+            $locale = SettingsCatalog::defaultLocale();
         }
 
         app()->setLocale($locale);

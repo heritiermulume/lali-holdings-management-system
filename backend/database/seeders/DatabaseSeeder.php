@@ -33,6 +33,7 @@ use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockTransfer;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\MemberMigrationService;
+use App\Modules\Kams\Services\RevenueRuleService;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Support\PersonName;
 use Illuminate\Database\Seeder;
@@ -411,10 +412,10 @@ class DatabaseSeeder extends Seeder
 
     private function seedUsers(array $companies): User
     {
-        $admin = User::query()->updateOrCreate(['email' => 'samuel.w@example.com'], [
+        $admin = User::query()->updateOrCreate(['email' => 'heritiermulume@gmail.com'], [
             'first_name' => 'Héritier',
             'last_name' => 'Mulume',
-            'phone' => '+243 800 111 222',
+            'phone' => '+243 824 449 218',
             'locale' => 'fr',
             'timezone' => 'Africa/Kinshasa',
             'is_active' => true,
@@ -462,6 +463,13 @@ class DatabaseSeeder extends Seeder
             ['group' => 'general', 'key' => 'group_name', 'value' => 'LALI Holdings'],
             ['group' => 'general', 'key' => 'legal_name', 'value' => 'LALI Holdings SAS'],
             ['group' => 'general', 'key' => 'support_email', 'value' => 'samuel.w@example.com'],
+            ['group' => 'general', 'key' => 'mail_from_address', 'value' => 'samuel.w@example.com'],
+            ['group' => 'general', 'key' => 'mail_from_name', 'value' => 'LALI Holdings'],
+            ['group' => 'general', 'key' => 'mail_host', 'value' => ''],
+            ['group' => 'general', 'key' => 'mail_port', 'value' => '587', 'type' => 'number'],
+            ['group' => 'general', 'key' => 'mail_username', 'value' => ''],
+            ['group' => 'general', 'key' => 'mail_password', 'value' => ''],
+            ['group' => 'general', 'key' => 'mail_encryption', 'value' => 'tls'],
             ['group' => 'general', 'key' => 'default_locale', 'value' => 'fr'],
             ['group' => 'general', 'key' => 'default_timezone', 'value' => 'Africa/Kinshasa'],
             ['group' => 'general', 'key' => 'date_format', 'value' => 'DD/MM/YYYY'],
@@ -472,20 +480,22 @@ class DatabaseSeeder extends Seeder
             ['group' => 'finance', 'key' => 'tax_inclusive_prices', 'value' => '0', 'type' => 'boolean'],
             ['group' => 'finance', 'key' => 'fx_spread_percent', 'value' => '1.5', 'type' => 'number'],
             ['group' => 'finance', 'key' => 'multi_currency', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'finance', 'key' => 'tax_name', 'value' => 'TVA'],
+            ['group' => 'finance', 'key' => 'default_tax_rate', 'value' => '16', 'type' => 'number'],
             ['group' => 'security', 'key' => 'password_min_length', 'value' => '10', 'type' => 'number'],
             ['group' => 'security', 'key' => 'password_require_mixed', 'value' => '1', 'type' => 'boolean'],
             ['group' => 'security', 'key' => 'session_lifetime_minutes', 'value' => '120', 'type' => 'number'],
             ['group' => 'security', 'key' => 'force_password_reset_days', 'value' => '90', 'type' => 'number'],
-            ['group' => 'security', 'key' => 'audit_retention_days', 'value' => '365', 'type' => 'number'],
             ['group' => 'kams', 'key' => 'order_prefix', 'value' => 'KA'],
             ['group' => 'kams', 'key' => 'invoice_prefix', 'value' => 'KAF'],
-            ['group' => 'kams', 'key' => 'default_tax_rate', 'value' => '16', 'type' => 'number'],
             ['group' => 'kams', 'key' => 'stock_alert_threshold', 'value' => '5', 'type' => 'number'],
             ['group' => 'kams', 'key' => 'default_payment_terms_days', 'value' => '30', 'type' => 'number'],
             ['group' => 'kams', 'key' => 'allow_backorders', 'value' => '0', 'type' => 'boolean'],
             ['group' => 'kams', 'key' => 'low_stock_notify', 'value' => '1', 'type' => 'boolean'],
             ['group' => 'kams', 'key' => 'interview_hours', 'value' => '12:00-16:00'],
             ['group' => 'kams', 'key' => 'observation_hours', 'value' => '07:30-17:30'],
+            ['group' => 'kams', 'key' => 'stock_loss_alert_percent', 'value' => '10', 'type' => 'number'],
+            ['group' => 'kams', 'key' => 'default_member_rank', 'value' => 'Distributor'],
             ['group' => 'heavy-equipment', 'key' => 'default_rental_days', 'value' => '7', 'type' => 'number'],
             ['group' => 'heavy-equipment', 'key' => 'maintenance_interval_hours', 'value' => '250', 'type' => 'number'],
             ['group' => 'heavy-equipment', 'key' => 'require_operator_license', 'value' => '1', 'type' => 'boolean'],
@@ -510,6 +520,8 @@ class DatabaseSeeder extends Seeder
 
     private function seedKams(Company $company, Office $office): void
     {
+        app(RevenueRuleService::class)->seedDefaults((int) $company->id);
+
         $clients = collect([
             ['name' => 'Boutique Horizon', 'email' => 'horizon@client.cd', 'city' => 'Goma', 'segment' => 'wholesale'],
             ['name' => 'Maison Kivu', 'email' => 'kivu@client.cd', 'city' => 'Goma', 'segment' => 'retail'],

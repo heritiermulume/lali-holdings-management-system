@@ -2,7 +2,6 @@
 
 namespace App\Modules\Kams\Http\Controllers;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
@@ -11,19 +10,25 @@ use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
+use App\Modules\Kams\Services\KamsFinanceService;
 use App\Modules\Kams\Services\SavingsLedger;
 use App\Modules\Kams\Services\StockMetrics;
 use App\Modules\Kams\Services\TreasuryLedger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class KamsFinanceController extends Controller
 {
     use ResolvesKamsOffices;
     use RespondsWithJson;
 
-    public function dashboard(Request $request, StockMetrics $metrics): JsonResponse
-    {
+    public function dashboard(
+        Request $request,
+        StockMetrics $metrics,
+        KamsFinanceService $finance,
+        TreasuryLedger $treasury,
+    ): JsonResponse {
         $companyId = $this->kamsCompanyId($request);
         $user = $request->user();
         $restricted = ! $user->isGroupAdmin() && $user->isOfficeScoped();
@@ -40,20 +45,62 @@ class KamsFinanceController extends Controller
             ? $filterOffices->pluck('id')->map(fn ($id) => (int) $id)->all() ?: [0]
             : [];
         $canFilter = $this->canFilterOffices($request) && $filterOffices->count() > 1;
+        $selectedOfficeId = null;
 
         if ($canFilter && $request->filled('office_id')) {
-            $officeId = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $officeId);
-            $officeIds = [$officeId];
+            $selectedOfficeId = (int) $request->integer('office_id');
+            $this->assertKamsOffice($request, $selectedOfficeId);
+            $officeIds = [$selectedOfficeId];
         }
 
-        $payload = $metrics->finance(
-            $request->string('group_by')->toString() ?: 'week',
-            $companyId,
-            $officeIds,
-        );
+        $groupBy = in_array($request->string('group_by')->toString(), ['day', 'week', 'month', 'custom'], true)
+            ? $request->string('group_by')->toString()
+            : 'week';
+        $range = $this->resolveFinanceRange($groupBy, $request->string('from')->toString() ?: null, $request->string('to')->toString() ?: null);
+        $previous = $this->previousFinanceRange($range['from'], $range['to']);
+
+        $payload = $metrics->finance('custom', $companyId, $officeIds, $range['from'], $range['to']);
+        $position = $finance->summarize($companyId, $range['from'], $range['to'], $officeIds);
+        $previousPosition = $finance->summarize($companyId, $previous['from'], $previous['to'], $officeIds);
+        $savings = $finance->savingsByKind($companyId, $officeIds);
+        $inventory = round((float) ($payload['totals']['inventory_value'] ?? 0), 2);
+        $equity = round((float) $position['assets'] - (float) $position['liabilities'], 2);
+        $includeCentral = $selectedOfficeId === null && ! $restricted;
+        $treasuryAccounts = $companyId
+            ? $treasury->overview((int) $companyId, $officeIds, $includeCentral)
+            : [];
+        $treasuryBalance = round(array_sum(array_map(
+            fn (array $account) => (float) ($account['balance'] ?? 0),
+            $treasuryAccounts,
+        )), 2);
+        $cashFlow = $finance->cashFlow($companyId, $range['from'], $range['to'], $officeIds);
+        $cashFlowTotals = [
+            'deposits' => round(array_sum(array_column($cashFlow, 'deposits')), 2),
+            'withdrawals' => round(array_sum(array_column($cashFlow, 'withdrawals')), 2),
+            'expenses' => round(array_sum(array_column($cashFlow, 'expenses')), 2),
+            'net' => round(array_sum(array_column($cashFlow, 'net')), 2),
+        ];
+
+        $payload['group_by'] = $groupBy;
+        $payload['range'] = $range;
+        $payload['previous_range'] = $previous;
+        $payload['position'] = array_merge($position, [
+            'equity' => $equity,
+            'inventory_value' => $inventory,
+            'net_margin' => round((float) $position['profit'] - (float) $position['expenses'], 2),
+            'treasury_balance' => $treasuryBalance,
+        ]);
+        $payload['position_delta'] = $this->deltaMap($position, $previousPosition);
+        $payload['trend'] = $finance->trend($companyId, $range['from'], $range['to'], $officeIds);
+        $payload['cash_flow'] = $cashFlow;
+        $payload['cash_flow_totals'] = $cashFlowTotals;
+        $payload['treasury'] = [
+            'balance' => $treasuryBalance,
+            'accounts' => $treasuryAccounts,
+        ];
+        $payload['savings'] = $savings;
         $payload['can_filter_offices'] = $canFilter;
-        $payload['office_id'] = $canFilter && $request->filled('office_id') ? (int) $request->integer('office_id') : null;
+        $payload['office_id'] = $selectedOfficeId;
         $payload['filter_offices'] = $canFilter ? $filterOffices->map(fn ($office) => [
             'id' => $office->id,
             'name' => $office->name,
@@ -61,6 +108,85 @@ class KamsFinanceController extends Controller
         ])->values()->all() : [];
 
         return $this->ok($payload);
+    }
+
+    /**
+     * @return array{from: string, to: string}
+     */
+    private function resolveFinanceRange(string $groupBy, ?string $from, ?string $to): array
+    {
+        $hasCustomDates = is_string($from) && is_string($to)
+            && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)
+            && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to);
+
+        if ($hasCustomDates) {
+            $start = Carbon::parse($from)->startOfDay();
+            $end = Carbon::parse($to)->startOfDay();
+            $today = now()->startOfDay();
+            if ($end->greaterThan($today)) {
+                $end = $today;
+            }
+            if ($start->greaterThan($end)) {
+                [$start, $end] = [$end, $start];
+            }
+
+            return ['from' => $start->toDateString(), 'to' => $end->toDateString()];
+        }
+
+        $end = now()->startOfDay();
+
+        return match ($groupBy) {
+            'day' => ['from' => $end->toDateString(), 'to' => $end->toDateString()],
+            'month' => [
+                'from' => $end->copy()->startOfMonth()->subMonths(11)->toDateString(),
+                'to' => $end->toDateString(),
+            ],
+            default => [
+                'from' => $end->copy()->startOfWeek(Carbon::MONDAY)->subWeeks(7)->toDateString(),
+                'to' => $end->toDateString(),
+            ],
+        };
+    }
+
+    /**
+     * @return array{from: string, to: string}
+     */
+    private function previousFinanceRange(string $from, string $to): array
+    {
+        $start = Carbon::parse($from)->startOfDay();
+        $end = Carbon::parse($to)->startOfDay();
+        $days = max(1, $start->diffInDays($end) + 1);
+        $prevEnd = $start->copy()->subDay();
+        $prevStart = $prevEnd->copy()->subDays($days - 1);
+
+        return [
+            'from' => $prevStart->toDateString(),
+            'to' => $prevEnd->toDateString(),
+        ];
+    }
+
+    /**
+     * @param  array<string, float|int>  $current
+     * @param  array<string, float|int>  $previous
+     * @return array<string, float|null>
+     */
+    private function deltaMap(array $current, array $previous): array
+    {
+        $deltas = [];
+        foreach ($current as $key => $value) {
+            if (! is_numeric($value)) {
+                continue;
+            }
+            $prev = (float) ($previous[$key] ?? 0);
+            $curr = (float) $value;
+            if (abs($prev) < 0.00001) {
+                $deltas[$key] = abs($curr) < 0.00001 ? 0.0 : null;
+                continue;
+            }
+            $deltas[$key] = round((($curr - $prev) / abs($prev)) * 100, 1);
+        }
+
+        return $deltas;
     }
 
     public function memberAccounts(Request $request, SavingsLedger $ledger): JsonResponse
@@ -116,7 +242,6 @@ class KamsFinanceController extends Controller
             'notes' => ['required', 'string', 'max:500'],
         ]);
         $entry = $treasury->requestDeposit($member, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Deposit requested.'));
     }
@@ -130,7 +255,6 @@ class KamsFinanceController extends Controller
             'notes' => ['required', 'string', 'max:500'],
         ]);
         $entry = $treasury->requestWithdrawal($member, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal requested.'));
     }
@@ -147,7 +271,6 @@ class KamsFinanceController extends Controller
         ]);
         $account = $treasury->accountForMember($member);
         $entry = $treasury->deposit($account, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Deposit recorded.'));
     }
@@ -164,7 +287,6 @@ class KamsFinanceController extends Controller
         ]);
         $account = $treasury->accountForMember($member);
         $entry = $treasury->withdraw($account, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal recorded.'));
     }
@@ -207,7 +329,6 @@ class KamsFinanceController extends Controller
         ]);
         $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);
         $entry = $treasury->deposit($treasuryAccount, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury), __('Deposit recorded.'));
     }
@@ -222,7 +343,6 @@ class KamsFinanceController extends Controller
         ]);
         $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);
         $entry = $treasury->withdraw($treasuryAccount, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury), __('Withdrawal recorded.'));
     }
@@ -237,7 +357,6 @@ class KamsFinanceController extends Controller
         ]);
         $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);
         $entry = $treasury->expense($treasuryAccount, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
-        AuditLogger::record('create', $entry, [], $data);
 
         return $this->created($this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury), __('Expense recorded.'));
     }
@@ -275,7 +394,6 @@ class KamsFinanceController extends Controller
             'notes' => [$decision === 'reject' ? 'required' : 'nullable', 'string', 'max:500'],
         ]);
         $decided = $treasury->decide($treasuryEntry, $decision, $request->user()->id, (string) ($data['notes'] ?? ''));
-        AuditLogger::record('update', $decided, [], ['status' => $decision === 'approve' ? 'posted' : 'rejected', 'notes' => $data['notes'] ?? null]);
 
         return $this->ok(
             $this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury),

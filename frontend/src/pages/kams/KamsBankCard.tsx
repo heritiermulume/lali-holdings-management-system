@@ -17,7 +17,7 @@ type KamsBankCardProps = {
 
 const kindStyles: Record<CardKind, { card: string; blob: string }> = {
   member: {
-    card: 'from-[#0c5c2e] via-lhms to-lhms-deep shadow-[0_18px_40px_rgba(9,73,36,0.35)]',
+    card: 'from-[#0c5c2e] via-lhms to-lhms-deep shadow-[0_18px_40px_rgba(4,55,17,0.35)]',
     blob: 'bg-lime/25',
   },
   central: {

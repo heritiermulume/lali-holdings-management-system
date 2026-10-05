@@ -4,6 +4,7 @@ import { Navigate } from 'react-router-dom'
 import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { cn } from '../../lib/cn'
+import { showAlert } from '../../lib/alert'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { compact, money } from '../../lib/format'
@@ -196,15 +197,15 @@ export function KamsDashboard() {
             }))}>
               <defs>
                 <linearGradient id="kams-revenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#094924" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#094924" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#043711" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#043711" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
               <YAxis width={44} tick={{ fontSize: 11 }} tickFormatter={(value) => compact(Number(value))} />
               <Tooltip formatter={(value, key) => [money(Number(value)), t(`dashboard.${String(key)}`)]} />
-              <Area type="monotone" dataKey="revenue" stroke="#094924" fill="url(#kams-revenue)" />
+              <Area type="monotone" dataKey="revenue" stroke="#043711" fill="url(#kams-revenue)" />
               <Area type="monotone" dataKey="expenses" stroke="#c81e1e" fillOpacity={0} />
             </AreaChart>
           </ResponsiveContainer>
@@ -215,9 +216,9 @@ export function KamsDashboard() {
         <Card className="p-5">
           <div className="mb-3 font-semibold">{t('kams.recruitment')}</div>
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            {['applications', 'interviews', 'observations', 'approved', 'rejected', 'on_hold'].map((key) => (
+            {['applications', 'interviews', 'observations', 'approved', 'rejected'].map((key) => (
               <div key={key} className="rounded-xl bg-surface p-4">
-                <div className="text-sm text-muted">{t(`kams.${key === 'on_hold' ? 'onHold' : key}`)}</div>
+                <div className="text-sm text-muted">{t(`kams.${key}`)}</div>
                 <div className="mt-2 text-2xl font-extrabold">{data.recruitment?.[key]}</div>
               </div>
             ))}
@@ -230,8 +231,8 @@ export function KamsDashboard() {
               }))}>
                 <defs>
                   <linearGradient id="kams-applications" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#094924" stopOpacity={0.28} />
-                    <stop offset="95%" stopColor="#094924" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#043711" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#043711" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e4ece6" />
@@ -239,7 +240,7 @@ export function KamsDashboard() {
                 <YAxis width={36} allowDecimals={false} tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Legend />
-                <Area type="monotone" dataKey="applications" name={t('kams.applications')} stroke="#094924" fill="url(#kams-applications)" />
+                <Area type="monotone" dataKey="applications" name={t('kams.applications')} stroke="#043711" fill="url(#kams-applications)" />
                 <Area type="monotone" dataKey="interviews" name={t('kams.interviews')} stroke="#2d8a5a" fillOpacity={0} />
                 <Area type="monotone" dataKey="observations" name={t('kams.observations')} stroke="#c9a227" fillOpacity={0} />
                 <Area type="monotone" dataKey="approved" name={t('kams.approved')} stroke="#1d4ed8" fillOpacity={0} />
@@ -294,7 +295,7 @@ function ResourcePage({
       setForm({})
       load()
     } catch {
-      window.alert('Unable to save. Check required fields.')
+      void showAlert(t('common.saveError'), { tone: 'danger' })
     }
   }
 

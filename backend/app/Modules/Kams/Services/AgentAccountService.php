@@ -5,7 +5,6 @@ namespace App\Modules\Kams\Services;
 use App\Core\Support\RoleCatalog;
 use App\Models\Company;
 use App\Models\Role;
-use App\Models\Setting;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
 use App\Services\UserCredentialsService;
@@ -48,7 +47,7 @@ class AgentAccountService
             'phone' => $member->phone,
             'avatar_path' => $member->photo_path,
             'locale' => SettingsCatalog::defaultLocale(),
-            'timezone' => (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa'),
+            'timezone' => SettingsCatalog::string('general', 'default_timezone'),
             'is_active' => true,
             'primary_company_id' => $member->company_id,
             'primary_office_id' => $member->office_id,

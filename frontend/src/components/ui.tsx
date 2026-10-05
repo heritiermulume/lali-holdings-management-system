@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/cn'
 
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(9,73,36,0.04)]', className)}>{children}</div>
+  return <div className={cn('rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]', className)}>{children}</div>
 }
 
 export function Button({
@@ -198,11 +198,18 @@ export function Modal({
         'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl',
         size === 'lg' ? 'max-w-3xl' : 'max-w-lg',
       )}>
-        <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-3 pt-5 sm:px-6 sm:pt-6">
-          <h2 className="min-w-0 text-lg font-bold">{title}</h2>
-          <button type="button" onClick={onClose} className="shrink-0 text-sm text-muted" aria-label={t('common.close')}>✕</button>
+        <div className="flex shrink-0 items-center justify-between gap-3 bg-lhms px-5 py-4 text-white sm:px-6">
+          <h2 className="min-w-0 text-lg font-bold text-white">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 text-sm text-white/80 hover:text-white"
+            aria-label={t('common.close')}
+          >
+            ✕
+          </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto px-5 pb-5 sm:px-6 sm:pb-6">
+        <div className="min-h-0 flex-1 overflow-auto px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
           {children}
         </div>
       </div>

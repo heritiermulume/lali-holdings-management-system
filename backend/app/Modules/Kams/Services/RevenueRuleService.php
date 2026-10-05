@@ -2,7 +2,6 @@
 
 namespace App\Modules\Kams\Services;
 
-use App\Core\Support\AuditLogger;
 use App\Modules\Kams\Models\KamsRevenueRule;
 use App\Modules\Kams\Models\KamsRevenueRuleHistory;
 use App\Modules\Kams\Support\RevenueRuleCatalog;
@@ -15,8 +14,6 @@ class RevenueRuleService
      */
     public function activeFor(int $companyId): Collection
     {
-        $this->ensureDefaults($companyId);
-
         return KamsRevenueRule::query()
             ->where('company_id', $companyId)
             ->where('is_active', true)
@@ -31,12 +28,15 @@ class RevenueRuleService
             ->keyBy('code');
     }
 
-    public function ensureDefaults(int $companyId): void
+    /**
+     * Seed helper — call from seeders only, never invent percents at runtime.
+     */
+    public function seedDefaults(int $companyId): void
     {
         foreach (RevenueRuleCatalog::defaults() as $row) {
             KamsRevenueRule::query()->firstOrCreate(
                 ['company_id' => $companyId, 'code' => $row['code']],
-                $row
+                array_merge($row, ['is_active' => true])
             );
         }
     }
@@ -46,8 +46,6 @@ class RevenueRuleService
      */
     public function listFor(int $companyId): array
     {
-        $this->ensureDefaults($companyId);
-
         return KamsRevenueRule::query()
             ->where('company_id', $companyId)
             ->orderBy('sort_order')
@@ -74,7 +72,6 @@ class RevenueRuleService
                 'before' => $before,
                 'after' => $after,
             ]);
-            AuditLogger::record('update', $rule, $before, $after);
         }
 
         return $rule->fresh();

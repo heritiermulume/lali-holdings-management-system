@@ -1,4 +1,4 @@
-import { Camera, Check, Download, Eye, EyeOff, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { Camera, ChevronLeft, ChevronRight, Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserRound, Users as UsersIcon, VenusAndMars } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
@@ -25,6 +25,7 @@ type UserRow = {
   id: number
   first_name?: string
   last_name?: string
+  gender?: string | null
   name: string
   email: string
   phone?: string | null
@@ -42,6 +43,14 @@ type UserRow = {
     is_active?: boolean
   } | null
 }
+
+type UsersSummary = {
+  total: number
+  active: number
+  male: number
+  female: number
+  unspecified: number
+}
 type MembershipOffice = { office_id: number; role_id: string }
 type Membership = { company_id: string; role_id: string; offices: MembershipOffice[] }
 
@@ -50,6 +59,7 @@ const emptyMembership = (): Membership => ({ company_id: '', role_id: '', office
 const emptyForm = () => ({
   first_name: '',
   last_name: '',
+  gender: '',
   email: '',
   phone: '',
   is_active: true,
@@ -60,6 +70,7 @@ const emptyForm = () => ({
 const USER_IMPORT_HEADERS = [
   'first_name',
   'last_name',
+  'gender',
   'email',
   'phone',
   'platform_role',
@@ -120,85 +131,6 @@ function PersonPhoto({
   )
 }
 
-function LoginCredentialsCard({
-  email,
-  phone,
-  password,
-}: {
-  email?: string | null
-  phone?: string | null
-  password?: string | null
-}) {
-  const { t } = useTranslation()
-  const [revealed, setRevealed] = useState(false)
-  const [copied, setCopied] = useState<'email' | 'phone' | 'password' | null>(null)
-  const copy = async (field: 'email' | 'phone' | 'password', value: string) => {
-    try {
-      await navigator.clipboard.writeText(value)
-    } catch {
-      // Clipboard can be blocked in some browsers; still confirm the click.
-    }
-    setCopied(field)
-    window.setTimeout(() => setCopied((current) => (current === field ? null : current)), 1600)
-  }
-  const mask = (value?: string | null) => {
-    if (!value) return '—'
-    return '•'.repeat(Math.min(Math.max(value.length, 8), 18))
-  }
-  const copyButton = (field: 'email' | 'phone' | 'password', value: string) => (
-    <button
-      type="button"
-      className={cn(
-        'inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold transition',
-        copied === field ? 'bg-lhms text-white' : 'text-lhms hover:bg-white',
-      )}
-      onClick={() => void copy(field, value)}
-    >
-      {copied === field ? <Check size={12} /> : null}
-      {copied === field ? t('common.copied') : t('common.copy')}
-    </button>
-  )
-
-  return (
-    <div className="space-y-2 rounded-xl bg-surface p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="font-semibold">{t('users.loginCredentials')}</div>
-        <button
-          type="button"
-          className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-lhms"
-          onClick={() => setRevealed((open) => !open)}
-        >
-          {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
-          {revealed ? t('common.hide') : t('common.show')}
-        </button>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-xs text-muted">{t('users.email')}</div>
-          <div className="truncate font-semibold">{revealed ? (email || '—') : mask(email)}</div>
-        </div>
-        {revealed && email ? copyButton('email', email) : null}
-      </div>
-      {phone ? (
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="text-xs text-muted">{t('users.phone')}</div>
-            <div className="truncate font-semibold">{revealed ? phone : mask(phone)}</div>
-          </div>
-          {revealed ? copyButton('phone', phone) : null}
-        </div>
-      ) : null}
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-xs text-muted">{t('users.generatedPassword')}</div>
-          <div className="truncate font-mono font-semibold">{revealed ? (password || '—') : mask(password)}</div>
-        </div>
-        {revealed && password ? copyButton('password', password) : null}
-      </div>
-    </div>
-  )
-}
-
 export function UsersPage() {
   const { t, i18n } = useTranslation()
   const { user, hasPermission } = useAuth()
@@ -230,6 +162,11 @@ export function UsersPage() {
   const [importError, setImportError] = useState('')
   const [importing, setImporting] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
+  const [lastPage, setLastPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [summary, setSummary] = useState<UsersSummary>({ total: 0, active: 0, male: 0, female: 0, unspecified: 0 })
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors: Array<{ row: number; email?: string | null; message: string }> } | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const filterRef = useRef<HTMLDivElement>(null)
@@ -249,9 +186,13 @@ export function UsersPage() {
   }), [roles, user, form.platform_role_id])
   const moduleRoles = useMemo(() => roles.filter((role) => !role.full_access && role.module_slug), [roles])
   const filtersActive = Boolean(status || companyId || roleId)
+  const safePage = Math.min(page, lastPage)
+  const rangeStart = total === 0 ? 0 : (safePage - 1) * perPage + 1
+  const rangeEnd = Math.min(safePage * perPage, total)
 
   const listParams = (term = query, extra: Record<string, string | number> = {}) => ({
-    per_page: extra.per_page ?? 50,
+    page: extra.page ?? page,
+    per_page: extra.per_page ?? perPage,
     ...(term ? { search: term } : {}),
     ...(status ? { is_active: status } : {}),
     ...(companyId ? { company_id: companyId } : {}),
@@ -259,15 +200,36 @@ export function UsersPage() {
     ...extra,
   })
 
-  const load = (term = query) => {
+  const load = (term = query, nextPage = page, nextPerPage = perPage) => {
     setLoading(true)
-    return api.get('/users', { params: listParams(term) })
-      .then((res) => setRows(res.data.data ?? []))
+    return api.get('/users', { params: listParams(term, { page: nextPage, per_page: nextPerPage }) })
+      .then((res) => {
+        const nextLast = Math.max(1, Number(res.data.meta?.last_page || 1))
+        const current = Number(res.data.meta?.current_page || nextPage)
+        const nextSummary = res.data.meta?.summary
+        setRows(res.data.data ?? [])
+        setLastPage(nextLast)
+        setTotal(Number(res.data.meta?.total || 0))
+        if (nextSummary) {
+          setSummary({
+            total: Number(nextSummary.total || 0),
+            active: Number(nextSummary.active || 0),
+            male: Number(nextSummary.male || 0),
+            female: Number(nextSummary.female || 0),
+            unspecified: Number(nextSummary.unspecified || 0),
+          })
+        }
+        if (current > nextLast) setPage(nextLast)
+        else if (current !== page) setPage(current)
+      })
       .finally(() => setLoading(false))
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setQuery(search.trim()), 300)
+    const timer = window.setTimeout(() => {
+      setQuery(search.trim())
+      setPage(1)
+    }, 300)
     return () => window.clearTimeout(timer)
   }, [search])
 
@@ -281,8 +243,8 @@ export function UsersPage() {
   }, [])
 
   useEffect(() => {
-    void load()
-  }, [query, status, companyId, roleId])
+    void load(query, page, perPage)
+  }, [query, status, companyId, roleId, page, perPage])
 
   useEffect(() => {
     api.get('/roles').then((res) => setRoles(res.data.data))
@@ -365,6 +327,7 @@ export function UsersPage() {
     setForm({
       first_name: row.first_name || row.name.split(' ')[0] || '',
       last_name: row.last_name || row.name.split(' ').slice(1).join(' '),
+      gender: row.gender === 'male' || row.gender === 'female' ? row.gender : '',
       email: row.email,
       phone: row.phone || '',
       is_active: row.is_active,
@@ -479,6 +442,7 @@ export function UsersPage() {
     const payload = new FormData()
     payload.append('first_name', firstName)
     payload.append('last_name', lastName)
+    payload.append('gender', form.gender || '')
     payload.append('email', email)
     payload.append('phone', form.phone.trim())
     payload.append('is_active', form.is_active ? '1' : '0')
@@ -543,9 +507,16 @@ export function UsersPage() {
     return companies.find((entry) => entry.id === assignment?.company_id)?.name || row.primary_company?.name || ''
   }
 
+  const genderLabel = (value?: string | null) => {
+    if (value === 'male') return t('users.genderMale')
+    if (value === 'female') return t('users.genderFemale')
+    return t('users.genderUnspecified')
+  }
+
   const userColumns = (row: UserRow) => [
     row.first_name || '',
     row.last_name || '',
+    genderLabel(row.gender),
     row.email,
     row.phone || '',
     platformRoleSlug(row),
@@ -558,6 +529,7 @@ export function UsersPage() {
   const userHeaders = () => [
     t('users.firstName'),
     t('users.lastName'),
+    t('users.gender'),
     t('users.email'),
     t('users.phone'),
     t('users.platformRole'),
@@ -667,6 +639,40 @@ export function UsersPage() {
 
   return (
     <div>
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
+        <Card className="p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted sm:text-sm">{t('users.statsTotal')}</span>
+            <span className="grid h-8 w-8 place-items-center rounded-xl bg-lhms-soft text-lhms"><UsersIcon size={16} /></span>
+          </div>
+          <div className="mt-2 text-2xl font-extrabold sm:text-3xl">{summary.total}</div>
+        </Card>
+        <Card className="p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted sm:text-sm">{t('users.statsActive')}</span>
+            <span className="grid h-8 w-8 place-items-center rounded-xl bg-lhms-soft text-lhms"><UserRound size={16} /></span>
+          </div>
+          <div className="mt-2 text-2xl font-extrabold text-lhms sm:text-3xl">{summary.active}</div>
+        </Card>
+        <Card className="p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted sm:text-sm">{t('users.statsMale')}</span>
+            <span className="grid h-8 w-8 place-items-center rounded-xl bg-lhms-soft text-lhms"><VenusAndMars size={16} /></span>
+          </div>
+          <div className="mt-2 text-2xl font-extrabold sm:text-3xl">{summary.male}</div>
+        </Card>
+        <Card className="p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted sm:text-sm">{t('users.statsFemale')}</span>
+            <span className="grid h-8 w-8 place-items-center rounded-xl bg-lhms-soft text-lhms"><VenusAndMars size={16} /></span>
+          </div>
+          <div className="mt-2 text-2xl font-extrabold sm:text-3xl">{summary.female}</div>
+          {summary.unspecified > 0 ? (
+            <div className="mt-1 text-xs text-muted">{t('users.genderUnspecified')}: {summary.unspecified}</div>
+          ) : null}
+        </Card>
+      </div>
+
       <div className="mb-4 flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
         <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />
@@ -691,18 +697,18 @@ export function UsersPage() {
             </button>
             {filterOpen ? (
               <div className="absolute right-0 z-30 mt-1 w-72 space-y-3 rounded-xl border border-line bg-white p-3 shadow-xl">
-                <Select label={t('common.status')} value={status} onChange={(e) => setStatus(e.target.value)}>
+                <Select label={t('common.status')} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}>
                   <option value="">{t('common.all')}</option>
                   <option value="1">{t('users.active')}</option>
                   <option value="0">{t('users.inactive')}</option>
                 </Select>
-                <Select label={t('users.company')} value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+                <Select label={t('users.company')} value={companyId} onChange={(e) => { setCompanyId(e.target.value); setPage(1) }}>
                   <option value="">{t('users.allCompanies')}</option>
                   {companies.map((company) => (
                     <option key={company.id} value={company.id}>{company.name}</option>
                   ))}
                 </Select>
-                <Select label={t('users.role')} value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+                <Select label={t('users.role')} value={roleId} onChange={(e) => { setRoleId(e.target.value); setPage(1) }}>
                   <option value="">{t('users.allRoles')}</option>
                   {roles.map((role) => (
                     <option key={role.id} value={role.id}>{roleLabel(t, role)}</option>
@@ -712,12 +718,13 @@ export function UsersPage() {
             ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 flex-nowrap items-center gap-2">
+        <div className="flex w-full shrink-0 flex-nowrap items-center gap-2 sm:w-auto">
           {canCreate ? (
             <Button className="shrink-0 px-3 sm:px-4" onClick={openCreate}>
               <Plus size={16} /> {t('users.create')}
             </Button>
           ) : null}
+          <div className="ml-auto flex shrink-0 flex-nowrap items-center gap-2">
           {hasPermission('users.import') ? (
             <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('users.import')} onClick={() => setImportOpen(true)}>
               <Upload size={16} />
@@ -774,6 +781,7 @@ export function UsersPage() {
               ) : null}
             </div>
           ) : null}
+          </div>
         </div>
       </div>
 
@@ -808,6 +816,43 @@ export function UsersPage() {
             </div>
           </div>
         ))}
+            <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted">{t('common.pageRange', { from: rangeStart, to: rangeEnd, total })}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-sm text-muted">
+                  {t('common.rowsPerPage')}
+                  <select
+                    value={perPage}
+                    onChange={(event) => {
+                      setPerPage(Number(event.target.value))
+                      setPage(1)
+                    }}
+                    className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+                  >
+                    {[10, 20, 50, 100].map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
+                  disabled={safePage <= 1 || loading}
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                >
+                  <ChevronLeft size={16} /> {t('common.prev')}
+                </button>
+                <span className="px-1 text-sm font-semibold">{safePage} / {lastPage}</span>
+                <button
+                  type="button"
+                  className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
+                  disabled={safePage >= lastPage || loading}
+                  onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
+                >
+                  {t('common.next')} <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
           </>
         )}
       </Card>
@@ -851,6 +896,11 @@ export function UsersPage() {
           </div>
           <Field label={t('users.firstName')} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
           <Field label={t('users.lastName')} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
+          <Select label={t('users.gender')} value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+            <option value="">{t('users.genderNone')}</option>
+            <option value="male">{t('users.genderMale')}</option>
+            <option value="female">{t('users.genderFemale')}</option>
+          </Select>
           <Field label={t('users.email')} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
           <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <Select label={t('common.status')} value={form.is_active ? '1' : '0'} onChange={(e) => setForm({ ...form, is_active: e.target.value === '1' })}>
@@ -999,12 +1049,14 @@ export function UsersPage() {
         </form>
       </Modal>
 
-      <Modal open={Boolean(viewing)} title={viewing?.name || t('users.details')} onClose={() => setViewing(null)}>
+      <Modal open={Boolean(viewing)} title={t('users.user')} onClose={() => setViewing(null)}>
         {viewing ? (
           <div className="space-y-3 text-sm">
             <div className="flex justify-center pb-1">
               <PersonPhoto name={viewing.name} url={viewing.avatar_url} className="h-20 w-20 text-xl" />
             </div>
+            <div>{t('users.name')}: <strong>{viewing.name}</strong></div>
+            <div>{t('users.gender')}: <strong>{genderLabel(viewing.gender)}</strong></div>
             <div>{t('users.email')}: <strong>{viewing.email}</strong></div>
             <div>{t('users.phone')}: <strong>{viewing.phone || '—'}</strong></div>
             <div>{t('users.company')}: <strong>{companyNameFor(viewing) || '—'}</strong></div>
@@ -1021,14 +1073,6 @@ export function UsersPage() {
             </div>
             <div>{t('common.status')}: <Badge tone={viewing.is_active ? 'green' : 'red'}>{viewing.is_active ? t('users.active') : t('users.inactive')}</Badge></div>
             <div>{t('users.lastLogin')}: <strong>{dateTime(viewing.last_login_at, viewing.last_login_at)}</strong></div>
-            {viewing.account?.password ? (
-              <LoginCredentialsCard
-                key={viewing.id}
-                email={viewing.account.email || viewing.email}
-                phone={viewing.account.phone || viewing.phone}
-                password={viewing.account.password}
-              />
-            ) : null}
             {canUpdate ? (
               <Button className="w-full" onClick={() => { setViewing(null); openEdit(viewing) }}>{t('common.edit')}</Button>
             ) : null}

@@ -2,28 +2,44 @@ type DisplayPrefs = {
   decimalPlaces: number
   dateFormat: string
   timeZone: string
+  currency: string
+  groupName: string
 }
 
 const displayPrefs: DisplayPrefs = {
   decimalPlaces: 2,
   dateFormat: 'DD/MM/YYYY',
-  timeZone: 'Africa/Kinshasa',
+  timeZone: 'UTC',
+  currency: '',
+  groupName: '',
 }
 
 export function applyDisplayPrefs(input?: {
   decimal_places?: number | string | null
   date_format?: string | null
   timezone?: string | null
+  reporting_currency?: string | null
+  group_name?: string | null
 } | null) {
   const places = Number(input?.decimal_places)
   if (Number.isFinite(places)) displayPrefs.decimalPlaces = Math.max(0, Math.min(6, Math.trunc(places)))
   if (input?.date_format) displayPrefs.dateFormat = input.date_format
   if (input?.timezone) displayPrefs.timeZone = input.timezone
+  if (input?.reporting_currency) displayPrefs.currency = String(input.reporting_currency).toUpperCase()
+  if (input?.group_name) displayPrefs.groupName = String(input.group_name)
+}
+
+export function reportingCurrency() {
+  return displayPrefs.currency
+}
+
+export function groupName() {
+  return displayPrefs.groupName
 }
 
 function formatDay(date: Date) {
   const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: displayPrefs.timeZone,
+    timeZone: displayPrefs.timeZone || 'UTC',
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -35,17 +51,24 @@ function formatDay(date: Date) {
     .replace('DD', pick('day'))
 }
 
-export function money(value?: number | null, currency = 'USD', digits?: number) {
+export function money(value?: number | null, currency?: string, digits?: number) {
   const places = digits ?? displayPrefs.decimalPlaces
+  const code = (currency || displayPrefs.currency || '').toUpperCase()
+  if (!code) {
+    return (value ?? 0).toLocaleString(undefined, {
+      minimumFractionDigits: places,
+      maximumFractionDigits: places,
+    })
+  }
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
-      currency,
+      currency: code,
       minimumFractionDigits: places,
       maximumFractionDigits: places,
     }).format(value ?? 0)
   } catch {
-    return `${(value ?? 0).toFixed(places)} ${currency}`
+    return `${(value ?? 0).toFixed(places)} ${code}`
   }
 }
 
@@ -57,7 +80,7 @@ export function dateTime(date?: string | null, at?: string | null) {
   const day = formatDay(parsed)
   if (!at || source.length <= 10) return day
   const time = new Intl.DateTimeFormat(undefined, {
-    timeZone: displayPrefs.timeZone,
+    timeZone: displayPrefs.timeZone || 'UTC',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,

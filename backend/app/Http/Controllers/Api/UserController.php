@@ -2,14 +2,12 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Office;
 use App\Models\Role;
-use App\Models\Setting;
 use App\Models\User;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Support\SpreadsheetRows;
@@ -64,7 +62,9 @@ class UserController extends Controller
         $page = $query->latest()->paginate($request->integer('per_page', 50));
         $page->getCollection()->transform(fn (User $user) => $this->present($user));
 
-        return $this->paginated($page);
+        return $this->paginated($page, 'OK', [
+            'summary' => $this->summary(),
+        ]);
     }
 
     public function store(Request $request): JsonResponse
@@ -75,7 +75,7 @@ class UserController extends Controller
         $requestedPassword = $request->filled('password') ? $request->string('password')->toString() : null;
         $data['password'] = $requestedPassword ?: 'Password123!';
         $data['locale'] = $data['locale'] ?? SettingsCatalog::defaultLocale();
-        $data['timezone'] = $data['timezone'] ?? (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa');
+        $data['timezone'] = $data['timezone'] ?? SettingsCatalog::string('general', 'default_timezone');
         if (array_key_exists('is_active', $data)) {
             $data['is_active'] = $request->boolean('is_active');
         }
@@ -90,8 +90,6 @@ class UserController extends Controller
 
             return $user->fresh();
         });
-
-        AuditLogger::record('create', $user, [], $user->toArray());
 
         return $this->created($this->present($user), __('User created.'));
     }
@@ -133,8 +131,6 @@ class UserController extends Controller
             return $user->fresh();
         });
 
-        AuditLogger::record('update', $user, $old, $user->toArray());
-
         return $this->ok($this->present($user), __('User updated.'));
     }
 
@@ -147,7 +143,6 @@ class UserController extends Controller
         abort_if($user->isSuperAdmin() && User::query()->whereHas('roles', fn ($q) => $q->where('slug', 'super_administrator'))->count() <= 1, 422, __('The last super administrator cannot be deleted.'));
 
         $user->delete();
-        AuditLogger::record('delete', $user);
 
         return $this->ok(null, __('User deleted.'));
     }
@@ -222,9 +217,14 @@ class UserController extends Controller
 
     private function validated(Request $request, ?int $userId = null): array
     {
+        if ($request->input('gender') === '') {
+            $request->merge(['gender' => null]);
+        }
+
         return $request->validate([
             'first_name' => [$userId ? 'sometimes' : 'required', 'string', 'max:120'],
             'last_name' => [$userId ? 'sometimes' : 'required', 'string', 'max:120'],
+            'gender' => ['nullable', Rule::in(['male', 'female'])],
             'email' => [$userId ? 'sometimes' : 'required', 'email', Rule::unique('users', 'email')->ignore($userId)],
             'phone' => ['nullable', 'string', 'max:40'],
             'locale' => ['nullable', 'in:fr,en'],
@@ -465,6 +465,25 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * @return array{total: int, active: int, male: int, female: int, unspecified: int}
+     */
+    private function summary(): array
+    {
+        $total = User::query()->count();
+        $active = User::query()->where('is_active', true)->count();
+        $male = User::query()->where('gender', 'male')->count();
+        $female = User::query()->where('gender', 'female')->count();
+
+        return [
+            'total' => $total,
+            'active' => $active,
+            'male' => $male,
+            'female' => $female,
+            'unspecified' => max(0, $total - $male - $female),
+        ];
+    }
+
     private function present(User $user): array
     {
         $user->load(['roles', 'scopes', 'primaryCompany.module', 'primaryOffice']);
@@ -473,6 +492,7 @@ class UserController extends Controller
             'id' => $user->id,
             'first_name' => $user->first_name,
             'last_name' => $user->last_name,
+            'gender' => $user->gender,
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $user->phone,
@@ -497,6 +517,12 @@ class UserController extends Controller
         $lastName = $this->rowValue($row, ['last_name', 'nom']);
         $email = strtolower($this->rowValue($row, ['email', 'e-mail', 'mail']));
         $phone = $this->rowValue($row, ['phone', 'telephone', 'téléphone']) ?: null;
+        $genderRaw = strtolower($this->rowValue($row, ['gender', 'sexe', 'sex']));
+        $gender = match ($genderRaw) {
+            'male', 'm', 'homme', 'h' => 'male',
+            'female', 'f', 'femme' => 'female',
+            default => null,
+        };
         $platformRole = $this->rowValue($row, ['platform_role', 'role_transversal', 'rôle_transversal']);
         $companyValue = $this->rowValue($row, ['company', 'societe', 'société', 'company_code']);
         $roleValue = $this->rowValue($row, ['role', 'rôle', 'membership_role']);
@@ -511,11 +537,12 @@ class UserController extends Controller
         $user = User::query()->create([
             'first_name' => $firstName,
             'last_name' => $lastName,
+            'gender' => $gender,
             'email' => $email,
             'phone' => $phone,
             'password' => 'Password123!',
             'locale' => SettingsCatalog::defaultLocale(),
-            'timezone' => (string) Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa'),
+            'timezone' => SettingsCatalog::string('general', 'default_timezone'),
             'is_active' => $isActive,
         ]);
 
@@ -551,7 +578,6 @@ class UserController extends Controller
         $this->syncMemberships($user, $payload);
         $this->kamsAccounts->tryForUser($user->fresh('roles'));
         $this->credentials->issueIfAgent($user->fresh('roles'));
-        AuditLogger::record('create', $user, [], $user->toArray());
 
         return $this->present($user->fresh());
     }

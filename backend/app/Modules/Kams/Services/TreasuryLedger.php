@@ -12,6 +12,7 @@ use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class TreasuryLedger
@@ -222,7 +223,7 @@ class TreasuryLedger
         return $treasury;
     }
 
-public function deposit(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
+    public function deposit(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
     {
         return $this->post($account, 'deposit', abs($amount), $notes, $userId, $member);
     }
@@ -280,6 +281,14 @@ public function deposit(KamsTreasuryAccount $account, float $amount, string $not
         return $account;
     }
 
+    public function recalculateBalanceSnapshots(): void
+    {
+        $entries = KamsTreasuryEntry::query()->orderBy('created_at')->orderBy('id')->get();
+        foreach ($entries as $entry) {
+            $this->recordBalanceAfter($entry);
+        }
+    }
+
     private function recordBalanceAfter(?KamsTreasuryEntry $entry): void
     {
         if (! $entry || ! in_array($entry->status ?: 'posted', ['posted', 'rejected'], true)) {
@@ -308,8 +317,8 @@ public function deposit(KamsTreasuryAccount $account, float $amount, string $not
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, KamsTreasuryEntry>  $treasury
-     * @param  \Illuminate\Support\Collection<int, KamsSavingsEntry>  $savings
+     * @param  Collection<int, KamsTreasuryEntry>  $treasury
+     * @param  Collection<int, KamsSavingsEntry>  $savings
      * @return list<array<string, mixed>>
      */
     private function timelineWithBalances(KamsTreasuryAccount $account, $treasury, $savings): array
@@ -376,7 +385,7 @@ public function deposit(KamsTreasuryAccount $account, float $amount, string $not
     /**
      * Savings that are not already posted on a treasury account.
      *
-     * @return \Illuminate\Support\Collection<int, KamsSavingsEntry>
+     * @return Collection<int, KamsSavingsEntry>
      */
     private function unmirroredSavingsEntries(KamsTreasuryAccount $account, bool $companyWide)
     {

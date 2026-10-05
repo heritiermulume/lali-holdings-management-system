@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\ModuleManager;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
@@ -46,7 +45,6 @@ class ModuleController extends Controller
         ]);
 
         $module->fill($data)->save();
-        AuditLogger::record('update', $module, [], $data);
 
         return $this->ok($module->fresh());
     }
@@ -65,7 +63,6 @@ class ModuleController extends Controller
         }
 
         $company->modules()->sync($sync);
-        AuditLogger::record('update', $company, [], $sync);
 
         return $this->ok($company->fresh('modules'));
     }

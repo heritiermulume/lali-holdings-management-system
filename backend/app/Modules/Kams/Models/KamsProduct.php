@@ -50,19 +50,15 @@ class KamsProduct extends Model
         if ($value > 0) {
             return $value;
         }
-        $cost = (float) $this->cost;
 
-        return $cost > 0 ? $cost : round($this->fieldPrice() * 0.6, 2);
+        return max(0, (float) $this->cost);
     }
 
     public function managerPrice(): float
     {
         $value = (float) $this->manager_price;
-        if ($value > 0) {
-            return $value;
-        }
 
-        return round(($this->fieldPrice() + $this->companyPrice()) / 2, 2);
+        return $value > 0 ? $value : 0.0;
     }
 
     public function sellerMarginUnit(): float

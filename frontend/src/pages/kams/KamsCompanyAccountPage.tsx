@@ -244,7 +244,7 @@ export function KamsCompanyAccountPage() {
             aria-label={t('kams.scrollCardsLeft')}
             disabled={!canScrollLeft}
             onClick={() => scrollCards(-1)}
-            className="absolute left-2 top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-lhms shadow-[0_8px_24px_rgba(9,73,36,0.16)] disabled:pointer-events-none disabled:opacity-30 md:grid"
+            className="absolute left-2 top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-lhms shadow-[0_8px_24px_rgba(4,55,17,0.16)] disabled:pointer-events-none disabled:opacity-30 md:grid"
           >
             <ChevronLeft size={20} />
           </button>
@@ -279,7 +279,7 @@ export function KamsCompanyAccountPage() {
             aria-label={t('kams.scrollCardsRight')}
             disabled={!canScrollRight}
             onClick={() => scrollCards(1)}
-            className="absolute right-2 top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-lhms shadow-[0_8px_24px_rgba(9,73,36,0.16)] disabled:pointer-events-none disabled:opacity-30 md:grid"
+            className="absolute right-2 top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 place-items-center rounded-full border border-line bg-white text-lhms shadow-[0_8px_24px_rgba(4,55,17,0.16)] disabled:pointer-events-none disabled:opacity-30 md:grid"
           >
             <ChevronRight size={20} />
           </button>

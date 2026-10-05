@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
@@ -29,7 +28,7 @@ class RoleController extends Controller
     public function permissions(): JsonResponse
     {
         $actionOrder = array_flip(['view', 'create', 'deposit', 'withdraw', 'expense', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate', 'approve', 'manage', 'group', 'company']);
-        $pageOrder = array_flip(['view', 'users', 'audit', 'settings', 'account', 'company']);
+        $pageOrder = array_flip(['view', 'users', 'settings', 'account', 'company']);
 
         $groups = Permission::query()
             ->orderBy('group')
@@ -43,7 +42,6 @@ class RoleController extends Controller
                 $page = match ($root) {
                     'administration' => 'view',
                     'users' => 'users',
-                    'audit' => 'audit',
                     'settings', 'organization', 'companies', 'roles' => 'settings',
                     default => count($parts) >= 4 ? $parts[2] : '',
                 };
@@ -72,8 +70,6 @@ class RoleController extends Controller
         } elseif ($request->has('permission_ids')) {
             $role->permissions()->sync($this->dependentPermissionIds($request->input('permission_ids', [])));
         }
-
-        AuditLogger::record('update', $role, [], $data);
 
         return $this->ok($this->present($role->fresh(['permissions'])), __('Role updated.'));
     }

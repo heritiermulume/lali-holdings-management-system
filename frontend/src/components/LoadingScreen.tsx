@@ -10,7 +10,7 @@ function LoadingMark({ light = false }: { light?: boolean }) {
       <span className={cn('lhms-loader-ring lhms-loader-ring-slow absolute inset-2 rounded-full border-[3px]', light ? 'border-lime/20 border-b-lime' : 'border-lime/20 border-b-lime')} />
       <span className={cn(
         'relative grid h-12 w-12 place-items-center rounded-2xl text-[11px] font-extrabold tracking-[0.18em]',
-        light ? 'bg-white/15 text-white shadow-[0_10px_30px_rgba(0,0,0,0.18)]' : 'bg-lhms text-white shadow-[0_12px_28px_rgba(9,73,36,0.28)]',
+        light ? 'bg-white/15 text-white shadow-[0_10px_30px_rgba(0,0,0,0.18)]' : 'bg-lhms text-white shadow-[0_12px_28px_rgba(4,55,17,0.28)]',
       )}>
         LH
       </span>
@@ -69,7 +69,7 @@ export function LoadingScreen({
   if (variant === 'overlay') {
     return (
       <div className="fixed inset-0 z-[100] grid place-items-center bg-ink/45 px-5 backdrop-blur-md" role="alert" aria-busy="true" aria-live="polite">
-        <div className="relative w-full max-w-sm overflow-hidden rounded-[28px] border border-white/60 bg-white/95 px-8 py-10 shadow-[0_30px_80px_rgba(9,73,36,0.22)]">
+        <div className="relative w-full max-w-sm overflow-hidden rounded-[28px] border border-white/60 bg-white/95 px-8 py-10 shadow-[0_30px_80px_rgba(4,55,17,0.22)]">
           <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-lhms-soft blur-2xl" />
           <LoadingCopy kind={kind} title={title} message={message} />
         </div>
@@ -79,7 +79,7 @@ export function LoadingScreen({
 
   return (
     <div className="grid min-h-[48vh] place-items-center px-4 py-10" role="status" aria-busy="true" aria-live="polite">
-      <div className="relative w-full max-w-sm overflow-hidden rounded-[28px] border border-line bg-white px-8 py-10 shadow-[0_18px_50px_rgba(9,73,36,0.08)]">
+      <div className="relative w-full max-w-sm overflow-hidden rounded-[28px] border border-line bg-white px-8 py-10 shadow-[0_18px_50px_rgba(4,55,17,0.08)]">
         <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-lhms-soft blur-2xl" />
         <LoadingCopy kind={kind} title={title} message={message} />
       </div>

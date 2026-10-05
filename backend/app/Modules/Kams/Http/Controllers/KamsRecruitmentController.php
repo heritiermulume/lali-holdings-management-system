@@ -2,7 +2,7 @@
 
 namespace App\Modules\Kams\Http\Controllers;
 
-use App\Core\Support\AuditLogger;
+use App\Core\Support\ObservationHours;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
@@ -10,6 +10,7 @@ use App\Models\Company;
 use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
+use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsCommunication;
 use App\Modules\Kams\Models\KamsInterview;
@@ -24,9 +25,10 @@ use App\Modules\Kams\Services\KamsIdentityService;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\MemberRegistrationService;
 use App\Modules\Kams\Services\RecruitmentCommunicationService;
-use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Services\RecruitmentMetrics;
+use App\Modules\Kams\Support\DomainOptions;
 use App\Modules\Kams\Support\PersonName;
+use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -74,7 +76,7 @@ class KamsRecruitmentController extends Controller
             ->whereIn('status', ['active', 'verified', 'pending_verification'])
             ->orderBy('full_name')
             ->limit(500)
-            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id']);
+            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id', 'rank']);
 
         $users = User::query()
             ->where('is_active', true)
@@ -97,7 +99,14 @@ class KamsRecruitmentController extends Controller
             ->orderByDesc('level')
             ->get();
 
-        return $this->ok(compact('companies', 'offices', 'members', 'users', 'roles'));
+        $options = DomainOptions::all();
+        $settings = [
+            'interview_hours' => SettingsCatalog::string('kams', 'interview_hours'),
+            'observation_hours' => SettingsCatalog::string('kams', 'observation_hours'),
+            'default_member_rank' => SettingsCatalog::string('kams', 'default_member_rank'),
+        ];
+
+        return $this->ok(compact('companies', 'offices', 'members', 'users', 'roles', 'options', 'settings'));
     }
 
     public function dashboard(Request $request): JsonResponse
@@ -232,7 +241,6 @@ class KamsRecruitmentController extends Controller
         ]);
 
         $this->communications->notifyApplicationReceived($candidate, $request->getPreferredLanguage() === 'en' ? 'en' : 'fr');
-        AuditLogger::record('create', $candidate, [], $candidate->toArray());
 
         return $this->created($candidate->load(['office', 'sponsor', 'guardian']));
     }
@@ -301,7 +309,6 @@ class KamsRecruitmentController extends Controller
 
         $old = $candidate->only(array_keys($data));
         $candidate->fill($data)->save();
-        AuditLogger::record('update', $candidate, $old, $data);
 
         return $this->ok($candidate->fresh(['office', 'sponsor', 'guardian']));
     }
@@ -316,7 +323,6 @@ class KamsRecruitmentController extends Controller
         );
 
         $candidate->delete();
-        AuditLogger::record('delete', $candidate);
 
         return $this->ok(null, __('Deleted.'));
     }
@@ -331,7 +337,8 @@ class KamsRecruitmentController extends Controller
             'attended' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string'],
             'abandonment_reason' => ['required_if:result,abandoned', 'nullable', 'string'],
-            'result' => ['required', 'in:admitted,rejected,on_hold,abandoned'],
+            'rejection_reason' => ['required_if:result,rejected', 'nullable', 'string'],
+            'result' => ['required', 'in:admitted,rejected,abandoned'],
         ]);
 
         $candidate = KamsCandidate::query()->findOrFail($data['candidate_id']);
@@ -339,6 +346,7 @@ class KamsRecruitmentController extends Controller
         abort_unless(in_array($candidate->status, ['received', 'under_review', 'shortlisted', 'on_hold'], true), 422, 'Interview is not available for this application.');
 
         $interviewer = User::query()->where('is_active', true)->findOrFail($data['interviewer_user_id']);
+        abort_if($this->isDistributorAgent((int) $interviewer->id), 422, 'Distributors cannot be selected as interviewers.');
         $started = Carbon::parse($data['interview_starts_at']);
         $ended = now();
         if ($ended->lt($started)) {
@@ -348,8 +356,7 @@ class KamsRecruitmentController extends Controller
         $observationStarts = null;
         $observationEnds = null;
         if ($data['result'] === 'admitted') {
-            $observationStarts = $started->copy()->setTime(7, 30);
-            $observationEnds = $started->copy()->setTime(17, 30);
+            [$observationStarts, $observationEnds] = ObservationHours::applyTo($started);
         }
 
         $interview = KamsInterview::query()->create([
@@ -366,6 +373,7 @@ class KamsRecruitmentController extends Controller
             'attended' => $data['attended'] ?? false,
             'notes' => $data['notes'] ?? null,
             'abandonment_reason' => $data['abandonment_reason'] ?? null,
+            'rejection_reason' => $data['rejection_reason'] ?? null,
             'result' => $data['result'],
             'recorded_by' => $request->user()->id,
             'recorded_at' => now(),
@@ -375,15 +383,12 @@ class KamsRecruitmentController extends Controller
             'admitted' => 'observation',
             'rejected' => 'rejected',
             'abandoned' => 'abandoned',
-            default => 'on_hold',
         };
         $candidate->forceFill(['status' => $status])->save();
 
         if ($data['result'] === 'admitted') {
             $this->communications->notifyInterviewPassed($candidate, $request->getPreferredLanguage() === 'en' ? 'en' : 'fr');
         }
-
-        AuditLogger::record('create', $interview, [], $interview->toArray());
 
         return $this->created($interview->load(['candidate', 'office', 'recorder', 'interviewer']));
     }
@@ -397,9 +402,10 @@ class KamsRecruitmentController extends Controller
             'attended' => ['nullable', 'boolean'],
             'supervisor_member_id' => ['required', 'exists:kams_members,id'],
             'supervisor_name' => ['nullable', 'string', 'max:255'],
+            'sponsor_member_id' => ['required_if:decision,approved', 'nullable', 'exists:kams_members,id'],
             'evaluation' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
-            'decision' => ['required', 'in:approved,rejected,on_hold'],
+            'decision' => ['required', 'in:approved,rejected'],
             'rejection_reason' => ['required_if:decision,rejected', 'nullable', 'string'],
         ]);
 
@@ -408,8 +414,20 @@ class KamsRecruitmentController extends Controller
         abort_unless(in_array($candidate->status, ['observation', 'interview_admitted'], true), 422, 'Observation day is not available for this application.');
 
         $supervisor = KamsMember::query()->find($data['supervisor_member_id']);
-        abort_unless($supervisor && (int) $supervisor->company_id === (int) $candidate->company_id, 422, 'The selected supervisor does not belong to this company.');
+        abort_unless($supervisor && (int) $supervisor->company_id === (int) $candidate->company_id, 422, 'The selected coach does not belong to this company.');
         $data['supervisor_name'] = $supervisor->full_name;
+
+        $sponsor = null;
+        if (! empty($data['sponsor_member_id'])) {
+            $sponsor = KamsMember::query()->find($data['sponsor_member_id']);
+            abort_unless($sponsor && (int) $sponsor->company_id === (int) $candidate->company_id, 422, 'The selected sponsor does not belong to this company.');
+            abort_if($this->isDistributorMember($sponsor), 422, 'Distributors cannot be selected as sponsors.');
+            abort_unless($sponsor->user_id, 422, 'The selected sponsor must have a user account so the candidate can join their team.');
+        } elseif ($data['decision'] === 'approved') {
+            abort(422, 'A sponsor is required when the observation is approved.');
+        } else {
+            $data['sponsor_member_id'] = null;
+        }
 
         $observation = KamsObservationDay::query()->create([
             ...$data,
@@ -420,27 +438,30 @@ class KamsRecruitmentController extends Controller
             'recorded_at' => now(),
         ]);
 
-        $candidate->forceFill([
-            'status' => match ($data['decision']) {
-                'approved' => 'approved',
-                'rejected' => 'rejected',
-                default => 'on_hold',
-            },
-        ])->save();
+        $candidateUpdates = [
+            'status' => $data['decision'] === 'approved' ? 'approved' : 'rejected',
+        ];
+        if ($sponsor) {
+            $candidateUpdates['sponsor_member_id'] = $sponsor->id;
+            $candidateUpdates['sponsor_name'] = $sponsor->full_name;
+        }
+        $candidate->forceFill($candidateUpdates)->save();
 
         $member = null;
+        $credentials = null;
         if ($data['decision'] === 'approved') {
-            $member = $this->registration->registerFromObservation(
+            $registered = $this->registration->registerFromObservation(
                 $observation,
                 $request->getPreferredLanguage() === 'en' ? 'en' : 'fr'
             );
+            $member = $registered['member'];
+            $credentials = $registered['credentials'];
         }
 
-        AuditLogger::record('create', $observation, [], $observation->toArray());
-
         return $this->created([
-            'observation' => $observation->load(['candidate', 'office', 'recorder']),
-            'member' => $member?->load(['office', 'openingPositions', 'user', 'role']),
+            'observation' => $observation->load(['candidate', 'office', 'recorder', 'sponsor']),
+            'member' => $member?->load(['office', 'openingPositions', 'user', 'role', 'trainer']),
+            'credentials' => $credentials,
         ]);
     }
 
@@ -515,7 +536,7 @@ class KamsRecruitmentController extends Controller
             ...$data,
             'member_code' => $this->identity->nextMemberCode((int) $data['company_id']),
             'photo_path' => $photoPath,
-            'rank' => $data['rank'] ?? 'Distributor',
+            'rank' => $data['rank'] ?? SettingsCatalog::string('kams', 'default_member_rank'),
             'origin' => 'migrated',
             'status' => 'active',
             'joined_on' => $data['joined_on'] ?? now()->toDateString(),
@@ -524,8 +545,6 @@ class KamsRecruitmentController extends Controller
 
         $this->accounts->provision($member);
         $this->wallets->ensureWallet($member);
-
-        AuditLogger::record('create', $member, [], $member->toArray());
 
         return $this->created($member->fresh(['office', 'role', 'trainer', 'user', 'managerMember', 'assistantManager']));
     }
@@ -536,19 +555,30 @@ class KamsRecruitmentController extends Controller
         $this->accounts->provision($member);
         $this->wallets->ensureWallet($member);
 
-        return $this->ok($member->fresh([
+        $member = $member->fresh([
+            'company:id,name,legal_name,code',
             'office',
             'role',
             'trainer',
+            'coach:id,full_name,member_code,phone,photo_path',
             'managerMember',
             'assistantManager',
             'user',
-            'candidate',
+            'candidate.sponsor:id,full_name,member_code',
             'history.changer',
             'history.approver',
-            'openingPositions',
             'communications',
-        ]));
+        ]);
+
+        $coached = $member->coachedMembers()
+            ->with(['office:id,name,code', 'role:id,name,slug'])
+            ->orderBy('full_name')
+            ->get(['id', 'member_code', 'full_name', 'phone', 'photo_path', 'office_id', 'role_id', 'rank', 'gender', 'status']);
+
+        $member->setAttribute('coached_members_count', $coached->count());
+        $member->setAttribute('coached_members', $coached);
+
+        return $this->ok($member);
     }
 
     public function updateMember(Request $request, KamsMember $member): JsonResponse
@@ -624,7 +654,6 @@ class KamsRecruitmentController extends Controller
         $this->assertCompany($request, (int) $member->company_id);
         $this->accounts->deactivate($member);
         $member->delete();
-        AuditLogger::record('delete', $member);
 
         return $this->ok(null, __('Deleted.'));
     }
@@ -676,8 +705,6 @@ class KamsRecruitmentController extends Controller
             'verified' => false,
             'notes' => $data['notes'] ?? 'Migrated opening balance. Not a new transaction.',
         ]);
-
-        AuditLogger::record('create', $position, [], $position->toArray());
 
         return $this->created($position);
     }
@@ -794,7 +821,6 @@ class KamsRecruitmentController extends Controller
         ]);
 
         $this->communications->notifyApplicationReceived($candidate);
-        AuditLogger::record('create', $candidate, [], $candidate->toArray());
 
         return $this->created([
             'candidate_id' => $candidate->candidate_id,
@@ -953,5 +979,30 @@ class KamsRecruitmentController extends Controller
         $photo = $request->file('photo');
 
         return $photo?->store('kams/photos', 'public');
+    }
+
+    private function isDistributorAgent(int $userId): bool
+    {
+        return KamsMember::query()
+            ->where('user_id', $userId)
+            ->get()
+            ->contains(fn (KamsMember $member) => $this->isDistributorMember($member));
+    }
+
+    private function isDistributorMember(KamsMember $member): bool
+    {
+        if ($member->rank === 'Distributor') {
+            return true;
+        }
+
+        if (! $member->role_id) {
+            return false;
+        }
+
+        return Role::query()
+            ->whereKey($member->role_id)
+            ->where('module_slug', 'kams')
+            ->where('slug', 'distributor')
+            ->exists();
     }
 }

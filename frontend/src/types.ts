@@ -39,6 +39,7 @@ export type User = {
     date_format?: string
     timezone?: string
     group_name?: string
+    reporting_currency?: string
   } | null
   features?: Record<string, boolean>
   account?: {

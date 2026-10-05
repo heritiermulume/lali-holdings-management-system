@@ -2,16 +2,16 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Core\Support\AuditLogger;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Models\Currency;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
-use App\Models\Setting;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password as PasswordBroker;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
@@ -47,8 +47,6 @@ class AuthController extends Controller
 
         $user->forceFill(['last_login_at' => now()])->save();
         $token = $user->createToken('lhms-web')->plainTextToken;
-
-        AuditLogger::record('login', $user);
 
         return $this->ok([
             'token' => $token,
@@ -92,7 +90,6 @@ class AuthController extends Controller
         }
 
         $user->fill($data)->save();
-        AuditLogger::record('update', $user, [], $data);
 
         return $this->ok($this->presentUser($user->fresh()), __('Profile updated.'));
     }
@@ -112,7 +109,6 @@ class AuthController extends Controller
 
         $path = $request->file('avatar')->store('avatars', 'public');
         $user->forceFill(['avatar_path' => $path])->save();
-        AuditLogger::record('update', $user, [], ['avatar_path' => $path]);
 
         return $this->ok($this->presentUser($user->fresh()), __('Profile photo updated.'));
     }
@@ -126,7 +122,6 @@ class AuthController extends Controller
             $oldPath = $user->avatar_path;
             $disk->delete($oldPath);
             $user->forceFill(['avatar_path' => null])->save();
-            AuditLogger::record('update', $user, ['avatar_path' => $oldPath], ['avatar_path' => null]);
         }
 
         return $this->ok($this->presentUser($user->fresh()), __('Profile photo removed.'));
@@ -146,15 +141,69 @@ class AuthController extends Controller
         KamsMember::query()
             ->where('user_id', $request->user()->id)
             ->update(['login_password' => null]);
-        AuditLogger::record('password_change', $request->user());
 
         return $this->ok(null, __('Password updated.'));
+    }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $user = User::query()->where('email', $data['email'])->first();
+        if ($user && $user->is_active) {
+            try {
+                PasswordBroker::sendResetLink(['email' => $user->email]);
+            } catch (\Throwable $exception) {
+                report($exception);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => __('Unable to send the reset link.'),
+                ], 500);
+            }
+        }
+
+        return $this->ok(null, __('A password reset email has been sent to you.'));
+    }
+
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string'],
+            'email' => ['required', 'email'],
+            'password' => ['required', 'confirmed', Password::defaults()],
+        ]);
+
+        $status = PasswordBroker::reset(
+            $data,
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => $password,
+                    'login_password' => null,
+                ])->save();
+
+                KamsMember::query()
+                    ->where('user_id', $user->id)
+                    ->update(['login_password' => null]);
+
+                $user->tokens()->delete();
+            }
+        );
+
+        if ($status !== PasswordBroker::PASSWORD_RESET) {
+            throw ValidationException::withMessages([
+                'email' => [__($status)],
+            ]);
+        }
+
+        return $this->ok(null, __('Your password has been reset.'));
     }
 
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()?->delete();
-        AuditLogger::record('logout', $request->user());
 
         return $this->ok(null, __('Signed out.'));
     }
@@ -224,10 +273,13 @@ class AuthController extends Controller
             'last_login_at' => $user->last_login_at,
             'features' => (object) [],
             'preferences' => [
-                'decimal_places' => max(0, min(6, (int) Setting::getValue('finance', 'decimal_places', 2))),
-                'date_format' => (string) Setting::getValue('general', 'date_format', 'DD/MM/YYYY'),
-                'timezone' => (string) ($user->timezone ?: Setting::getValue('general', 'default_timezone', 'Africa/Kinshasa')),
-                'group_name' => (string) Setting::getValue('general', 'group_name', 'LALI Holdings'),
+                'decimal_places' => max(0, min(6, (int) SettingsCatalog::number('finance', 'decimal_places'))),
+                'date_format' => SettingsCatalog::string('general', 'date_format'),
+                'timezone' => (string) ($user->timezone ?: SettingsCatalog::string('general', 'default_timezone')),
+                'group_name' => SettingsCatalog::string('general', 'group_name'),
+                'legal_name' => SettingsCatalog::string('general', 'legal_name'),
+                'support_email' => SettingsCatalog::string('general', 'support_email'),
+                'reporting_currency' => Currency::defaultCode(),
             ],
         ];
     }

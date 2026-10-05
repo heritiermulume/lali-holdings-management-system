@@ -63,7 +63,6 @@ class PermissionCatalog
             ['slug' => 'modules.manage', 'group' => 'modules', 'name' => 'Activate and configure modules'],
 
             ['slug' => 'notifications.view', 'group' => 'notifications', 'name' => 'View notifications'],
-            ['slug' => 'audit.view', 'group' => 'administration', 'name' => 'View audit logs'],
             ['slug' => 'settings.manage', 'group' => 'administration', 'name' => 'Manage settings'],
             ['slug' => 'files.manage', 'group' => 'files', 'name' => 'Manage files'],
         ];

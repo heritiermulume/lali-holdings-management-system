@@ -172,20 +172,6 @@ return new class extends Migration
             $table->index(['user_id', 'read_at']);
         });
 
-        Schema::create('audit_logs', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
-            $table->string('action', 64);
-            $table->string('auditable_type');
-            $table->unsignedBigInteger('auditable_id')->nullable();
-            $table->json('old_values')->nullable();
-            $table->json('new_values')->nullable();
-            $table->string('ip_address', 45)->nullable();
-            $table->text('user_agent')->nullable();
-            $table->timestamps();
-            $table->index(['auditable_type', 'auditable_id']);
-        });
-
         Schema::create('settings', function (Blueprint $table) {
             $table->id();
             $table->string('group', 64)->default('general');
@@ -243,7 +229,6 @@ return new class extends Migration
         Schema::dropIfExists('financial_snapshots');
         Schema::dropIfExists('tasks');
         Schema::dropIfExists('settings');
-        Schema::dropIfExists('audit_logs');
         Schema::dropIfExists('notifications');
         Schema::dropIfExists('company_module');
         Schema::dropIfExists('system_modules');

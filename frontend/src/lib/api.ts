@@ -73,7 +73,8 @@ api.interceptors.response.use(
     if ((error.config as BusyConfig | undefined)?.__busy) {
       endBusy()
     }
-    if (error.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
+    const path = window.location.pathname
+    if (error.response?.status === 401 && !path.startsWith('/login') && !path.startsWith('/reset-password')) {
       localStorage.removeItem('lhms_token')
       window.location.href = '/login'
     }

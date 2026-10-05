@@ -39,7 +39,7 @@ class UserCredentialsMail extends Mailable
                 'user' => $this->user,
                 'password' => $this->password,
                 'locale' => $locale,
-                'loginUrl' => rtrim((string) config('app.url'), '/').'/login',
+                'loginUrl' => rtrim((string) config('lhms.frontend_url', config('app.url')), '/').'/login',
             ],
         );
     }

@@ -2,7 +2,6 @@ import {
   Building2,
   Crown,
   LayoutDashboard,
-  ScrollText,
   Search,
   Settings,
   Shield,
@@ -42,9 +41,8 @@ type DockApp = {
 
 const adminApps: DockApp[] = [
   { to: '/administration', key: 'administration', icon: Shield, anyPerm: ADMIN_PERMS, tint: 'bg-[linear-gradient(145deg,#64748b,#1e293b)]' },
-  { to: '/administration/dashboard', key: 'dashboard', icon: LayoutDashboard, anyPerm: DASHBOARD_PERMS, tint: 'bg-[linear-gradient(145deg,#4ade80,#094924)]' },
+  { to: '/administration/dashboard', key: 'dashboard', icon: LayoutDashboard, anyPerm: DASHBOARD_PERMS, tint: 'bg-[linear-gradient(145deg,#4ade80,#043711)]' },
   { to: '/administration/users', key: 'users', icon: Users, perm: 'users.view', tint: 'bg-[linear-gradient(145deg,#818cf8,#3730a3)]' },
-  { to: '/administration/audit', key: 'audit', icon: ScrollText, perm: 'audit.view', tint: 'bg-[linear-gradient(145deg,#94a3b8,#334155)]' },
   { to: '/administration/settings', key: 'settings', icon: Settings, anyPerm: SETTINGS_PERMS, tint: 'bg-[linear-gradient(145deg,#cbd5e1,#475569)]' },
 ]
 
@@ -130,7 +128,7 @@ export function DashboardPage() {
 
   return (
     <div className="relative flex min-h-[calc(100dvh-64px)] flex-col overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(78,154,44,0.35),transparent_42%),radial-gradient(circle_at_80%_10%,rgba(9,73,36,0.55),transparent_38%),linear-gradient(180deg,#0b2416_0%,#062010_55%,#04150c_100%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(78,154,44,0.35),transparent_42%),radial-gradient(circle_at_80%_10%,rgba(4,55,17,0.55),transparent_38%),linear-gradient(180deg,#0b2416_0%,#062010_55%,#04150c_100%)]" />
       <div className="pointer-events-none absolute -left-24 top-24 h-72 w-72 rounded-full bg-lime/20 blur-3xl" />
       <div className="pointer-events-none absolute -right-16 bottom-32 h-80 w-80 rounded-full bg-white/5 blur-3xl" />
 

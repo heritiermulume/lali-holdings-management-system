@@ -6,8 +6,6 @@ import {
   Globe2,
   Landmark,
   LayoutDashboard,
-  ListChecks,
-  ScrollText,
   Settings,
   Shield,
   SlidersHorizontal,
@@ -57,7 +55,6 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     items: [
       { to: '/administration/dashboard', labelKey: 'nav.dashboard', descriptionKey: 'dashboard.overview', icon: LayoutDashboard, anyPerm: ['administration.view'] },
       { to: '/administration/users', labelKey: 'nav.users', descriptionKey: 'users.subtitle', icon: Users, perm: 'users.view' },
-      { to: '/administration/audit', labelKey: 'nav.audit', descriptionKey: 'audit.subtitle', icon: ScrollText, perm: 'audit.view' },
       { to: '/administration/settings', labelKey: 'nav.settings', descriptionKey: 'settings.generalHint', icon: Settings, anyPerm: ['settings.manage', 'organization.view', 'companies.view', 'roles.manage', 'roles.view'] },
     ],
   },
@@ -68,7 +65,6 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     icon: LayoutDashboard,
     items: [
       { to: '/administration/dashboard', labelKey: 'groupDash.overview', descriptionKey: 'groupDash.overviewHint', icon: LayoutDashboard, end: true, anyPerm: ['administration.view'] },
-      { to: '/administration/dashboard/actions', labelKey: 'groupDash.actions', descriptionKey: 'groupDash.actionsHint', icon: ListChecks, anyPerm: ['administration.view'] },
     ],
   },
   kams: {
@@ -102,15 +98,6 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
       { to: '/notifications', labelKey: 'nav.notifications', descriptionKey: 'notifications.subtitle', icon: Bell, end: true, perm: 'notifications.view' },
     ],
   },
-  audit: {
-    slug: 'audit',
-    nameKey: 'nav.audit',
-    titleKey: 'nav.audit',
-    icon: ScrollText,
-    items: [
-      { to: '/administration/audit', labelKey: 'nav.audit', descriptionKey: 'audit.subtitle', icon: ScrollText, end: true, perm: 'audit.view' },
-    ],
-  },
   settings: {
     slug: 'settings',
     nameKey: 'nav.settings',
@@ -135,7 +122,6 @@ const platformPrefixes: Array<[string, string]> = [
   ['/administration', 'administration'],
   ['/users', 'administration'],
   ['/notifications', 'notifications'],
-  ['/audit', 'administration'],
   ['/settings', 'administration'],
   ['/organization', 'administration'],
   ['/companies', 'administration'],
@@ -163,7 +149,7 @@ export function businessModuleIcon(slug: string): LucideIcon {
 export function dashboardBusinessSlug(pathname: string): string | null {
   const match = pathname.match(/^\/(?:administration|modules)\/dashboard\/([^/]+)$/)
   if (!match) return null
-  if (['actions', 'modules'].includes(match[1])) return null
+  if (match[1] === 'modules') return null
   return match[1]
 }
 

@@ -2,7 +2,6 @@
 
 namespace App\Modules\Kams\Services;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\RoleCatalog;
 use App\Models\Office;
 use App\Models\Role;
@@ -80,12 +79,6 @@ class MemberMigrationService
                 'issue_count' => $issueCount,
             ])->save();
 
-            AuditLogger::record('import_members', $import, [], [
-                'source' => $source,
-                'rows' => count($rows),
-                'issues' => $issueCount,
-            ]);
-
             return $import;
         });
 
@@ -114,8 +107,6 @@ class MemberMigrationService
 
         $member->openingPositions()->update(['verified' => true]);
 
-        AuditLogger::record('verify_member', $member);
-
         return $row->fresh(['member.openingPositions']);
     }
 
@@ -134,7 +125,6 @@ class MemberMigrationService
         $row->forceFill(['status' => 'active'])->save();
 
         $this->communications->notifyMigration($member, 'migration_confirmation');
-        AuditLogger::record('activate_member', $member);
 
         $import = $row->import;
         if ($import && $import->rows()->whereNotIn('status', ['active', 'rejected'])->doesntExist()) {

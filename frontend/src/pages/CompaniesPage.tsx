@@ -117,6 +117,7 @@ export function CompaniesPage() {
   const [loading, setLoading] = useState(true)
   const [people, setPeople] = useState<SearchComboboxItem[]>([])
   const [parentOptions, setParentOptions] = useState<Array<{ id: number; name: string; code: string }>>([])
+  const [officeTypes, setOfficeTypes] = useState<string[]>(['headquarters', 'office', 'agency', 'branch'])
 
   const load = () => {
     setLoading(true)
@@ -176,6 +177,9 @@ export function CompaniesPage() {
         hint: user.email || undefined,
       })))
       setParentOptions(res.data.data?.offices ?? [])
+      if (Array.isArray(res.data.data?.office_types) && res.data.data.office_types.length) {
+        setOfficeTypes(res.data.data.office_types)
+      }
     })
   }
 
@@ -401,10 +405,9 @@ export function CompaniesPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={t('org.code')} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
             <Select label={t('org.officeType')} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-              <option value="headquarters">{t('org.officeTypes.headquarters')}</option>
-              <option value="office">{t('org.officeTypes.office')}</option>
-              <option value="agency">{t('org.officeTypes.agency')}</option>
-              <option value="branch">{t('org.officeTypes.branch')}</option>
+              {officeTypes.map((type) => (
+                <option key={type} value={type}>{t(`org.officeTypes.${type}`)}</option>
+              ))}
             </Select>
           </div>
           <Select label={t('org.countries')} value={form.country_id} onChange={(e) => setForm({

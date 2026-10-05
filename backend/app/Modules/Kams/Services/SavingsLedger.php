@@ -5,12 +5,12 @@ namespace App\Modules\Kams\Services;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsSavingsAccount;
 use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Models\KamsStockAssignment;
 use App\Modules\Kams\Models\KamsStockReturn;
 use App\Modules\Kams\Models\KamsStockReturnItem;
-use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use Illuminate\Support\Facades\DB;
@@ -613,6 +613,14 @@ class SavingsLedger
         }
 
         return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source']);
+    }
+
+    public function recalculateBalanceSnapshots(): void
+    {
+        $entries = KamsSavingsEntry::query()->orderBy('created_at')->orderBy('id')->get();
+        foreach ($entries as $entry) {
+            $this->recordBalanceAfter($entry);
+        }
     }
 
     private function recordBalanceAfter(?KamsSavingsEntry $entry): void

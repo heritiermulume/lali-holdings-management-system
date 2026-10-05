@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Core\Support\AuditLogger;
 use App\Core\Support\CurrencyConverter;
 use App\Core\Support\CurrencySync;
 use App\Core\Support\TaxSettings;
@@ -23,8 +22,7 @@ class FinanceController extends Controller
     public function overview(CurrencyConverter $fx): JsonResponse
     {
         CurrencySync::ensureFromCountries();
-        $this->ensureBaseCurrencies();
-        if (ExchangeRate::query()->doesntExist()) {
+        if (Currency::query()->exists() && ExchangeRate::query()->doesntExist()) {
             try {
                 $fx->syncFromMarket();
             } catch (\Throwable) {
@@ -39,13 +37,17 @@ class FinanceController extends Controller
         $enabled = Currency::query()->pluck('code')->all();
 
         $items = collect(CurrencyCatalog::all())
-            ->map(fn (array $meta, string $code) => [
-                'code' => $code,
-                'name' => $meta['name'],
-                'name_fr' => $meta['name_fr'],
-                'symbol' => $meta['symbol'],
-                'enabled' => in_array($code, $enabled, true),
-            ])
+            ->map(function (array $meta, string $code) use ($enabled) {
+                $row = Currency::query()->where('code', $code)->first();
+
+                return [
+                    'code' => $code,
+                    'name' => $row?->name ?? $meta['name'],
+                    'name_fr' => $row?->name_fr ?? $meta['name_fr'],
+                    'symbol' => $row?->symbol ?? $meta['symbol'],
+                    'enabled' => in_array($code, $enabled, true),
+                ];
+            })
             ->values()
             ->all();
 
@@ -56,19 +58,23 @@ class FinanceController extends Controller
     {
         $data = $request->validate([
             'code' => ['required', 'string', 'size:3'],
+            'name' => ['nullable', 'string', 'max:120'],
+            'name_fr' => ['nullable', 'string', 'max:120'],
+            'symbol' => ['nullable', 'string', 'max:16'],
         ]);
         $code = strtoupper($data['code']);
+        $existing = Currency::query()->where('code', $code)->first();
         $meta = CurrencyCatalog::find($code);
 
         $currency = Currency::query()->updateOrCreate(
             ['code' => $code],
             [
-                'name' => $meta['name'],
-                'name_fr' => $meta['name_fr'],
-                'symbol' => $meta['symbol'],
+                'name' => $data['name'] ?? $existing?->name ?? $meta['name'],
+                'name_fr' => $data['name_fr'] ?? $existing?->name_fr ?? $meta['name_fr'],
+                'symbol' => $data['symbol'] ?? $existing?->symbol ?? $meta['symbol'],
                 'is_active' => true,
-                'is_default' => Currency::query()->count() === 0,
-                'sort_order' => (int) Currency::query()->max('sort_order') + 1,
+                'is_default' => $existing?->is_default ?? Currency::query()->count() === 0,
+                'sort_order' => $existing?->sort_order ?? ((int) Currency::query()->max('sort_order') + 1),
             ]
         );
 
@@ -76,9 +82,11 @@ class FinanceController extends Controller
             $this->makeDefault($currency);
         }
 
-        $fx->syncFromMarket();
+        try {
+            $fx->syncFromMarket();
+        } catch (\Throwable) {
+        }
         CurrencySync::ensureFromCountries();
-        AuditLogger::record('create', $currency);
 
         return $this->created($this->payload($fx));
     }
@@ -103,8 +111,6 @@ class FinanceController extends Controller
             $currency->save();
         }
 
-        AuditLogger::record('update', $currency);
-
         return $this->ok($this->payload($fx));
     }
 
@@ -128,16 +134,8 @@ class FinanceController extends Controller
         ExchangeRate::query()
             ->where(fn ($q) => $q->where('quote_code', $currency->code)->orWhere('base_code', $currency->code))
             ->delete();
-        AuditLogger::record('delete', $currency);
 
         return $this->ok($this->payload($fx));
-    }
-
-    public function syncRates(CurrencyConverter $fx): JsonResponse
-    {
-        $sync = $fx->syncFromMarket();
-
-        return $this->ok(array_merge($this->payload($fx), ['sync' => $sync]));
     }
 
     public function convert(Request $request, CurrencyConverter $fx): JsonResponse
@@ -151,7 +149,15 @@ class FinanceController extends Controller
         $from = strtoupper($data['from']);
         $to = strtoupper($data['to']);
         $amount = (float) $data['amount'];
-        $rates = $fx->bankRates($from, $to);
+
+        try {
+            $rates = $fx->bankRates($from, $to);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
 
         return $this->ok([
             'amount' => $amount,
@@ -169,6 +175,20 @@ class FinanceController extends Controller
         ]);
     }
 
+    public function syncRates(CurrencyConverter $fx): JsonResponse
+    {
+        try {
+            $sync = $fx->syncFromMarket();
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        return $this->ok(array_merge($this->payload($fx), ['sync' => $sync]));
+    }
+
     private function makeDefault(Currency $currency): void
     {
         Currency::query()->where('id', '!=', $currency->id)->update(['is_default' => false]);
@@ -182,27 +202,6 @@ class FinanceController extends Controller
         );
     }
 
-    private function ensureBaseCurrencies(): void
-    {
-        if (Currency::query()->exists()) {
-            return;
-        }
-
-        $order = 0;
-        foreach (['USD', 'CDF', 'EUR', 'TZS'] as $code) {
-            $meta = CurrencyCatalog::find($code);
-            Currency::query()->create([
-                'code' => $code,
-                'name' => $meta['name'],
-                'name_fr' => $meta['name_fr'],
-                'symbol' => $meta['symbol'],
-                'is_default' => $code === 'USD',
-                'is_active' => true,
-                'sort_order' => $order++,
-            ]);
-        }
-    }
-
     private function payload(CurrencyConverter $fx): array
     {
         CurrencySync::ensureFromCountries();
@@ -211,7 +210,13 @@ class FinanceController extends Controller
         $countries = Country::query()->where('is_active', true)->orderBy('name')->get();
         $currencies = Currency::query()->orderBy('sort_order')->orderBy('code')->get()
             ->map(function (Currency $currency) use ($fx, $default, $countries) {
-                $vsDefault = $fx->bankRates($default, $currency->code);
+                $vsDefault = ['mid' => null, 'buy' => null, 'sell' => null];
+                if ($default !== '') {
+                    try {
+                        $vsDefault = $fx->bankRates($default, $currency->code);
+                    } catch (\Throwable) {
+                    }
+                }
                 $row = ExchangeRate::query()
                     ->where('base_code', 'USD')
                     ->where('quote_code', $currency->code)

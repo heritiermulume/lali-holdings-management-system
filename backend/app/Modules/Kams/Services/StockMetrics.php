@@ -3,8 +3,8 @@
 namespace App\Modules\Kams\Services;
 
 use App\Models\Office;
-use App\Models\Setting;
 use App\Modules\Kams\Models\KamsDepot;
+use App\Support\SettingsCatalog;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSavingsAccount;
@@ -44,10 +44,13 @@ class StockMetrics
         } else {
             $groupBy = $groupBy === 'custom' ? 'week' : $groupBy;
             $today = now();
+            $weekStart = ((int) SettingsCatalog::string('general', 'week_start')) === 0
+                ? Carbon::SUNDAY
+                : Carbon::MONDAY;
             [$start, $end] = match ($groupBy) {
                 'day' => [$today->copy()->startOfDay(), $today->copy()->endOfDay()],
                 'month' => [$today->copy()->startOfMonth()->startOfDay(), $today->copy()->endOfMonth()->endOfDay()],
-                default => [$today->copy()->startOfWeek(Carbon::MONDAY)->startOfDay(), $today->copy()->endOfWeek(Carbon::SUNDAY)->endOfDay()],
+                default => [$today->copy()->startOfWeek($weekStart)->startOfDay(), $today->copy()->endOfWeek($weekStart === Carbon::SUNDAY ? Carbon::SATURDAY : Carbon::SUNDAY)->endOfDay()],
             };
             $bucketMode = $groupBy;
             $series = $this->seriesBetween($start, $end, $bucketMode);
@@ -57,7 +60,7 @@ class StockMetrics
             $this->inventory->ensureOfficeDepots($companyId);
         }
 
-        $threshold = (int) Setting::getValue('kams', 'stock_alert_threshold', 5);
+        $threshold = (int) SettingsCatalog::number('kams', 'stock_alert_threshold');
         $products = KamsProduct::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId));
         $balances = KamsStockBalance::query()
             ->with(['depot:id,name,kind,office_id', 'product:id,name,sku,price,cost,avg_cost,stock'])
@@ -198,13 +201,21 @@ class StockMetrics
             'series' => array_values($series),
             'alerts' => $this->alerts($companyId, $threshold, $officesMissingDepot, $lowLocations),
             'recommendations' => $this->recommendations($companyId, $threshold),
-            'low_stock' => $lowLocations->map(fn (KamsStockBalance $row) => [
-                'product' => $row->product?->name,
-                'sku' => $row->product?->sku,
-                'location' => $row->depot?->name,
-                'kind' => $row->depot?->kind,
-                'quantity' => $row->quantity,
-            ])->values()->all(),
+            'low_stock' => SettingsCatalog::bool('kams', 'low_stock_notify')
+                ? $lowLocations->map(fn (KamsStockBalance $row) => [
+                    'product' => $row->product?->name,
+                    'sku' => $row->product?->sku,
+                    'location' => $row->depot?->name,
+                    'kind' => $row->depot?->kind,
+                    'quantity' => $row->quantity,
+                ])->values()->all()
+                : [],
+            'settings' => [
+                'stock_alert_threshold' => $threshold,
+                'stock_loss_alert_percent' => SettingsCatalog::number('kams', 'stock_loss_alert_percent'),
+                'low_stock_notify' => SettingsCatalog::bool('kams', 'low_stock_notify'),
+                'allow_backorders' => SettingsCatalog::bool('kams', 'allow_backorders'),
+            ],
         ];
     }
 
@@ -311,9 +322,9 @@ class StockMetrics
      * @param  list<int>  $officeIds
      * @return array<string, mixed>
      */
-    public function finance(string $groupBy = 'week', ?int $companyId = null, array $officeIds = []): array
+    public function finance(string $groupBy = 'week', ?int $companyId = null, array $officeIds = [], ?string $from = null, ?string $to = null): array
     {
-        $data = $this->recap($groupBy, $companyId);
+        $data = $this->recap($groupBy, $companyId, $from, $to, $officeIds);
         $start = $data['range']['from'];
         $end = $data['range']['to'];
 
@@ -523,7 +534,9 @@ class StockMetrics
             ->count();
 
         return array_values(array_filter([
-            ['tone' => 'amber', 'key' => 'lowStockLocations', 'count' => $lowLocations->count()],
+            SettingsCatalog::bool('kams', 'low_stock_notify')
+                ? ['tone' => 'amber', 'key' => 'lowStockLocations', 'count' => $lowLocations->count()]
+                : null,
             ['tone' => 'red', 'key' => 'overdueAssignments', 'count' => $openOld],
             ['tone' => 'amber', 'key' => 'inTransitTransfers', 'count' => $inTransitTransfers],
             ['tone' => 'red', 'key' => 'quarantineUnits', 'count' => $quarantineUnits],
@@ -531,7 +544,7 @@ class StockMetrics
             ['tone' => 'red', 'key' => 'officesWithoutDepot', 'count' => $officesMissingDepot],
             ['tone' => 'amber', 'key' => 'emptyWarehouseProducts', 'count' => $emptyWarehouse],
             ['tone' => 'slate', 'key' => 'stockAlertThreshold', 'count' => $threshold],
-        ], fn ($row) => $row['key'] === 'stockAlertThreshold' || $row['count'] > 0));
+        ], fn ($row) => $row && ($row['key'] === 'stockAlertThreshold' || $row['count'] > 0)));
     }
 
     /**
@@ -586,7 +599,11 @@ class StockMetrics
             ->groupBy('product_id')
             ->havingRaw('SUM(quantity_out) > 0')
             ->get()
-            ->filter(fn ($row) => ($row->lost / max(1, $row->outed)) >= 0.1)
+            ->filter(function ($row) {
+                $threshold = max(0, SettingsCatalog::number('kams', 'stock_loss_alert_percent')) / 100;
+
+                return ($row->lost / max(1, $row->outed)) >= $threshold;
+            })
             ->take(3);
 
         foreach ($lossy as $row) {
