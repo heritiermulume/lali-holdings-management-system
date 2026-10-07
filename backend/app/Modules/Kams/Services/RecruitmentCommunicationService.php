@@ -63,6 +63,44 @@ class RecruitmentCommunicationService
         ], $member);
     }
 
+    /**
+     * @param  array{email?: ?string, phone?: ?string, password?: ?string, is_active?: bool}  $credentials
+     */
+    public function notifyMemberRegistered(KamsMember $member, string $locale = 'fr', array $credentials = []): void
+    {
+        $login = $credentials['email'] ?? $member->account['email'] ?? null;
+        $password = $credentials['password'] ?? $member->login_password;
+        $brand = $this->companyName($member->company_id);
+        $access = $locale === 'en'
+            ? ($login ? " Login: {$login} / Password: {$password}. These credentials were also sent by email." : '')
+            : ($login ? " Identifiant : {$login} / Mot de passe : {$password}. Ces identifiants ont aussi été envoyés par e-mail." : '');
+
+        $copy = [
+            'fr' => [
+                'subject' => "Bienvenue chez {$brand}",
+                'body' => "Bienvenue {$member->full_name}. Vous êtes enregistré(e) comme membre {$member->member_code}.{$access}",
+            ],
+            'en' => [
+                'subject' => "Welcome to {$brand}",
+                'body' => "Welcome {$member->full_name}. You are registered as member {$member->member_code}.{$access}",
+            ],
+        ];
+        $message = $copy[$locale] ?? $copy['fr'];
+
+        $this->log(
+            $member,
+            'member',
+            $member->full_name,
+            $member->phone,
+            'member_registered',
+            'member_registered',
+            $locale,
+            'recruitment',
+            $message['subject'],
+            $message['body'],
+        );
+    }
+
     public function notifyFirstWeekCompleted(KamsMember $member, string $locale = 'fr'): void
     {
         $brand = $this->companyName($member->company_id);

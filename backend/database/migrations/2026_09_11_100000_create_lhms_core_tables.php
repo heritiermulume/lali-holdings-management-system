@@ -74,16 +74,6 @@ return new class extends Migration
             $table->unique(['company_id', 'code']);
         });
 
-        Schema::create('departments', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('company_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('office_id')->nullable()->constrained()->nullOnDelete();
-            $table->string('name');
-            $table->string('code', 32);
-            $table->boolean('is_active')->default(true);
-            $table->timestamps();
-        });
-
         Schema::create('activities', function (Blueprint $table) {
             $table->id();
             $table->foreignId('company_id')->constrained()->cascadeOnDelete();
@@ -128,7 +118,7 @@ return new class extends Migration
         Schema::create('user_scopes', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->enum('scope_type', ['group', 'country', 'city', 'company', 'office', 'department', 'module']);
+            $table->enum('scope_type', ['group', 'country', 'city', 'company', 'office', 'module']);
             $table->unsignedBigInteger('scope_id')->nullable();
             $table->timestamps();
             $table->index(['user_id', 'scope_type', 'scope_id']);
@@ -194,27 +184,9 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        Schema::create('financial_snapshots', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('company_id')->constrained()->cascadeOnDelete();
-            $table->string('source_module', 64)->nullable();
-            $table->string('period', 16);
-            $table->decimal('revenue', 18, 2)->default(0);
-            $table->decimal('expenses', 18, 2)->default(0);
-            $table->decimal('profit', 18, 2)->default(0);
-            $table->decimal('cash', 18, 2)->default(0);
-            $table->decimal('assets', 18, 2)->default(0);
-            $table->decimal('liabilities', 18, 2)->default(0);
-            $table->decimal('receivables', 18, 2)->default(0);
-            $table->decimal('payables', 18, 2)->default(0);
-            $table->timestamps();
-            $table->unique(['company_id', 'source_module', 'period']);
-        });
-
         Schema::table('users', function (Blueprint $table) {
             $table->foreign('primary_company_id')->references('id')->on('companies')->nullOnDelete();
             $table->foreign('primary_office_id')->references('id')->on('offices')->nullOnDelete();
-            $table->foreign('primary_department_id')->references('id')->on('departments')->nullOnDelete();
         });
     }
 
@@ -223,10 +195,8 @@ return new class extends Migration
         Schema::table('users', function (Blueprint $table) {
             $table->dropForeign(['primary_company_id']);
             $table->dropForeign(['primary_office_id']);
-            $table->dropForeign(['primary_department_id']);
         });
 
-        Schema::dropIfExists('financial_snapshots');
         Schema::dropIfExists('tasks');
         Schema::dropIfExists('settings');
         Schema::dropIfExists('notifications');
@@ -238,7 +208,6 @@ return new class extends Migration
         Schema::dropIfExists('permissions');
         Schema::dropIfExists('roles');
         Schema::dropIfExists('activities');
-        Schema::dropIfExists('departments');
         Schema::dropIfExists('offices');
         Schema::dropIfExists('companies');
         Schema::dropIfExists('cities');

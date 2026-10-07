@@ -1,9 +1,10 @@
-import { Camera, Check, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { Camera, Check, CheckCircle2, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Outlet, useOutletContext } from 'react-router-dom'
+import { Outlet, Navigate, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { PaginationButtons } from '../../components/PaginationButtons'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { showAlert } from '../../lib/alert'
@@ -14,6 +15,7 @@ import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
+import { KamsRecruitmentDashboard } from './KamsRecapPage'
 
 type ListPeriod = 'day' | 'week' | 'month' | 'custom'
 
@@ -114,6 +116,9 @@ type Member = {
   manager_member?: { id: number; full_name: string } | null
   assistant_manager?: { id: number; full_name: string } | null
   manager_name?: string | null
+  team_name?: string | null
+  guardian_name?: string | null
+  guardian_phone?: string | null
   rank?: string | null
   role_id?: number | null
   role?: { id: number; name: string; slug?: string } | null
@@ -369,11 +374,14 @@ const AGENT_IMPORT_HEADERS = [
   'last_name',
   'full_name',
   'gender',
+  'birth_date',
   'phone',
   'email',
   'address',
   'office_code',
   'role',
+  'coach_member_code',
+  'sponsor_member_code',
   'trainer_email',
   'joined_on',
   'status',
@@ -384,11 +392,24 @@ const AGENT_IMPORT_HEADERS = [
   'consignment_balance',
   'amounts_due',
   'distributor_savings',
+  'manager_savings',
 ] as const
 
 function openingAmount(row: Member, category: string) {
   const match = row.opening_positions?.find((position) => position.category === category)
   return match ? String(match.amount) : ''
+}
+
+function memberCoachName(row: Member) {
+  return row.coach?.full_name || row.coach_name || ''
+}
+
+function memberSponsorName(row: Member) {
+  return row.candidate?.sponsor?.full_name
+    || row.candidate?.sponsor_name
+    || row.trainer?.name
+    || row.trainer_name
+    || ''
 }
 
 function agentImportRow(row: Member): string[] {
@@ -398,21 +419,25 @@ function agentImportRow(row: Member): string[] {
     row.last_name || '',
     row.full_name || personName(row),
     row.gender || '',
+    row.birth_date ? row.birth_date.slice(0, 10) : '',
     row.phone || '',
     row.email || '',
     row.address || '',
     row.office?.code || '',
     row.role?.slug || row.role?.name || '',
+    row.coach?.member_code || '',
+    row.candidate?.sponsor?.member_code || '',
     row.trainer?.email || '',
     row.joined_on ? row.joined_on.slice(0, 10) : '',
     row.status || '',
     row.rank || '',
-    '',
-    '',
-    '',
+    row.team_name || '',
+    row.guardian_name || '',
+    row.guardian_phone || '',
     openingAmount(row, 'consignment'),
     openingAmount(row, 'amounts_due'),
     openingAmount(row, 'distributor_savings'),
+    openingAmount(row, 'manager_savings'),
   ]
 }
 
@@ -422,6 +447,22 @@ export type RecruitmentListFilters = {
   to: string
   officeId: string
   offices: LookupOffice[]
+}
+
+export function KamsMembersIndex() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('kams.members.statistics.view')) return <KamsRecruitmentDashboard />
+  if (hasPermission('kams.recruitment.applications.view')) return <Navigate to="/modules/kams/members/recruitment" replace />
+  if (hasPermission('kams.recruitment.reports.view')) return <Navigate to="/modules/kams/members/recruitment/reports" replace />
+  if (hasPermission('kams.members.agents.view')) return <Navigate to="/modules/kams/members/agents" replace />
+  return <Navigate to="/modules/kams" replace />
+}
+
+export function KamsRecruitmentIndex() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('kams.recruitment.applications.view')) return <KamsCandidates />
+  if (hasPermission('kams.recruitment.reports.view')) return <Navigate to="/modules/kams/members/recruitment/reports" replace />
+  return <Navigate to="/modules/kams/members" replace />
 }
 
 export function KamsRecruitmentWorkspace() {
@@ -506,8 +547,8 @@ export function KamsRecruitmentWorkspace() {
       </div>
       <KamsWorkspaceTabs
         tabs={[
-          { to: '/modules/kams/members/recruitment', end: true, label: t('kams.applications'), show: hasPermission('kams.recruitment.view') },
-          { to: '/modules/kams/members/recruitment/reports', end: true, label: t('kams.recruitmentReports'), show: hasPermission('kams.recruitment.view') },
+          { to: '/modules/kams/members/recruitment', end: true, label: t('kams.applications'), show: hasPermission('kams.recruitment.applications.view') },
+          { to: '/modules/kams/members/recruitment/reports', end: true, label: t('kams.recruitmentReports'), show: hasPermission('kams.recruitment.reports.view') },
         ]}
       />
       <Outlet context={{ period, from, to, officeId, offices } satisfies RecruitmentListFilters} />
@@ -523,9 +564,9 @@ export function KamsMembersWorkspace() {
     <div>
       <KamsWorkspaceTabs
         tabs={[
-          { to: '/modules/kams/members', end: true, label: t('kams.statistics'), show: hasPermission('kams.members.view') },
-          { to: '/modules/kams/members/recruitment', label: t('kams.recruitment'), show: hasPermission('kams.recruitment.view') },
-          { to: '/modules/kams/members/agents', end: true, label: t('kams.agents'), show: hasPermission('kams.members.view') },
+          { to: '/modules/kams/members', end: true, label: t('kams.statistics'), show: hasPermission('kams.members.statistics.view') },
+          { to: '/modules/kams/members/recruitment', label: t('kams.recruitment'), show: hasPermission('kams.recruitment.applications.view') || hasPermission('kams.recruitment.reports.view') },
+          { to: '/modules/kams/members/agents', end: true, label: t('kams.agents'), show: hasPermission('kams.members.agents.view') },
         ]}
       />
       <Outlet />
@@ -535,15 +576,14 @@ export function KamsMembersWorkspace() {
 
 export function KamsAgents() {
   const { t } = useTranslation()
-  const { hasPermission } = useAuth()
+  const { user, hasPermission } = useAuth()
   const [rows, setRows] = useState<Member[]>([])
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(20)
   const [companies, setCompanies] = useState<LookupCompany[]>([])
   const [offices, setOffices] = useState<LookupOffice[]>([])
-  const [users, setUsers] = useState<LookupUser[]>([])
+  const [people, setPeople] = useState<LookupPerson[]>([])
   const [roles, setRoles] = useState<LookupRole[]>([])
-  const [lookupMembers, setLookupMembers] = useState<LookupPerson[]>([])
   const [memberOrigins, setMemberOrigins] = useState<string[]>([])
   const [importSources, setImportSources] = useState<string[]>([])
   const [origin, setOrigin] = useState('')
@@ -608,9 +648,8 @@ export function KamsAgents() {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
       setCompanies(res.data.data.companies)
       setOffices(res.data.data.offices)
-      setUsers(res.data.data.users ?? [])
+      setPeople(res.data.data.members ?? res.data.data.sponsors ?? [])
       setRoles(res.data.data.roles ?? [])
-      setLookupMembers(res.data.data.members ?? [])
       setMemberOrigins(res.data.data.options?.member_origins ?? [])
       setImportSources(res.data.data.options?.import_sources ?? [])
       const sources = res.data.data.options?.import_sources as string[] | undefined
@@ -622,6 +661,15 @@ export function KamsAgents() {
       }
     })
   }, [])
+
+  const resolveKamsCompanyId = (list = companies) => {
+    if (list.length === 0) return ''
+    const primary = user?.primary_company?.id
+    if (primary && list.some((company) => company.id === primary)) return String(primary)
+    const kams = list.find((company) => company.code === 'KAMS')
+    if (kams) return String(kams.id)
+    return String(list[0].id)
+  }
 
   const resetForm = () => {
     setEditing(null)
@@ -651,16 +699,32 @@ export function KamsAgents() {
     })
   }
 
+  const clearPhoto = () => {
+    setPhoto(null)
+    setPhotoRemoved(true)
+    setPhotoError('')
+    setPhotoPreview((current) => {
+      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+      return null
+    })
+  }
+
   const openCreate = () => {
     resetForm()
+    setForm({ company_id: resolveKamsCompanyId() })
     setFormOpen(true)
   }
 
   const openEdit = (row: Member) => {
     resetForm()
     setEditing(row)
+    const sponsorMemberId = row.candidate?.sponsor?.id
+      ? String(row.candidate.sponsor.id)
+      : (row.trainer_user_id
+        ? String(people.find((person) => person.user_id === row.trainer_user_id)?.id || '')
+        : '')
     setForm({
-      company_id: row.company_id ? String(row.company_id) : '',
+      company_id: row.company_id ? String(row.company_id) : resolveKamsCompanyId(),
       office_id: row.office_id ? String(row.office_id) : '',
       first_name: row.first_name || '',
       last_name: row.last_name || '',
@@ -669,6 +733,8 @@ export function KamsAgents() {
       phone: row.phone || '',
       email: row.email || '',
       address: row.address || '',
+      coach_member_id: row.coach_member_id ? String(row.coach_member_id) : '',
+      sponsor_member_id: sponsorMemberId,
       trainer_user_id: row.trainer_user_id ? String(row.trainer_user_id) : '',
       manager_member_id: row.manager_member_id ? String(row.manager_member_id) : '',
       assistant_manager_member_id: row.assistant_manager_member_id ? String(row.assistant_manager_member_id) : '',
@@ -679,6 +745,11 @@ export function KamsAgents() {
     setPhotoPreview(row.photo_url || null)
     setFormOpen(true)
   }
+
+  useEffect(() => {
+    if (!formOpen || editing || form.company_id || companies.length === 0) return
+    setForm((current) => (current.company_id ? current : { ...current, company_id: resolveKamsCompanyId() }))
+  }, [formOpen, editing, form.company_id, companies, user?.primary_company?.id])
 
   const openView = async (row: Member) => {
     const res = await api.get(`/modules/kams/members/${row.id}`)
@@ -723,12 +794,15 @@ export function KamsAgents() {
 
   const submitAgent = async (event: FormEvent) => {
     event.preventDefault()
-    if (!form.first_name?.trim() || !form.last_name?.trim() || !form.gender || !form.phone?.trim() || !form.company_id) {
+    const companyId = form.company_id || resolveKamsCompanyId()
+    if (!form.first_name?.trim() || !form.last_name?.trim() || !form.gender || !form.phone?.trim() || !companyId) {
       setFormError(t('kams.requiredAgentFields'))
       return
     }
+    const sponsor = people.find((person) => String(person.id) === form.sponsor_member_id)
+    const trainerUserId = sponsor?.user_id ? String(sponsor.user_id) : (form.trainer_user_id || '')
     const payload = new FormData()
-    payload.append('company_id', form.company_id)
+    payload.append('company_id', companyId)
     if (form.office_id) payload.append('office_id', form.office_id)
     payload.append('first_name', form.first_name.trim())
     payload.append('last_name', form.last_name.trim())
@@ -737,7 +811,8 @@ export function KamsAgents() {
     if (form.email) payload.append('email', form.email)
     if (form.birth_date) payload.append('birth_date', form.birth_date)
     if (form.address) payload.append('address', form.address)
-    payload.append('trainer_user_id', form.trainer_user_id || '')
+    payload.append('coach_member_id', form.coach_member_id || '')
+    payload.append('trainer_user_id', trainerUserId)
     payload.append('manager_member_id', form.manager_member_id || '')
     payload.append('assistant_manager_member_id', form.assistant_manager_member_id || '')
     if (form.fixed_salary) payload.append('fixed_salary', form.fixed_salary)
@@ -756,9 +831,22 @@ export function KamsAgents() {
         resetForm()
       } else {
         const res = await api.post('/modules/kams/members', payload)
+        const payloadData = res.data.data as {
+          member?: Member
+          credentials?: MemberAccount
+        } | undefined
+        const member = payloadData?.member
         setFormOpen(false)
         resetForm()
-        setCredentials([res.data.data as Member])
+        if (member) {
+          setCredentials([{
+            ...member,
+            account: {
+              ...(member.account || {}),
+              ...(payloadData?.credentials || {}),
+            },
+          }])
+        }
       }
       void load()
     } catch (error) {
@@ -847,7 +935,8 @@ export function KamsAgents() {
     row.email || '',
     row.office?.name || '',
     row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender),
-    row.trainer?.name || row.trainer_name || '',
+    memberCoachName(row),
+    memberSponsorName(row),
     t(`kams.status.${row.status}`, { defaultValue: row.status }),
   ]
 
@@ -859,6 +948,7 @@ export function KamsAgents() {
     t('kams.office'),
     t('users.role'),
     t('kams.trainerCoach'),
+    t('kams.sponsor'),
     t('common.status'),
   ]
 
@@ -909,24 +999,40 @@ export function KamsAgents() {
     setPrintPreviewHtml(buildBrandedTableHtml(agentPrintOptions(list)))
   }
 
-  const officeOptions = offices.filter((office) => String(office.company_id) === form.company_id)
-  const companySelected = Boolean(form.company_id)
-  const trainerOptions = users.map((user): SearchComboboxItem => ({
-    id: String(user.id),
-    label: user.name,
-    hint: user.email || undefined,
-  }))
-  const selectedTrainer = trainerOptions.find((item) => item.id === form.trainer_user_id) || null
-  const memberOptions = lookupMembers
-    .filter((member) => !form.company_id || String(member.company_id) === form.company_id)
-    .map((member): SearchComboboxItem => ({
-      id: String(member.id),
-      label: member.full_name,
-      hint: member.member_code,
+  const officeOptions = offices
+    .filter((office) => String(office.company_id) === form.company_id)
+    .map((office): SearchComboboxItem => ({
+      id: String(office.id),
+      label: office.name,
+      hint: office.code,
     }))
-  const selectedManager = memberOptions.find((item) => item.id === form.manager_member_id) || null
-  const selectedAssistant = memberOptions.find((item) => item.id === form.assistant_manager_member_id) || null
-  const selectedRoleSlug = roles.find((role) => String(role.id) === form.role_id)?.slug
+  const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
+  const companySelected = Boolean(form.company_id)
+  const companyPeople = people.filter((person) => !form.company_id || String(person.company_id) === form.company_id)
+  const distributorRoleIds = new Set(
+    roles.filter((role) => role.slug === 'distributor').map((role) => role.id),
+  )
+  const coachOptions = companyPeople
+    .filter((person) => !editing || String(person.id) !== String(editing.id))
+    .map((person): SearchComboboxItem => ({
+      id: String(person.id),
+      label: person.full_name,
+      hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
+    }))
+  const selectedCoach = coachOptions.find((item) => item.id === form.coach_member_id) ?? null
+  const sponsorOptions = companyPeople
+    .filter((person) => (
+      person.user_id
+      && person.rank !== 'Distributor'
+      && !(person.role_id != null && distributorRoleIds.has(person.role_id))
+      && (!editing || String(person.id) !== String(editing.id))
+    ))
+    .map((person): SearchComboboxItem => ({
+      id: String(person.id),
+      label: person.full_name,
+      hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
+    }))
+  const selectedSponsor = sponsorOptions.find((item) => item.id === form.sponsor_member_id) ?? null
   const agentLastPage = Math.max(1, Math.ceil(rows.length / perPage) || 1)
   const agentPage = Math.min(page, agentLastPage)
   const agentRangeStart = rows.length === 0 ? 0 : (agentPage - 1) * perPage + 1
@@ -1163,13 +1269,12 @@ export function KamsAgents() {
                 {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
               </select>
             </label>
-            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', agentPage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={agentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-              <ChevronLeft size={16} /> {t('common.prev')}
-            </button>
-            <span className="px-1 text-sm font-semibold">{agentPage} / {agentLastPage}</span>
-            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', agentPage >= agentLastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={agentPage >= agentLastPage} onClick={() => setPage((value) => Math.min(agentLastPage, value + 1))}>
-              {t('common.next')} <ChevronRight size={16} />
-            </button>
+            <PaginationButtons
+              page={agentPage}
+              lastPage={agentLastPage}
+              onPrev={() => setPage((value) => Math.max(1, value - 1))}
+              onNext={() => setPage((value) => Math.min(agentLastPage, value + 1))}
+            />
           </div>
         </div>
           </>
@@ -1180,34 +1285,61 @@ export function KamsAgents() {
         <form className="space-y-3" onSubmit={(e) => void submitAgent(e)}>
           <div className="flex flex-col items-center gap-2 pb-1">
             <div className="relative h-24 w-24">
-              <button type="button" onClick={() => photoInput.current?.click()} aria-label={t('kams.photo')} className="block h-24 w-24 overflow-hidden rounded-full p-0">
+              <button
+                type="button"
+                onClick={() => photoInput.current?.click()}
+                aria-label={t('kams.photo')}
+                className="block h-24 w-24 overflow-hidden rounded-full p-0"
+              >
                 {photoPreview || form.first_name || form.last_name ? (
                   <PersonPhoto name={personName({ first_name: form.first_name, last_name: form.last_name })} url={photoPreview} className="h-24 w-24 text-2xl" />
                 ) : (
-                  <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white"><Camera size={28} /></span>
+                  <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white">
+                    <Camera size={28} />
+                  </span>
                 )}
               </button>
               {photoPreview ? (
-                <button type="button" aria-label={t('kams.removePhoto')} className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md" onClick={() => { setPhoto(null); setPhotoRemoved(true); setPhotoPreview((current) => { if (current?.startsWith('blob:')) URL.revokeObjectURL(current); return null }) }}>
+                <button
+                  type="button"
+                  aria-label={t('kams.removePhoto')}
+                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                  onClick={clearPhoto}
+                >
                   <Trash2 size={14} />
                 </button>
               ) : null}
-              <button type="button" aria-label={t('kams.photo')} className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md" onClick={() => photoInput.current?.click()}>
+              <button
+                type="button"
+                aria-label={t('kams.photo')}
+                className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                onClick={() => photoInput.current?.click()}
+              >
                 <Camera size={14} />
               </button>
             </div>
-            <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => { pickPhoto(event.target.files?.[0]); event.target.value = '' }} />
+            <input
+              ref={photoInput}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(event) => {
+                pickPhoto(event.target.files?.[0])
+                event.target.value = ''
+              }}
+            />
             <p className="text-center text-xs text-muted">{t('kams.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
-          <Select label={t('users.company')} required disabled={Boolean(editing)} value={form.company_id || ''} onChange={(e) => setForm({ ...form, company_id: e.target.value, office_id: '' })}>
-            <option value="">—</option>
-            {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-          </Select>
-          <Select label={t('kams.office')} value={form.office_id || ''} disabled={!companySelected} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>
-            <option value="">{companySelected ? '—' : t('kams.selectCompanyFirst')}</option>
-            {officeOptions.map((office) => <option key={office.id} value={office.id}>{office.name} ({office.code})</option>)}
-          </Select>
+          <SearchCombobox
+            label={t('kams.office')}
+            value={selectedOffice}
+            items={officeOptions}
+            disabled={!companySelected}
+            placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
+          />
           <Select label={t('users.role')} value={form.role_id || ''} onChange={(e) => setForm({ ...form, role_id: e.target.value })}>
             <option value="">—</option>
             {roles.map((role) => (
@@ -1218,41 +1350,34 @@ export function KamsAgents() {
             <Field label={t('users.firstName')} value={form.first_name || ''} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
             <Field label={t('users.lastName')} value={form.last_name || ''} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
           </div>
-          <Select label={t('kams.gender')} required value={form.gender || ''} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
-            <option value="">—</option>
-            <option value="male">{t('kams.genderMale')}</option>
-            <option value="female">{t('kams.genderFemale')}</option>
-          </Select>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label={t('kams.gender')} required value={form.gender || ''} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+              <option value="">—</option>
+              <option value="male">{t('kams.genderMale')}</option>
+              <option value="female">{t('kams.genderFemale')}</option>
+            </Select>
+            <Field label={t('kams.birthDate')} type="date" value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
+          </div>
           <Field label={t('kams.phoneWhatsapp')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
           <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          <Field label={t('kams.joinedOn')} type="date" value={form.joined_on || ''} onChange={(e) => setForm({ ...form, joined_on: e.target.value })} />
+          <Field label={t('kams.address')} value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           <SearchCombobox
             label={t('kams.trainerCoach')}
-            value={selectedTrainer}
-            items={trainerOptions}
-            placeholder={t('kams.searchUser')}
+            value={selectedCoach}
+            items={coachOptions}
+            placeholder={t('kams.pickSupervisor')}
             emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, trainer_user_id: item?.id || '' })}
+            onSelect={(item) => setForm({ ...form, coach_member_id: item?.id ?? '' })}
           />
           <SearchCombobox
-            label={t('kams.teamManager')}
-            value={selectedManager}
-            items={memberOptions}
-            placeholder={t('kams.searchUser')}
+            label={t('kams.sponsor')}
+            value={selectedSponsor}
+            items={sponsorOptions}
+            placeholder={t('kams.pickSponsor')}
             emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, manager_member_id: item?.id || '' })}
+            onSelect={(item) => setForm({ ...form, sponsor_member_id: item?.id ?? '', trainer_user_id: '' })}
           />
-          <SearchCombobox
-            label={t('kams.assistantManager')}
-            value={selectedAssistant}
-            items={memberOptions}
-            placeholder={t('kams.searchUser')}
-            emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, assistant_manager_member_id: item?.id || '' })}
-          />
-          {selectedRoleSlug === 'secretary' ? (
-            <Field label={t('kams.fixedSalary')} type="number" value={form.fixed_salary || ''} onChange={(e) => setForm({ ...form, fixed_salary: e.target.value })} />
-          ) : null}
+          <Field label={t('kams.joinedOn')} type="date" value={form.joined_on || ''} onChange={(e) => setForm({ ...form, joined_on: e.target.value })} />
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
@@ -1329,9 +1454,11 @@ export function KamsAgents() {
                 {t('kams.viewCoachedMembers')}
               </Button>
             </div>
+            {(hasPermission('kams.members.print') || hasPermission('kams.members.preview')) ? (
             <Button type="button" className="w-full" onClick={previewServiceCard}>
               <Printer size={16} /> {t('kams.serviceCard')}
             </Button>
+            ) : null}
           </div>
         ) : null}
       </Modal>
@@ -1395,6 +1522,8 @@ export function KamsCandidates() {
   const canCreate = hasPermission('kams.recruitment.create')
   const canUpdate = hasPermission('kams.recruitment.update')
   const canDelete = hasPermission('kams.recruitment.delete')
+  const canInterview = hasPermission('kams.recruitment.interview.update')
+  const canObservation = hasPermission('kams.recruitment.observation.update')
   const [rows, setRows] = useState<Candidate[]>([])
   const [companies, setCompanies] = useState<LookupCompany[]>([])
   const [offices, setOffices] = useState<LookupOffice[]>([])
@@ -1595,6 +1724,8 @@ export function KamsCandidates() {
   const saveStage = async (event: FormEvent) => {
     event.preventDefault()
     if (!detail) return
+    if (action === 'interview' && !canInterview) return
+    if (action === 'observation' && !canObservation) return
     const id = Number(detail.id)
     try {
       if (action === 'interview') {
@@ -1804,13 +1935,13 @@ export function KamsCandidates() {
               key: 'interview',
               label: t('kams.interview'),
               state: interviewState,
-              onClick: interviewState === 'current' && canCreate ? openInterview : undefined,
+              onClick: interviewState === 'current' && canInterview ? openInterview : undefined,
             },
             {
               key: 'observation',
               label: t('kams.observation'),
               state: observationState,
-              onClick: observationState === 'current' && canCreate ? openObservation : undefined,
+              onClick: observationState === 'current' && canObservation ? openObservation : undefined,
             },
           ]
 
@@ -2196,6 +2327,9 @@ export function KamsCommunications() {
 
 export function KamsRecruitmentReports() {
   const { t, i18n } = useTranslation()
+  const { hasPermission } = useAuth()
+  const canPrint = hasPermission('kams.recruitment.reports.print')
+  const canPreview = hasPermission('kams.recruitment.reports.preview')
   const { period, from, to, officeId, offices } = useOutletContext<RecruitmentListFilters>()
   const [rows, setRows] = useState<Candidate[]>([])
   const [loading, setLoading] = useState(true)
@@ -2353,6 +2487,7 @@ export function KamsRecruitmentReports() {
     <div>
       <div className="mb-4 flex items-center justify-between gap-3">
         <p className="min-w-0 text-sm text-muted">{t('kams.recruitmentReportsHint')}</p>
+        {canPrint || canPreview ? (
         <div ref={printMenuRef} className="relative shrink-0" onMouseDown={(event) => event.stopPropagation()}>
           <Button
             variant="secondary"
@@ -2366,6 +2501,7 @@ export function KamsRecruitmentReports() {
           </Button>
           {printMenuOpen ? (
             <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
+              {canPrint ? (
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
@@ -2377,6 +2513,8 @@ export function KamsRecruitmentReports() {
               >
                 <Printer size={16} className="text-lhms" /> {t('common.print')}
               </button>
+              ) : null}
+              {canPreview ? (
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
@@ -2388,9 +2526,11 @@ export function KamsRecruitmentReports() {
               >
                 <Eye size={16} className="text-lhms" /> {t('common.preview')}
               </button>
+              ) : null}
             </div>
           ) : null}
         </div>
+        ) : null}
       </div>
       <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
         {loading && rows.length === 0 ? <LoadingScreen /> : (
@@ -2458,31 +2598,13 @@ export function KamsRecruitmentReports() {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className={cn(
-                'inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold',
-                loading || page <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white',
-              )}
-              disabled={loading || page <= 1}
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-            >
-              <ChevronLeft size={16} />
-              {t('common.prev')}
-            </button>
-            <span className="px-1 text-sm font-semibold">{page} / {lastPage}</span>
-            <button
-              type="button"
-              className={cn(
-                'inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold',
-                loading || page >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white',
-              )}
-              disabled={loading || page >= lastPage}
-              onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
-            >
-              {t('common.next')}
-              <ChevronRight size={16} />
-            </button>
+            <PaginationButtons
+              page={page}
+              lastPage={lastPage}
+              disabled={loading}
+              onPrev={() => setPage((value) => Math.max(1, value - 1))}
+              onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+            />
           </div>
         </div>
       </div>

@@ -142,7 +142,9 @@ export function KamsDailyMaster() {
     seller_savings: number
     manager_savings: number
     company_share: number
-    sales?: Array<{ id: number; reference: string; payment_status: string; field_total?: number; seller_margin?: number; manager_margin?: number; member?: { full_name: string } | null }>
+    cost_total?: number
+    profit?: number
+    sales?: Array<{ id: number; reference: string; payment_status: string; field_total?: number; cost_total?: number; margin?: number; member?: { full_name: string } | null }>
   } | null>(null)
   const [error, setError] = useState('')
 
@@ -169,19 +171,18 @@ export function KamsDailyMaster() {
       {!data ? <LoadingScreen /> : (
         <>
           <p className="text-sm text-muted">{t('kams.dailyMasterHint')}</p>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Card className="p-4"><div className="text-sm text-muted">{t('kams.fieldPrice')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.field_total)}</div></Card>
-            <Card className="p-4"><div className="text-sm text-muted">{t('kams.guySavings')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.seller_savings)}</div></Card>
-            <Card className="p-4"><div className="text-sm text-muted">{t('kams.managerSavings')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.manager_savings)}</div></Card>
-            <Card className="p-4"><div className="text-sm text-muted">{t('kams.companyShare')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.company_share)}</div></Card>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <Card className="p-4"><div className="text-sm text-muted">{t('kams.salePrice')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.field_total)}</div></Card>
+            <Card className="p-4"><div className="text-sm text-muted">{t('kams.purchasePrice')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.cost_total ?? data.company_share)}</div></Card>
+            <Card className="p-4"><div className="text-sm text-muted">{t('kams.grossProfit')}</div><div className="mt-2 text-2xl font-extrabold">{money(data.profit ?? (data.field_total - (data.cost_total ?? data.company_share)))}</div></Card>
           </div>
           {(data.sales || []).map((sale) => (
             <Card key={sale.id} className="flex items-center justify-between p-4 text-sm">
               <span>{sale.reference} · {sale.member?.full_name}</span>
-              <span>{money(sale.seller_margin || 0)} / {money(sale.manager_margin || 0)} · {t(`kams.status.${sale.payment_status}`, { defaultValue: sale.payment_status })}</span>
+              <span>{money(sale.field_total || 0)} · {t('kams.grossProfit')} {money(sale.margin || 0)} · {t(`kams.status.${sale.payment_status}`, { defaultValue: sale.payment_status })}</span>
             </Card>
           ))}
-          {hasPermission('kams.products.update') ? (
+          {hasPermission('kams.stock.update') ? (
             <form onSubmit={(e) => void close(e)}>
               <Button type="submit">{t('kams.closeDailyMaster')}</Button>
             </form>

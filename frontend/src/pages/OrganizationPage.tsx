@@ -1,4 +1,4 @@
-import { Ban, Trash2 } from 'lucide-react'
+import { Ban, Pencil, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Field, Modal } from '../components/ui'
@@ -9,12 +9,30 @@ import type { WorldCountry } from '../data/worldCountries'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
 
-type Row = Record<string, unknown> & { id: number; name: string; is_active?: boolean; iso_code?: string; latitude?: number | null; longitude?: number | null }
+type Row = Record<string, unknown> & {
+  id: number
+  name: string
+  name_fr?: string
+  code?: string
+  is_active?: boolean
+  iso_code?: string
+  country_id?: number
+  city_id?: number
+  commune_id?: number
+  latitude?: number | null
+  longitude?: number | null
+}
 
-const tabs = ['countries', 'provinces', 'cities', 'communes', 'neighborhoods', 'departments'] as const
+const tabs = ['countries', 'provinces', 'cities', 'communes', 'neighborhoods'] as const
+const editableTabs = new Set<(typeof tabs)[number]>(['provinces', 'cities', 'communes', 'neighborhoods'])
 
 function isActive(row: Row) {
   return row.is_active !== false
+}
+
+function rowValue(row: Row, key: string): string {
+  const value = row[key]
+  return value == null ? '' : String(value)
 }
 
 export function OrganizationPage() {
@@ -23,12 +41,12 @@ export function OrganizationPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]>('countries')
   const [rows, setRows] = useState<Row[]>([])
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState<Row | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [pickedCountry, setPickedCountry] = useState<WorldCountry | null>(null)
   const [countries, setCountries] = useState<Row[]>([])
   const [cities, setCities] = useState<Row[]>([])
   const [communes, setCommunes] = useState<Row[]>([])
-  const [companies, setCompanies] = useState<Row[]>([])
   const [currencyMap, setCurrencyMap] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -40,6 +58,7 @@ export function OrganizationPage() {
   const canCreate = hasPermission('organization.create')
   const canUpdate = hasPermission('organization.update')
   const canDelete = hasPermission('organization.delete')
+  const canEditTab = editableTabs.has(tab)
 
   const load = () => {
     setLoading(true)
@@ -48,7 +67,6 @@ export function OrganizationPage() {
       api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data)),
       api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data)),
       api.get('/communes', { params: { per_page: 50 } }).then((res) => setCommunes(res.data.data)),
-      api.get('/companies', { params: { per_page: 50 } }).then((res) => setCompanies(res.data.data)),
       api.get('/finance').then((res) => {
         const map: Record<string, string> = {}
         for (const row of (res.data.data?.currencies ?? []) as Array<{ code: string; symbol: string }>) {
@@ -63,16 +81,52 @@ export function OrganizationPage() {
     load()
   }, [tab])
 
+  const needsNameFr = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'
+  const needsCode = tab === 'provinces'
+
+  const closeForm = () => {
+    setOpen(false)
+    setEditing(null)
+    setForm({})
+    setPickedCountry(null)
+    setError('')
+  }
+
+  const openCreate = () => {
+    setEditing(null)
+    setForm({})
+    setPickedCountry(null)
+    setError('')
+    setOpen(true)
+  }
+
+  const openEdit = (row: Row) => {
+    setEditing(row)
+    setPickedCountry(null)
+    setError('')
+    setActionError('')
+    setForm({
+      name: row.name || '',
+      name_fr: row.name_fr || row.name || '',
+      code: rowValue(row, 'code'),
+      country_id: rowValue(row, 'country_id'),
+      city_id: rowValue(row, 'city_id'),
+      commune_id: rowValue(row, 'commune_id'),
+    })
+    setOpen(true)
+  }
+
   const submit = async () => {
     setError('')
     setSaving(true)
     try {
-      const payload: Record<string, unknown> = { is_active: true }
+      const payload: Record<string, unknown> = {}
       if (tab === 'countries') {
         if (!pickedCountry) {
           setError(t('org.pickCountry'))
           return
         }
+        payload.is_active = true
         payload.name = pickedCountry.name
         payload.name_fr = pickedCountry.nameFr
         payload.iso_code = pickedCountry.iso
@@ -86,17 +140,21 @@ export function OrganizationPage() {
         payload.latitude = pickedCountry.lat
         payload.longitude = pickedCountry.lng
       } else {
-        Object.assign(payload, form)
+        payload.name = form.name
+        payload.name_fr = form.name_fr || form.name
+        if (needsCode) payload.code = form.code || null
         if (form.country_id) payload.country_id = Number(form.country_id)
         if (form.city_id) payload.city_id = Number(form.city_id)
         if (form.commune_id) payload.commune_id = Number(form.commune_id)
-        if (form.company_id) payload.company_id = Number(form.company_id)
-        if (!form.name_fr) payload.name_fr = form.name
+        if (!editing) payload.is_active = true
       }
-      await api.post(`/${tab}`, payload)
-      setOpen(false)
-      setForm({})
-      setPickedCountry(null)
+
+      if (editing) {
+        await api.put(`/${tab}/${editing.id}`, payload)
+      } else {
+        await api.post(`/${tab}`, payload)
+      }
+      closeForm()
       load()
     } catch {
       setError(t('org.saveError'))
@@ -138,11 +196,21 @@ export function OrganizationPage() {
     }
   }
 
-  const needsNameFr = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'
-  const needsCode = tab === 'provinces' || tab === 'departments'
+  const modalTitle = editing
+    ? `${t('common.edit')} — ${t(`org.${tab}`)}`
+    : `${t('org.add')} ${t(`org.${tab}`)}`
 
   const actions = (row: Row) => (
     <div className="flex flex-wrap items-center gap-1">
+      {canUpdate && canEditTab ? (
+        <button
+          type="button"
+          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-surface"
+          onClick={() => openEdit(row)}
+        >
+          <Pencil size={14} /> {t('common.edit')}
+        </button>
+      ) : null}
       {canUpdate ? (
         <button
           type="button"
@@ -168,7 +236,7 @@ export function OrganizationPage() {
     <div>
       {canCreate ? (
         <div className="mb-4 flex justify-end">
-          <Button onClick={() => { setOpen(true); setError(''); setPickedCountry(null); setForm({}) }}>{t('org.add')}</Button>
+          <Button onClick={openCreate}>{t('org.add')}</Button>
         </div>
       ) : null}
       <div className="mb-4 flex gap-2 overflow-x-auto">
@@ -236,7 +304,7 @@ export function OrganizationPage() {
       </Card>
       )}
 
-      <Modal open={open} title={`${t('org.add')} ${t(`org.${tab}`)}`} onClose={() => setOpen(false)}>
+      <Modal open={open} title={modalTitle} onClose={closeForm}>
         <div className="space-y-3">
           {tab === 'countries' ? (
             <>
@@ -294,15 +362,6 @@ export function OrganizationPage() {
               <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.commune_id || ''} onChange={(e) => setForm({ ...form, commune_id: e.target.value })}>
                 <option value="">—</option>
                 {communes.map((commune) => <option key={commune.id} value={commune.id}>{commune.name}</option>)}
-              </select>
-            </label>
-          ) : null}
-          {tab === 'departments' ? (
-            <label className="block text-sm font-medium">
-              {t('org.companies')}
-              <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.company_id || ''} onChange={(e) => setForm({ ...form, company_id: e.target.value })}>
-                <option value="">—</option>
-                {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
               </select>
             </label>
           ) : null}

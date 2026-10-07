@@ -2,9 +2,11 @@ import { ArrowLeft, ChevronDown, Download, Eye, ListFilter, Printer, Search } fr
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
+import { PaginationButtons } from '../../components/PaginationButtons'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
-import { Badge, Button, Card, Empty, Field, Select } from '../../components/ui'
+import { Badge, Button, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
@@ -84,6 +86,10 @@ function performerName(row: Movement) {
 
 export function KamsWarehouseMovements() {
   const { t, i18n } = useTranslation()
+  const { hasPermission } = useAuth()
+  const canExport = hasPermission('kams.stock.reports.print')
+  const canPrint = hasPermission('kams.stock.reports.print')
+  const canPreview = hasPermission('kams.stock.reports.preview')
   const { warehouseId, depotId: depotParam } = useParams()
   const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
   const depotId = Number(warehouseId || depotParam)
@@ -100,6 +106,8 @@ export function KamsWarehouseMovements() {
   const [productId, setProductId] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
   const [filterOpen, setFilterOpen] = useState(false)
   const [printMenuOpen, setPrintMenuOpen] = useState(false)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
@@ -125,7 +133,7 @@ export function KamsWarehouseMovements() {
   const load = (term = query) => {
     if (!depotId) return Promise.resolve()
     setLoading(true)
-    return api.get('/modules/kams/stock/movements', { params: { ...listParams(term), per_page: 100 } })
+    return api.get('/modules/kams/stock/movements', { params: listParams(term) })
       .then((res) => {
         setRows((res.data.data as Movement[]) || [])
         const metaLocation = res.data.meta?.location as Location | undefined
@@ -141,6 +149,7 @@ export function KamsWarehouseMovements() {
 
   useEffect(() => {
     void load()
+    setPage(1)
   }, [depotId, isDepot, query, type, direction, productId, from, to])
 
   useEffect(() => {
@@ -163,6 +172,12 @@ export function KamsWarehouseMovements() {
     if (!value) return '—'
     return t(`kams.movementDirection.${value}`, { defaultValue: value })
   }
+
+  const lastPage = Math.max(1, Math.ceil(rows.length / perPage) || 1)
+  const safePage = Math.min(page, lastPage)
+  const visible = rows.slice((safePage - 1) * perPage, safePage * perPage)
+  const rangeStart = rows.length === 0 ? 0 : (safePage - 1) * perPage + 1
+  const rangeEnd = Math.min(safePage * perPage, rows.length)
 
   const headers = () => [
     t('kams.occurredAt'),
@@ -328,10 +343,13 @@ export function KamsWarehouseMovements() {
         </div>
 
         <div className="flex shrink-0 flex-nowrap items-center gap-2">
+          {canExport ? (
           <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('common.export')} onClick={() => void exportRows()}>
             <Download size={16} />
             <span className="hidden sm:inline">{t('common.export')}</span>
           </Button>
+          ) : null}
+          {canPrint || canPreview ? (
           <div ref={printMenuRef} className="relative shrink-0" onMouseDown={(event) => event.stopPropagation()}>
             <Button
               variant="secondary"
@@ -346,6 +364,7 @@ export function KamsWarehouseMovements() {
             </Button>
             {printMenuOpen ? (
               <div className="absolute right-0 z-30 mt-1 w-52 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl">
+                {canPreview ? (
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
@@ -356,6 +375,8 @@ export function KamsWarehouseMovements() {
                 >
                   <Eye size={14} /> {t('common.preview')}
                 </button>
+                ) : null}
+                {canPrint ? (
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
@@ -366,49 +387,93 @@ export function KamsWarehouseMovements() {
                 >
                   <Printer size={14} /> {t('common.print')}
                 </button>
+                ) : null}
               </div>
             ) : null}
           </div>
+          ) : null}
         </div>
       </div>
 
       {loading ? (
         <LoadingScreen />
-      ) : rows.length === 0 ? (
-        <Empty>{t('common.empty')}</Empty>
       ) : (
-        <div className="grid gap-3">
-          {rows.map((row) => (
-            <Card key={row.id} className="p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-semibold">{row.product?.name || '—'}</div>
-                    <Badge tone={row.direction === 'in' ? 'green' : row.direction === 'out' ? 'amber' : 'slate'}>
-                      {directionLabel(row.direction)}
-                    </Badge>
-                    <Badge tone="slate">{typeLabel(row.type)}</Badge>
-                  </div>
-                  <div className="mt-1 text-sm text-muted">
-                    {formatDateTime(row.occurred_at, locale)}
-                    {row.document_reference ? ` · ${row.document_reference}` : ''}
-                    {row.product?.sku ? ` · ${row.product.sku}` : ''}
-                  </div>
-                  <div className="mt-2 text-sm text-muted">
-                    {(row.from_depot?.name || '—')} → {(row.to_depot?.name || '—')}
-                  </div>
-                  <div className="mt-2 text-sm">
-                    <span className="text-muted">{t('kams.performedBy')} : </span>
-                    <span className="font-semibold text-ink">{performerName(row) || '—'}</span>
-                  </div>
-                  {row.notes ? <div className="mt-1 text-sm text-muted">{row.notes}</div> : null}
-                </div>
-                <div className="text-right">
-                  <div className="text-lg font-bold">{row.quantity}</div>
-                </div>
-              </div>
-            </Card>
-          ))}
+        <div className="overflow-hidden rounded-2xl border border-line">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-lhms text-white">
+                <tr className="text-left text-xs font-semibold tracking-wide">
+                  <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.occurredAt')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.movementTypeLabel')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.direction')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold">{t('kams.product')}</th>
+                  <th className="bg-lhms px-3 py-3 text-right font-semibold whitespace-nowrap">{t('kams.quantity')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold">{t('kams.fromLocation')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold">{t('kams.toLocation')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.documentRef')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.performedBy')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold">{t('kams.notes')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-8 text-center text-muted">{t('common.empty')}</td>
+                  </tr>
+                ) : visible.map((row, index) => (
+                  <tr
+                    key={row.id}
+                    className={cn(
+                      'border-t border-line',
+                      index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white',
+                    )}
+                  >
+                    <td className="w-px whitespace-nowrap px-3 py-1.5 text-muted">{formatDateTime(row.occurred_at, locale)}</td>
+                    <td className="px-3 py-1.5 font-semibold whitespace-nowrap">{typeLabel(row.type)}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      <Badge tone={row.direction === 'in' ? 'green' : row.direction === 'out' ? 'amber' : 'slate'}>
+                        {directionLabel(row.direction)}
+                      </Badge>
+                    </td>
+                    <td className="max-w-[14rem] truncate px-3 py-1.5">
+                      <div className="font-semibold">{row.product?.name || '—'}</div>
+                      {row.product?.sku ? <div className="text-xs text-muted">{row.product.sku}</div> : null}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-bold whitespace-nowrap">{row.quantity}</td>
+                    <td className="max-w-[10rem] truncate px-3 py-1.5">{row.from_depot?.name || '—'}</td>
+                    <td className="max-w-[10rem] truncate px-3 py-1.5">{row.to_depot?.name || '—'}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap text-muted">{row.document_reference || '—'}</td>
+                    <td className="max-w-[10rem] truncate px-3 py-1.5">{performerName(row) || '—'}</td>
+                    <td className="max-w-[14rem] truncate px-3 py-1.5 text-muted">{row.notes || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: rows.length })}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-muted">
+                {t('kams.rowsPerPage')}
+                <select
+                  value={perPage}
+                  onChange={(event) => {
+                    setPerPage(Number(event.target.value))
+                    setPage(1)
+                  }}
+                  className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+                >
+                  {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </label>
+              <PaginationButtons
+                page={safePage}
+                lastPage={lastPage}
+                onPrev={() => setPage((value) => Math.max(1, value - 1))}
+                onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+              />
+            </div>
+          </div>
         </div>
       )}
 

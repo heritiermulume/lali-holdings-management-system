@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['company_id', 'sku', 'name', 'category', 'collection', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'status', 'description', 'image_path'])]
+#[Fillable(['company_id', 'sku', 'name', 'category', 'collection', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'status', 'image_path'])]
 class KamsProduct extends Model
 {
     use SoftDeletes;
@@ -37,14 +37,16 @@ class KamsProduct extends Model
         return Attribute::get(fn (): ?string => $this->image_path ? '/storage/'.$this->image_path : null);
     }
 
-    public function fieldPrice(): float
+    /** Catalog sale price (prix de vente). */
+    public function salePrice(): float
     {
         $value = (float) $this->field_price;
 
         return $value > 0 ? $value : (float) $this->price;
     }
 
-    public function companyPrice(): float
+    /** Catalog purchase price (prix d'achat). */
+    public function purchasePrice(): float
     {
         $value = (float) $this->company_price;
         if ($value > 0) {
@@ -54,21 +56,39 @@ class KamsProduct extends Model
         return max(0, (float) $this->cost);
     }
 
+    /** @deprecated Use salePrice() */
+    public function fieldPrice(): float
+    {
+        return $this->salePrice();
+    }
+
+    /** @deprecated Use purchasePrice() */
+    public function companyPrice(): float
+    {
+        return $this->purchasePrice();
+    }
+
+    /** @deprecated Intermediate manager price removed — kept for legacy rows. */
     public function managerPrice(): float
     {
-        $value = (float) $this->manager_price;
-
-        return $value > 0 ? $value : 0.0;
+        return $this->purchasePrice();
     }
 
+    public function profitUnit(): float
+    {
+        return max($this->salePrice() - $this->purchasePrice(), 0);
+    }
+
+    /** @deprecated Price-ladder seller margin removed. */
     public function sellerMarginUnit(): float
     {
-        return max($this->fieldPrice() - $this->managerPrice(), 0);
+        return 0.0;
     }
 
+    /** @deprecated Price-ladder manager margin removed. */
     public function managerMarginUnit(): float
     {
-        return max($this->managerPrice() - $this->companyPrice(), 0);
+        return 0.0;
     }
 
     public function company(): BelongsTo

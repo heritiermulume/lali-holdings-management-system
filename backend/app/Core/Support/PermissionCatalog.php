@@ -49,22 +49,8 @@ class PermissionCatalog
             ['slug' => 'companies.update', 'group' => 'administration', 'name' => 'Update companies'],
             ['slug' => 'companies.delete', 'group' => 'administration', 'name' => 'Delete companies'],
 
-            ['slug' => 'finance.view', 'group' => 'finance', 'name' => 'View finances'],
-            ['slug' => 'finance.create', 'group' => 'finance', 'name' => 'Create financial records'],
-            ['slug' => 'finance.update', 'group' => 'finance', 'name' => 'Update financial records'],
-            ['slug' => 'finance.approve', 'group' => 'finance', 'name' => 'Approve financial records'],
-            ['slug' => 'finance.export', 'group' => 'finance', 'name' => 'Export financial data'],
-
-            ['slug' => 'reports.view', 'group' => 'reports', 'name' => 'View reports'],
-            ['slug' => 'reports.export', 'group' => 'reports', 'name' => 'Export reports'],
-            ['slug' => 'reports.print', 'group' => 'reports', 'name' => 'Print reports'],
-
-            ['slug' => 'modules.view', 'group' => 'modules', 'name' => 'View modules'],
-            ['slug' => 'modules.manage', 'group' => 'modules', 'name' => 'Activate and configure modules'],
-
             ['slug' => 'notifications.view', 'group' => 'notifications', 'name' => 'View notifications'],
             ['slug' => 'settings.manage', 'group' => 'administration', 'name' => 'Manage settings'],
-            ['slug' => 'files.manage', 'group' => 'files', 'name' => 'Manage files'],
         ];
     }
 
@@ -94,15 +80,30 @@ class PermissionCatalog
             'dashboard.orders' => ['view'],
             'dashboard.finance' => ['view'],
             'dashboard.recruitment' => ['view'],
-            'members' => ['view', 'create', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate'],
-            'recruitment' => ['view', 'create', 'update', 'delete', 'approve'],
+            'members.statistics' => ['view'],
+            'members.agents' => ['view'],
+            'members' => ['create', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate'],
+            'recruitment.applications' => ['view'],
+            'recruitment' => ['create', 'update', 'delete'],
+            'recruitment.reports' => ['view', 'print', 'preview'],
+            'recruitment.interview' => ['update'],
+            'recruitment.observation' => ['update'],
             'clients' => ['view', 'create', 'update', 'delete'],
+            'suppliers' => ['view'],
+            'patrimoine' => ['view', 'create', 'update', 'delete'],
             'products' => ['view', 'create', 'update', 'delete'],
-            'orders' => ['view', 'create', 'update', 'export', 'print'],
+            'stock' => ['update'],
+            'stock.statistics' => ['view'],
+            'stock.warehouses' => ['view'],
+            'stock.depots' => ['view'],
+            'stock.assignments' => ['view'],
+            'stock.reports' => ['view', 'print', 'preview'],
+            'stock.journal' => ['view'],
+            'orders' => ['view'],
             'finance.dashboard' => ['view', 'update'],
+            'finance.accounts' => ['view'],
             'finance.account' => ['view', 'deposit', 'withdraw', 'update', 'print', 'preview'],
             'finance.company' => ['view', 'deposit', 'withdraw', 'expense', 'approve', 'print', 'preview'],
-            'campaigns' => ['view', 'create', 'update', 'delete'],
         ];
 
         $permissions = [];
@@ -111,6 +112,11 @@ class PermissionCatalog
             $group = match (true) {
                 str_starts_with($area, 'finance.') => 'kams.finance',
                 str_starts_with($area, 'dashboard.') => 'kams.dashboard',
+                str_starts_with($area, 'members') => 'kams.members',
+                str_starts_with($area, 'recruitment') => 'kams.recruitment',
+                $area === 'clients' || $area === 'suppliers' => 'kams.clients',
+                $area === 'patrimoine' => 'kams.patrimoine',
+                $area === 'products' || str_starts_with($area, 'stock') || $area === 'orders' => 'kams.stock',
                 default => "kams.{$area}",
             };
             foreach ($actions as $action) {

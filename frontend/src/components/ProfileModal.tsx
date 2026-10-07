@@ -157,7 +157,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
             value={form.phone}
             onChange={(e) => setForm({ ...form, phone: e.target.value })}
           />
-          <Field label={t('users.role')} value={roleLabel(t, user?.roles?.[0]) || '—'} readOnly />
+          <Field label={t('users.role')} value={roleLabel(t, user?.roles?.[0], user?.gender) || '—'} readOnly />
           <Field label={t('users.company')} value={user?.primary_company?.name || '—'} readOnly />
           <Field label={t('users.office')} value={user?.primary_office?.name || '—'} readOnly />
           <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap">

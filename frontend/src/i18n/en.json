@@ -94,12 +94,13 @@
     "kamsCompensation": "KAMS compensation",
     "kamsCompensationHint": "Revenue sharing over the recent period: manager, assistants, divisionnaire and secretary.",
     "kamsSavings": "KAMS savings",
-    "kamsSavingsHint": "Savings balances for distributors and assistant managers.",
+    "kamsSavingsHint": "Savings balances for distributors, assistant managers, managers and divisionnaires.",
     "viewKamsAccounts": "View member accounts",
     "viewKamsRevenue": "Configure compensation",
     "guy_savings": "Distributor savings",
     "assistant_manager_savings": "Assistant manager savings",
     "manager_savings": "Manager savings",
+    "divisionnaire_savings": "Divisionnaire savings",
     "compensation": {
       "generated": "Generated revenue",
       "posted": "Distributed amounts",
@@ -241,7 +242,7 @@
   },
   "org": {
     "title": "Organization",
-    "subtitle": "Countries, provinces, cities, communes, neighborhoods and departments",
+    "subtitle": "Countries, provinces, cities, communes and neighborhoods",
     "countries": "Countries",
     "provinces": "Provinces",
     "cities": "Cities",
@@ -272,7 +273,6 @@
     "recordedBy": "Recorded by",
     "noOfficeActors": "Creator and manager not set",
     "address": "Address",
-    "departments": "Departments",
     "add": "Add",
     "pickCountry": "Choose a country",
     "searchCountry": "Search for a country…",
@@ -455,6 +455,33 @@
     "clientsAndSuppliers": "Customers & Suppliers",
     "clientsAndSuppliersHint": "Manage your customers and suppliers in one place.",
     "clientsPageHint": "Find and manage customers for each office.",
+    "patrimoine": "Assets",
+    "patrimoineHint": "Register the goods and resources of each office.",
+    "patrimoineTotal": "Total value",
+    "patrimoineValue": "Asset value",
+    "assetImage": "Asset image",
+    "addAsset": "Add asset",
+    "editAsset": "Edit asset",
+    "deleteAsset": "Delete asset",
+    "deleteAssetConfirm": "Delete asset “{{name}}”?",
+    "searchAssets": "Search an asset…",
+    "requiredAssetFields": "Name and office are required.",
+    "assetCategory": "Category",
+    "unitValue": "Unit value",
+    "acquiredOn": "Acquisition date",
+    "assetCategoryOption": {
+      "furniture": "Furniture",
+      "equipment": "Equipment",
+      "vehicle": "Vehicle",
+      "electronics": "Electronics",
+      "real_estate": "Real estate",
+      "other": "Other"
+    },
+    "assetStatus": {
+      "active": "Active",
+      "maintenance": "Maintenance",
+      "disposed": "Disposed"
+    },
     "suppliers": "Suppliers",
     "suppliersHint": "Find and manage the suppliers that replenish your stock.",
     "addSupplier": "Add supplier",
@@ -531,7 +558,7 @@
     "financePlTitle": "Profit & loss",
     "financePlHint": "Revenue, expenses, margin and collections for the selected period.",
     "financeBalanceTitle": "Balance sheet & liquidity",
-    "financeBalanceHint": "Assets, liabilities, treasury, receivables, payables and inventory as of today.",
+    "financeBalanceHint": "Assets, liabilities, treasury, receivables, payables, inventory and office property as of today.",
     "financeCompositionTitle": "Financial structure",
     "financeCompositionHint": "Breakdown of key cash, asset and liability positions.",
     "revenueExpenseTrend": "Revenue & expense trend",
@@ -668,11 +695,12 @@
     "headOfficeStock": "Head office warehouse",
     "remainingOffice": "Office warehouse",
     "stockFormula": "Received / remaining",
-    "fieldPrice": "Field price",
+    "fieldPrice": "Sale price",
     "price": "Price",
+    "purchasePrice": "Purchase price",
     "managerPrice": "Manager price",
-    "companyPrice": "Company price",
-    "companyShare": "Company share",
+    "companyPrice": "Purchase price",
+    "companyShare": "Purchase cost",
     "ledger": {
       "opening": "Opening balance",
       "settlement": "Settlement",
@@ -887,6 +915,7 @@
     "initialStock": "Initial stock",
     "cost": "Cost",
     "salePrice": "Sale price",
+    "grossProfit": "Profit",
     "region": "Region",
     "noRegion": "No region",
     "addWarehouse": "Create",
@@ -964,12 +993,10 @@
       "settleAssignment": "Close {{agent}}'s day.",
       "investigateLoss": "Investigate losses on {{product}}."
     },
-    "campaignsHint": "Marketing campaigns, channels and budgets.",
     "clients": "Customers",
     "products": "Products",
     "assignmentValue": "Value",
     "orders": "Orders",
-    "campaigns": "Campaigns",
     "newClient": "New customer",
     "addClient": "Add",
     "editClient": "Edit customer",
@@ -991,6 +1018,7 @@
     "newProduct": "New product",
     "addProduct": "Add product",
     "transferStock": "Transfer",
+    "transferStockTitle": "Transfer",
     "transferDestination": "Destination",
     "addTransferDestination": "Add a destination",
     "removeDestination": "Remove",
@@ -1003,7 +1031,6 @@
     "deleteProduct": "Delete product",
     "deleteProductConfirm": "Delete product {{name}}? This cannot be undone.",
     "productImage": "Product image",
-    "productImageHint": "Click to add or change the image. It is only saved when you click Save.",
     "removeImage": "Remove image",
     "assignDepots": "Assign to depots",
     "allDepots": "All depots",
@@ -1032,7 +1059,6 @@
     "noAdjustments": "No adjustments for this product.",
     "availableQty": "Available",
     "newOrder": "New order",
-    "newCampaign": "New campaign",
     "recruitment": "Recruitments",
     "recruitmentHint": "New member pipeline from application to registration.",
     "recruitmentReports": "Reports",
@@ -1216,7 +1242,7 @@
     "importNeedRows": "Add an Excel/CSV file or paste rows.",
     "importNeedCompany": "Choose a company.",
     "pasteRows": "Paste CSV, TSV or JSON rows",
-    "pasteRowsHint": "Optional if you are already uploading a file. Use the same template as export: office_code, role (slug) and trainer_email (linked user).",
+    "pasteRowsHint": "Optional if you are already uploading a file. Use the same template as export: office_code, role (slug), coach_member_code (encadreur), sponsor_member_code or trainer_email (parrain).",
     "source": {
       "poster": "Poster",
       "qr_code": "QR code",
@@ -1313,7 +1339,16 @@
     "title": "Notifications",
     "subtitle": "System alerts and messages.",
     "markAll": "Mark all as read",
-    "empty": "No notifications."
+    "markRead": "Mark as read",
+    "read": "Read",
+    "empty": "No notifications.",
+    "types": {
+      "alert": "Alert",
+      "approval": "Approval",
+      "finance_request": "Finance",
+      "finance_approved": "Finance",
+      "finance_rejected": "Finance"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -1337,8 +1372,7 @@
     "rolesCollapseAll": "Collapse",
     "rolesNoVisiblePermissions": "No permissions are visible with your current access.",
     "rolesPlatformAccess": "Cross-cutting access",
-    "rolesPermissionOptions": "Dashboard options",
-    "rolesModuleRoot": "Module access",
+    "rolesPermissionOptions": "Options",
     "rolesOtherPermissions": "Other",
     "rolesOffices": "Offices",
     "rolesOfficesHint": "The role is available in the selected offices.",
@@ -1360,12 +1394,8 @@
       "roles": "Roles",
       "organization": "Organization",
       "companies": "Companies",
-      "finance": "Finance",
-      "reports": "Reports",
-      "modules": "Modules",
       "notifications": "Notifications",
       "settings": "Settings",
-      "files": "Files",
       "kams": {
         "dashboard": "Dashboard",
         "dashboardPages": {
@@ -1377,7 +1407,9 @@
         "members": "Members",
         "recruitment": "Recruitments",
         "clients": "Customers",
+        "patrimoine": "Assets",
         "products": "Products",
+        "stock": "Stock operations",
         "orders": "Orders",
         "finance": "Finance",
         "financePages": {
@@ -1385,8 +1417,7 @@
           "account": "My account",
           "company": "Company accounts",
           "revenue": "Compensation"
-        },
-        "campaigns": "Campaigns"
+        }
       },
       "heavy-equipment": "Heavy Equipment",
       "real-estate": "Real Estate",
@@ -1440,38 +1471,13 @@
         "update": "Update companies",
         "delete": "Delete companies"
       },
-      "finance": {
-        "view": "View finances",
-        "create": "Create financial records",
-        "update": "Update financial records",
-        "approve": "Approve financial records",
-        "export": "Export financial data"
-      },
-      "reports": {
-        "view": "View reports",
-        "export": "Export reports",
-        "print": "Print reports"
-      },
-      "modules": {
-        "view": "View modules",
-        "manage": "Activate and configure modules"
-      },
       "notifications": {
         "view": "View notifications"
       },
       "settings": {
         "manage": "Manage settings"
       },
-      "files": {
-        "manage": "Manage files"
-      },
       "kams": {
-        "view": "View KAMS",
-        "create": "Create in KAMS",
-        "update": "Update in KAMS",
-        "delete": "Delete in KAMS",
-        "approve": "Approve in KAMS",
-        "export": "Export from KAMS",
         "dashboard": {
           "view": "View the dashboard",
           "products": {
@@ -1488,7 +1494,6 @@
           }
         },
         "members": {
-          "view": "View members",
           "create": "Create a member",
           "update": "Update a member",
           "delete": "Delete a member",
@@ -1496,14 +1501,32 @@
           "export": "Export members",
           "print": "Print members",
           "preview": "Preview members",
-          "activate": "Activate a member"
+          "activate": "Activate a member",
+          "agents": {
+            "view": "View the Agents page"
+          },
+          "statistics": {
+            "view": "View members statistics"
+          }
         },
         "recruitment": {
-          "view": "View recruitment",
+          "applications": {
+            "view": "View the Applications page"
+          },
           "create": "Create an application",
           "update": "Update an application",
           "delete": "Delete an application",
-          "approve": "Approve a recruitment"
+          "reports": {
+            "view": "View the Recruitment reports page",
+            "print": "Print recruitment reports",
+            "preview": "Preview recruitment reports"
+          },
+          "interview": {
+            "update": "Record an interview"
+          },
+          "observation": {
+            "update": "Record an observation"
+          }
         },
         "clients": {
           "view": "View customers",
@@ -1511,23 +1534,54 @@
           "update": "Update a customer",
           "delete": "Delete a customer"
         },
+        "suppliers": {
+          "view": "View suppliers"
+        },
+        "patrimoine": {
+          "view": "View assets",
+          "create": "Add an asset",
+          "update": "Update an asset",
+          "delete": "Delete an asset"
+        },
         "products": {
           "view": "View products",
           "create": "Create a product",
           "update": "Update a product",
           "delete": "Delete a product"
         },
+        "stock": {
+          "update": "Manage stock operations",
+          "assignments": {
+            "view": "View the Assignments page"
+          },
+          "statistics": {
+            "view": "View stock statistics"
+          },
+          "warehouses": {
+            "view": "View warehouses"
+          },
+          "depots": {
+            "view": "View depots"
+          },
+          "reports": {
+            "view": "View the Assignment reports page",
+            "print": "Print assignment reports",
+            "preview": "Preview assignment reports"
+          },
+          "journal": {
+            "view": "View stock journal"
+          }
+        },
         "orders": {
-          "view": "View orders",
-          "create": "Create an order",
-          "update": "Update an order",
-          "export": "Export orders",
-          "print": "Print an order"
+          "view": "View orders"
         },
         "finance": {
           "dashboard": {
             "view": "View the finance dashboard",
             "update": "Filter the dashboard by office"
+          },
+          "accounts": {
+            "view": "View agent accounts"
           },
           "account": {
             "view": "View My account",
@@ -1546,12 +1600,6 @@
             "print": "Print company transactions",
             "preview": "Preview company transactions"
           }
-        },
-        "campaigns": {
-          "view": "View campaigns",
-          "create": "Create a campaign",
-          "update": "Update a campaign",
-          "delete": "Delete a campaign"
         }
       },
       "heavy-equipment": {

@@ -73,10 +73,12 @@ class SavingsLedger
             ? KamsMember::query()->find($sale->manager_member_id)
             : $this->resolveManager($seller);
 
-        $this->postUnique($seller, 'guy', (float) $sale->seller_margin, 'settlement', $sale, $sale->sold_at?->toDateString(), 'Guy margin on '.$sale->reference);
+        if ((float) $sale->seller_margin != 0.0) {
+            $this->postUnique($seller, 'guy', (float) $sale->seller_margin, 'settlement', $sale, $sale->sold_at?->toDateString(), 'Guy margin on '.$sale->reference);
+        }
         app(RevenueShareService::class)->post($sale);
         $hasShares = KamsRevenueShare::query()->where('sale_id', $sale->id)->exists();
-        if (! $hasShares && $manager && (float) $sale->manager_margin > 0) {
+        if (! $hasShares && $manager && (float) $sale->manager_margin != 0.0) {
             $this->postUnique($manager, 'manager', (float) $sale->manager_margin, 'settlement', $sale, $sale->sold_at?->toDateString(), 'Manager margin on '.$sale->reference);
         }
     }
@@ -152,6 +154,8 @@ class SavingsLedger
             'seller_savings' => round($seller, 2),
             'manager_savings' => round($manager, 2),
             'company_share' => round($company, 2),
+            'cost_total' => round($company, 2),
+            'profit' => round($field - $company, 2),
             'sales' => $sales,
         ];
     }

@@ -26,9 +26,9 @@ const ACTION_ORDER = [
 
 const ADMIN_VIEW_SLUG = 'administration.view'
 const DASHBOARD_VIEW_SLUG = 'kams.dashboard.view'
-const PLATFORM_GROUPS = ['notifications', 'reports', 'finance', 'modules', 'files'] as const
+const PLATFORM_GROUPS = ['notifications'] as const
 
-const KAMS_PAGE_ORDER = ['dashboard', 'members', 'stock', 'finance', 'clients', 'campaigns', 'module'] as const
+const KAMS_PAGE_ORDER = ['dashboard', 'members', 'stock', 'finance', 'clients', 'patrimoine'] as const
 
 export function permissionAction(slug: string) {
   return slug.split('.').at(-1) || ''
@@ -108,6 +108,30 @@ function actionLeaves(permissions: Permission[], prefix: string, indentView = fa
   return items.map((permission) => leaf(permission, indentView && !isViewPermission(permission)))
 }
 
+function actionLeavesOnly(
+  permissions: Permission[],
+  prefix: string,
+  actions: string[],
+  indentView = false,
+): PermissionLeaf[] {
+  const allowed = new Set(actions)
+  const items = byPrefix(permissions, prefix).filter((item) => allowed.has(permissionAction(item.slug)))
+  return items.map((permission) => leaf(permission, indentView && !isViewPermission(permission)))
+}
+
+function pageSection(
+  key: string,
+  labelKey: string,
+  labelDefault: string,
+  viewLeaves: PermissionLeaf[],
+  optionLeaves: PermissionNode[] = [],
+): PermissionSection | null {
+  return section(key, labelKey, labelDefault, [
+    ...viewLeaves,
+    ...optionLeaves,
+  ])
+}
+
 function buildAdministrationTree(permissions: Permission[]): PermissionSection | null {
   const admin = byGroup(permissions, 'administration')
   if (admin.length === 0) return null
@@ -158,13 +182,8 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
       'Dashboard',
       [
         ...leaves(dashboardGate),
-        section(
-          'kams.dashboard.options',
-          'settings.rolesPermissionOptions',
-          'Options',
-          leaves(dashboardOptions, true),
-        ),
-      ].filter(Boolean) as PermissionNode[],
+        ...leaves(dashboardOptions, true),
+      ],
       { gateSlug: DASHBOARD_VIEW_SLUG },
     ),
     section(
@@ -172,8 +191,44 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
       'settings.permissionGroups.kams.members',
       'Members',
       [
-        section('kams.members.agents', 'kams.agents', 'Agents', actionLeaves(kams, 'kams.members', true)),
-        section('kams.members.recruitment', 'settings.permissionGroups.kams.recruitment', 'Recruitments', actionLeaves(kams, 'kams.recruitment', true)),
+        pageSection(
+          'kams.members.statistics',
+          'kams.statistics',
+          'Statistics',
+          leaves(byExact(kams, 'kams.members.statistics.view')),
+        ),
+        section(
+          'kams.members.recruitment',
+          'settings.permissionGroups.kams.recruitment',
+          'Recruitments',
+          [
+            pageSection(
+              'kams.members.recruitment.applications',
+              'kams.applications',
+              'Applications',
+              leaves(byExact(kams, 'kams.recruitment.applications.view')),
+              [
+                ...actionLeavesOnly(kams, 'kams.recruitment', ['create', 'update', 'delete'], true),
+                ...leaves(byExact(kams, 'kams.recruitment.interview.update'), true),
+                ...leaves(byExact(kams, 'kams.recruitment.observation.update'), true),
+              ],
+            ),
+            pageSection(
+              'kams.members.recruitment.reports',
+              'kams.recruitmentReports',
+              'Reports',
+              leaves(byExact(kams, 'kams.recruitment.reports.view')),
+              actionLeavesOnly(kams, 'kams.recruitment.reports', ['print', 'preview'], true),
+            ),
+          ].filter(Boolean) as PermissionNode[],
+        ),
+        pageSection(
+          'kams.members.agents',
+          'kams.agents',
+          'Agents',
+          leaves(byExact(kams, 'kams.members.agents.view')),
+          actionLeavesOnly(kams, 'kams.members', ['create', 'update', 'delete', 'import', 'export', 'print', 'preview', 'activate'], true),
+        ),
       ].filter(Boolean) as PermissionNode[],
     ),
     section(
@@ -181,8 +236,61 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
       'kams.stock',
       'Stock',
       [
-        section('kams.stock.products', 'settings.permissionGroups.kams.products', 'Products', actionLeaves(kams, 'kams.products', true)),
-        section('kams.stock.orders', 'settings.permissionGroups.kams.orders', 'Orders', actionLeaves(kams, 'kams.orders', true)),
+        pageSection(
+          'kams.stock.statistics',
+          'kams.statistics',
+          'Statistics',
+          leaves(byExact(kams, 'kams.stock.statistics.view')),
+        ),
+        pageSection(
+          'kams.stock.warehouses',
+          'kams.warehouses',
+          'Warehouses',
+          leaves(byExact(kams, 'kams.stock.warehouses.view')),
+          [
+            ...leaves(byExact(kams, 'kams.products.view'), true),
+            ...actionLeavesOnly(kams, 'kams.products', ['create', 'update', 'delete'], true),
+            ...leaves(byExact(kams, 'kams.stock.update'), true),
+          ],
+        ),
+        pageSection(
+          'kams.stock.depots',
+          'kams.depots',
+          'Depots',
+          leaves(byExact(kams, 'kams.stock.depots.view')),
+          [
+            ...leaves(byExact(kams, 'kams.products.view'), true),
+            ...actionLeavesOnly(kams, 'kams.products', ['create', 'update', 'delete'], true),
+            ...leaves(byExact(kams, 'kams.stock.update'), true),
+          ],
+        ),
+        section(
+          'kams.stock.operations',
+          'kams.commercialOperations',
+          'Operations',
+          [
+            pageSection(
+              'kams.stock.assignments',
+              'kams.assignments',
+              'Assignments',
+              leaves(byExact(kams, 'kams.stock.assignments.view')),
+              leaves(byExact(kams, 'kams.stock.update'), true),
+            ),
+            pageSection(
+              'kams.stock.reports',
+              'kams.assignmentReports',
+              'Reports',
+              leaves(byExact(kams, 'kams.stock.reports.view')),
+              actionLeavesOnly(kams, 'kams.stock.reports', ['print', 'preview'], true),
+            ),
+            pageSection(
+              'kams.stock.journal',
+              'kams.stockJournal',
+              'Journal',
+              leaves(byExact(kams, 'kams.stock.journal.view')),
+            ),
+          ].filter(Boolean) as PermissionNode[],
+        ),
       ].filter(Boolean) as PermissionNode[],
     ),
     section(
@@ -190,14 +298,75 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
       'settings.permissionGroups.kams.finance',
       'Finance',
       [
-        section('kams.finance.dashboard', 'settings.permissionGroups.kams.financePages.dashboard', 'Dashboard', actionLeaves(kams, 'kams.finance.dashboard', true)),
-        section('kams.finance.account', 'settings.permissionGroups.kams.financePages.account', 'My account', actionLeaves(kams, 'kams.finance.account', true)),
-        section('kams.finance.company', 'settings.permissionGroups.kams.financePages.company', 'Company accounts', actionLeaves(kams, 'kams.finance.company', true)),
+        pageSection(
+          'kams.finance.dashboard',
+          'settings.permissionGroups.kams.financePages.dashboard',
+          'Dashboard',
+          leaves(byExact(kams, 'kams.finance.dashboard.view')),
+          leaves(byExact(kams, 'kams.finance.dashboard.update'), true),
+        ),
+        pageSection(
+          'kams.finance.account',
+          'kams.myAccount',
+          'My account',
+          leaves(byExact(kams, 'kams.finance.account.view')),
+          actionLeavesOnly(
+            kams,
+            'kams.finance.account',
+            ['deposit', 'withdraw', 'update', 'print', 'preview'],
+            true,
+          ),
+        ),
+        pageSection(
+          'kams.finance.accounts',
+          'kams.agentAccounts',
+          'Agent accounts',
+          leaves(byExact(kams, 'kams.finance.accounts.view')),
+        ),
+        pageSection(
+          'kams.finance.company',
+          'kams.companyAccount',
+          'Company accounts',
+          leaves(byExact(kams, 'kams.finance.company.view')),
+          actionLeavesOnly(
+            kams,
+            'kams.finance.company',
+            ['deposit', 'withdraw', 'expense', 'approve', 'print', 'preview'],
+            true,
+          ),
+        ),
       ].filter(Boolean) as PermissionNode[],
     ),
-    section('kams.clients', 'settings.permissionGroups.kams.clients', 'Customers', actionLeaves(kams, 'kams.clients', true)),
-    section('kams.campaigns', 'settings.permissionGroups.kams.campaigns', 'Campaigns', actionLeaves(kams, 'kams.campaigns', true)),
-    section('kams.module', 'settings.rolesModuleRoot', 'Module', actionLeaves(kams, 'kams', true)),
+    section(
+      'kams.clients',
+      'kams.clientsAndSuppliers',
+      'Customers & suppliers',
+      [
+        pageSection(
+          'kams.clients.clients',
+          'kams.clients',
+          'Customers',
+          leaves(byExact(kams, 'kams.clients.view')),
+          actionLeavesOnly(kams, 'kams.clients', ['create', 'update', 'delete'], true),
+        ),
+        pageSection(
+          'kams.clients.suppliers',
+          'kams.suppliers',
+          'Suppliers',
+          leaves(byExact(kams, 'kams.suppliers.view')),
+          actionLeavesOnly(kams, 'kams.clients', ['create', 'update', 'delete'], true),
+        ),
+      ].filter(Boolean) as PermissionNode[],
+    ),
+    section(
+      'kams.patrimoine',
+      'settings.permissionGroups.kams.patrimoine',
+      'Assets',
+      [
+        ...leaves(byExact(kams, 'kams.patrimoine.view')),
+        ...actionLeavesOnly(kams, 'kams.patrimoine', ['create', 'update', 'delete'], true),
+      ],
+    ),
   ]
 
   const ordered = pages
@@ -243,13 +412,19 @@ function buildGenericModuleTree(moduleSlug: string, permissions: Permission[], l
 }
 
 function buildPlatformTree(permissions: Permission[]): PermissionSection | null {
-  const children = PLATFORM_GROUPS
-    .map((group) => {
-      const items = byGroup(permissions, group)
-      if (items.length === 0) return null
-      return section(`platform.${group}`, `settings.permissionGroups.${group}`, group, actionLeaves(items, group, true))
-    })
-    .filter(Boolean) as PermissionNode[]
+  const children: PermissionNode[] = []
+
+  const administration = buildAdministrationTree(permissions)
+  if (administration) children.push(administration)
+
+  for (const group of PLATFORM_GROUPS) {
+    const items = byGroup(permissions, group)
+    if (items.length === 0) continue
+    const node = section(`platform.${group}`, `settings.permissionGroups.${group}`, group, actionLeaves(items, group, true))
+    if (node) children.push(node)
+  }
+
+  if (children.length === 0) return null
 
   return section('platform', 'settings.rolesPlatformAccess', 'Platform', children)
 }
@@ -263,8 +438,9 @@ export function buildPermissionTree(
   if (all.length === 0) return []
 
   const tree: PermissionSection[] = []
-  const admin = buildAdministrationTree(all)
-  if (admin) tree.push(admin)
+
+  const platform = buildPlatformTree(all)
+  if (platform) tree.push(platform)
 
   if (moduleSlug === 'kams') {
     const kams = buildKamsTree(all)
@@ -273,9 +449,6 @@ export function buildPermissionTree(
     const moduleTree = buildGenericModuleTree(moduleSlug, all, moduleSlug)
     if (moduleTree) tree.push(moduleTree)
   }
-
-  const platform = buildPlatformTree(all)
-  if (platform) tree.push(platform)
 
   return tree
 }
@@ -287,6 +460,68 @@ export function viewFor(permissions: Permission[], permission: Permission) {
 export function siblingsOf(permissions: Permission[], permission: Permission) {
   const prefix = permissionPrefix(permission.slug)
   return permissions.filter((item) => permissionPrefix(item.slug) === prefix)
+}
+
+function areaViewSlugs(permission: Permission): string[] {
+  const slug = permission.slug
+  if (slug.startsWith('kams.recruitment.') && !isViewPermission(permission)) {
+    if (slug.startsWith('kams.recruitment.reports.')) {
+      return ['kams.recruitment.reports.view']
+    }
+    return ['kams.recruitment.applications.view']
+  }
+  if (
+    slug.startsWith('kams.members.')
+    && !isViewPermission(permission)
+    && !slug.startsWith('kams.members.statistics.')
+  ) {
+    return ['kams.members.agents.view']
+  }
+  if (slug === 'kams.stock.update') {
+    return [
+      'kams.stock.assignments.view',
+      'kams.stock.warehouses.view',
+      'kams.stock.depots.view',
+    ]
+  }
+  if (slug.startsWith('kams.finance.dashboard.') && !isViewPermission(permission)) {
+    return ['kams.finance.dashboard.view']
+  }
+  if (slug.startsWith('kams.finance.account.') && !isViewPermission(permission)) {
+    return ['kams.finance.account.view']
+  }
+  if (slug.startsWith('kams.finance.company.') && !isViewPermission(permission)) {
+    return ['kams.finance.company.view']
+  }
+  if (slug.startsWith('kams.stock.reports.') && !isViewPermission(permission)) {
+    return ['kams.stock.reports.view']
+  }
+  if (slug === 'kams.products.view') {
+    return ['kams.stock.warehouses.view', 'kams.stock.depots.view']
+  }
+  if (slug.startsWith('kams.products.') && !isViewPermission(permission)) {
+    return ['kams.products.view', 'kams.stock.warehouses.view', 'kams.stock.depots.view']
+  }
+  if (slug.startsWith('kams.clients.') && !isViewPermission(permission)) {
+    return ['kams.clients.view', 'kams.suppliers.view']
+  }
+  if (slug.startsWith('kams.patrimoine.') && !isViewPermission(permission)) {
+    return ['kams.patrimoine.view']
+  }
+  const view = `${permissionPrefix(slug)}.view`
+  return [view]
+}
+
+function hasRequiredAreaView(permissionIds: number[], permission: Permission, allVisible: Permission[]) {
+  if (isViewPermission(permission)) return true
+  const views = areaViewSlugs(permission)
+    .map((slug) => allVisible.find((item) => item.slug === slug))
+    .filter(Boolean) as Permission[]
+  if (views.length === 0) {
+    const fallback = viewFor(allVisible, permission)
+    return !fallback || permissionIds.includes(fallback.id)
+  }
+  return views.some((view) => permissionIds.includes(view.id))
 }
 
 export function isPermissionEnabled(
@@ -306,8 +541,7 @@ export function isPermissionEnabled(
     if (!permissionIds.includes(dashboardView.id)) return false
   }
 
-  const view = viewFor(allVisible, permission)
-  if (view && !isViewPermission(permission) && !permissionIds.includes(view.id)) return false
+  if (!hasRequiredAreaView(permissionIds, permission, allVisible)) return false
 
   return true
 }
@@ -327,10 +561,7 @@ export function isPermissionGatedOff(
     if (!permissionIds.includes(dashboardView.id)) return true
   }
 
-  const view = viewFor(allVisible, permission)
-  if (view && !isViewPermission(permission) && !permissionIds.includes(view.id)) return true
-
-  return false
+  return !hasRequiredAreaView(permissionIds, permission, allVisible)
 }
 
 export function togglePermissionIds(
@@ -346,7 +577,10 @@ export function togglePermissionIds(
     ? allVisible.filter((item) => item.slug.startsWith('kams.dashboard.')).map((item) => item.id)
     : []
   const siblingIds = siblingsOf(allVisible, permission).map((item) => item.id)
-  const view = viewFor(allVisible, permission)
+  const requiredViews = areaViewSlugs(permission)
+    .map((slug) => allVisible.find((item) => item.slug === slug))
+    .filter(Boolean) as Permission[]
+  const view = requiredViews[0] ?? viewFor(allVisible, permission)
 
   if (permission.slug === ADMIN_VIEW_SLUG) {
     if (enabled) return current.filter((id) => !adminIds.includes(id))
@@ -375,12 +609,15 @@ export function togglePermissionIds(
     return [...next]
   }
 
-  if (!view || !current.includes(view.id)) {
+  if (!hasRequiredAreaView(current, permission, allVisible)) {
     return current
   }
 
   if (enabled) return current.filter((id) => id !== permission.id)
-  return [...new Set([...current, permission.id])]
+  const next = new Set(current)
+  next.add(permission.id)
+  if (view) next.add(view.id)
+  return [...next]
 }
 
 export function setSectionPermissionIds(
@@ -424,6 +661,30 @@ export function filterTreeByQuery(nodes: PermissionSection[], query: string, lab
   }
 
   return nodes.map(matchNode).filter(Boolean) as PermissionSection[]
+}
+
+/** Hide options/pages that are not available until their required view is granted. */
+export function filterTreeByGates(
+  nodes: PermissionSection[],
+  permissionIds: number[],
+  allVisible: Permission[],
+): PermissionSection[] {
+  const filterNode = (node: PermissionNode): PermissionNode | null => {
+    if (node.kind === 'leaf') {
+      return isPermissionGatedOff(permissionIds, node.permission, allVisible) ? null : node
+    }
+
+    const children = node.children.map(filterNode).filter(Boolean) as PermissionNode[]
+    if (children.length === 0) return null
+
+    return {
+      ...node,
+      children,
+      permissions: collectPermissions(children),
+    }
+  }
+
+  return nodes.map(filterNode).filter(Boolean) as PermissionSection[]
 }
 
 export { ADMIN_VIEW_SLUG, DASHBOARD_VIEW_SLUG }

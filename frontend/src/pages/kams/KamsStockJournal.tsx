@@ -3,8 +3,6 @@ import { useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeftRight,
-  ChevronLeft,
-  ChevronRight,
   Package,
   PackageMinus,
   PackagePlus,
@@ -23,6 +21,7 @@ import {
 } from 'lucide-react'
 import { Badge, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { PaginationButtons } from '../../components/PaginationButtons'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { initials } from '../../lib/format'
@@ -451,36 +450,14 @@ export function KamsStockJournal() {
       </Modal>
 
       {lastPage > 1 ? (
-        <div className="mt-6 flex items-center justify-between gap-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm">
-          <span className="text-muted">
-            {t('kams.journalPage', { page, last: lastPage, defaultValue: `${page} / ${lastPage}` })}
-          </span>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className={cn(
-                'inline-flex h-10 items-center gap-1 rounded-full px-3.5 font-semibold transition',
-                loading || page <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white hover:opacity-95',
-              )}
-              disabled={loading || page <= 1}
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-            >
-              <ChevronLeft size={16} />
-              {t('common.prev')}
-            </button>
-            <button
-              type="button"
-              className={cn(
-                'inline-flex h-10 items-center gap-1 rounded-full px-3.5 font-semibold transition',
-                loading || page >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white hover:opacity-95',
-              )}
-              disabled={loading || page >= lastPage}
-              onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
-            >
-              {t('common.next')}
-              <ChevronRight size={16} />
-            </button>
-          </div>
+        <div className="mt-6 flex justify-end rounded-2xl border border-line bg-white px-4 py-3">
+          <PaginationButtons
+            page={page}
+            lastPage={lastPage}
+            disabled={loading}
+            onPrev={() => setPage((value) => Math.max(1, value - 1))}
+            onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+          />
         </div>
       ) : null}
     </div>

@@ -194,7 +194,7 @@ export function KamsTransfers() {
   return (
     <div>
       <div className="mb-4 flex justify-end">
-        {hasPermission('kams.products.update') ? <Button onClick={openModal}>{t('kams.newTransfer')}</Button> : null}
+        {hasPermission('kams.stock.update') ? <Button onClick={openModal}>{t('kams.newTransfer')}</Button> : null}
       </div>
       {error && !open ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       <div className="grid gap-3">
@@ -220,7 +220,7 @@ export function KamsTransfers() {
                 </div>
               ))}
             </div>
-            {row.status === 'in_transit' && hasPermission('kams.products.update') ? (
+            {row.status === 'in_transit' && hasPermission('kams.stock.update') ? (
               <Button className="mt-4" onClick={() => void receiveTransfer(row.id)}>{t('kams.receiveTransfer')}</Button>
             ) : null}
           </Card>
@@ -296,7 +296,9 @@ export type OperationsOfficeFilter = { officeId: string }
 export function KamsAssignmentsWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
-  const canView = hasPermission('kams.products.view')
+  const canView = hasPermission('kams.stock.assignments.view')
+  const canReports = hasPermission('kams.stock.reports.view')
+  const canJournal = hasPermission('kams.stock.journal.view')
   const [officeId, setOfficeId] = useState('')
   const [offices, setOffices] = useState<Array<{ id: number; name: string; code?: string | null }>>([])
 
@@ -327,8 +329,8 @@ export function KamsAssignmentsWorkspace() {
       <KamsWorkspaceTabs
         tabs={[
           { to: '/modules/kams/stock/assignments', end: true, label: t('kams.assignments'), show: canView },
-          { to: '/modules/kams/stock/assignments/reports', label: t('kams.assignmentReports'), show: canView },
-          { to: '/modules/kams/stock/assignments/journal', end: true, label: t('kams.stockJournal'), show: canView },
+          { to: '/modules/kams/stock/assignments/reports', label: t('kams.assignmentReports'), show: canReports },
+          { to: '/modules/kams/stock/assignments/journal', end: true, label: t('kams.stockJournal'), show: canJournal },
         ]}
       />
       <Outlet context={{ officeId } satisfies OperationsOfficeFilter} />
@@ -684,7 +686,7 @@ export function KamsAssignments() {
             className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted"
           />
         </div>
-        {hasPermission('kams.products.update') ? (
+        {hasPermission('kams.stock.update') ? (
           <>
             <Button className="shrink-0" onClick={() => { setError(''); setOpen(true) }}>{t('kams.newAssignment')}</Button>
             <span className="h-8 w-px shrink-0 bg-line" aria-hidden />
@@ -736,7 +738,7 @@ export function KamsAssignments() {
                   </Button>
                 </div>
               </div>
-              {hasPermission('kams.products.update') && (row.status === 'open' || row.status === 'closed') ? (
+              {hasPermission('kams.stock.update') && (row.status === 'open' || row.status === 'closed') ? (
                 <div className={cn('mt-auto flex flex-wrap gap-1.5 border-t px-4 py-2', row.status === 'closed' ? 'border-emerald-100' : 'border-line')}>
                   <Button variant="secondary" className="!min-h-9 h-9 px-3" disabled={row.status === 'closed'} onClick={() => openAdd(row)}>{t('common.add')}</Button>
                   <Button variant="ghost" className="!min-h-9 h-9 bg-lhms/15 px-3 text-lhms hover:bg-lhms/25" disabled={row.status === 'closed'} onClick={() => openEdit(row)}>{t('common.edit')}</Button>

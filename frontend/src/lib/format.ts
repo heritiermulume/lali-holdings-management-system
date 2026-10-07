@@ -119,7 +119,7 @@ export function permissionLabel(
   if (action && group) {
     const actionLabel = t(`settings.permissionActions.${action}`, { defaultValue: '' })
     const groupLabel = t(`settings.permissionGroups.${group}`, { defaultValue: group })
-    if (actionLabel) return `${actionLabel} — ${groupLabel}`
+    if (actionLabel) return `${actionLabel} ${groupLabel}`
   }
   return permission.name || permission.slug
 }

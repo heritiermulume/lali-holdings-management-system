@@ -134,12 +134,18 @@ class StockInventory
     /**
      * @param  list<array{product_id:int, quantity:int}>  $items
      */
-    public function transfer(KamsDepot $from, KamsDepot $to, array $items, ?int $userId = null, ?string $notes = null): KamsStockTransfer
-    {
+    public function transfer(
+        KamsDepot $from,
+        KamsDepot $to,
+        array $items,
+        ?int $userId = null,
+        ?string $notes = null,
+        bool $autoReceive = false,
+    ): KamsStockTransfer {
         abort_unless($from->id !== $to->id, 422, __('Choose two different locations.'));
         abort_unless($from->company_id === $to->company_id, 422, __('Locations must belong to the same company.'));
         abort_unless($from->isWarehouse(), 422, __('Transfers start from a regional warehouse.'));
-        abort_unless($to->kind === 'depot', 422, __('Transfers must arrive in an office depot.'));
+        abort_unless(in_array($to->kind, ['depot', 'warehouse'], true), 422, __('Transfers must arrive in a warehouse or office depot.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
 
         $aggregated = [];
@@ -150,17 +156,19 @@ class StockInventory
             $aggregated[$productId] = ($aggregated[$productId] ?? 0) + $quantity;
         }
 
-        return DB::transaction(function () use ($from, $to, $aggregated, $userId, $notes) {
+        return DB::transaction(function () use ($from, $to, $aggregated, $userId, $notes, $autoReceive) {
             $transfer = KamsStockTransfer::query()->create([
                 'company_id' => $from->company_id,
                 'reference' => 'TR-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
                 'from_depot_id' => $from->id,
                 'to_depot_id' => $to->id,
-                'status' => 'in_transit',
+                'status' => $autoReceive ? 'received' : 'in_transit',
                 'notes' => $notes,
                 'created_by' => $userId,
                 'dispatched_by' => $userId,
                 'transferred_at' => now(),
+                'received_at' => $autoReceive ? now() : null,
+                'received_by' => $autoReceive ? $userId : null,
             ]);
 
             foreach ($aggregated as $productId => $quantity) {
@@ -174,18 +182,43 @@ class StockInventory
                 ]));
                 $cost = $this->unitCost($product);
                 $this->changeBalance($from, $product, -$quantity, 'available');
-                $this->changeBalance($from, $product, $quantity, 'in_transit');
+                if ($autoReceive) {
+                    $this->changeBalance($to, $product, $quantity, 'available');
+                } else {
+                    $this->changeBalance($from, $product, $quantity, 'in_transit');
+                }
                 KamsStockTransferItem::query()->create([
                     'transfer_id' => $transfer->id,
                     'product_id' => $product->id,
                     'quantity' => $quantity,
                     'unit_cost' => $cost,
                 ]);
-                $this->recordMovement($product, $quantity, 'transfer', $userId, $from->id, $to->id, $transfer, null, $notes, 'in_transit', $userId, $cost);
+                // One ledger row per transfer: dispatch+auto-receive used to create transfer + transfer_receive duplicates.
+                $this->recordMovement(
+                    $product,
+                    $quantity,
+                    'transfer',
+                    $userId,
+                    $from->id,
+                    $to->id,
+                    $transfer,
+                    null,
+                    $notes,
+                    $autoReceive ? 'available' : 'in_transit',
+                    $userId,
+                    $cost,
+                );
                 $this->syncProductStock($product);
             }
 
-            return $transfer->load(['fromDepot', 'toDepot.office', 'items.product', 'createdBy:id,name', 'dispatchedBy:id,name']);
+            return $transfer->load([
+                'fromDepot',
+                'toDepot.office',
+                'items.product',
+                'createdBy:id,name',
+                'dispatchedBy:id,name',
+                'receivedBy:id,name',
+            ]);
         });
     }
 
@@ -200,7 +233,7 @@ class StockInventory
             foreach ($transfer->items()->with('product')->get() as $line) {
                 $this->changeBalance($from, $line->product, -$line->quantity, 'in_transit');
                 $this->changeBalance($to, $line->product, $line->quantity, 'available');
-                $this->recordMovement($line->product, $line->quantity, 'transfer_receive', $userId, $from->id, $to->id, $transfer, null, null, 'available', $userId, (float) $line->unit_cost);
+                // Dispatch already recorded a "transfer" row; receiving only updates stock, not a second movement.
                 $this->syncProductStock($line->product);
             }
             $transfer->update([
@@ -257,10 +290,10 @@ class StockInventory
                     'assignment_id' => $assignment->id,
                     'product_id' => $product->id,
                     'quantity_out' => $quantity,
-                    'unit_price' => (float) $product->price,
-                    'unit_cost' => $cost,
+                    'unit_price' => $product->salePrice(),
+                    'unit_cost' => $cost > 0 ? $cost : $product->purchasePrice(),
                 ]);
-                $this->recordMovement($product, $quantity, 'assignment', $userId, $depot->id, $seller->id, $assignment, $member->id, $notes, 'available', $userId, $cost);
+                $this->recordMovement($product, $quantity, 'assignment', $userId, $depot->id, $seller->id, $assignment, $member->id, $notes, 'available', $userId, $cost > 0 ? $cost : $product->purchasePrice());
                 $this->syncProductStock($product);
             }
 
@@ -313,8 +346,8 @@ class StockInventory
                         'assignment_id' => $assignment->id,
                         'product_id' => $product->id,
                         'quantity_out' => $quantity,
-                        'unit_price' => (float) $product->price,
-                        'unit_cost' => $cost,
+                        'unit_price' => $product->salePrice(),
+                        'unit_cost' => $cost > 0 ? $cost : $product->purchasePrice(),
                     ]);
                     $existingByProduct->put($product->id, $created);
                 }
@@ -488,40 +521,41 @@ class StockInventory
             $fieldTotal = 0.0;
             $managerTotal = 0.0;
             $companyTotal = 0.0;
-            $sellerMargin = 0.0;
-            $managerMargin = 0.0;
 
             foreach ($items as $item) {
                 $product = KamsProduct::query()->where('company_id', $member->company_id)->findOrFail($item['product_id']);
                 $quantity = (int) $item['quantity'];
-                $field = isset($item['unit_price']) ? (float) $item['unit_price'] : $product->fieldPrice();
+                $salePrice = isset($item['unit_price']) ? (float) $item['unit_price'] : $product->salePrice();
                 abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
-                $managerPrice = $product->managerPrice();
-                $companyPrice = $product->companyPrice();
-                abort_unless($field >= $managerPrice && $managerPrice >= $companyPrice, 422, __('The three prices must follow field ≥ manager ≥ company.'));
-                $cost = $companyPrice;
+                $purchasePrice = $this->unitCost($product);
+                if ($purchasePrice <= 0) {
+                    $purchasePrice = $product->purchasePrice();
+                }
+                abort_unless(
+                    $salePrice >= $purchasePrice,
+                    422,
+                    __('Sale price must be greater than or equal to purchase price.'),
+                );
                 $this->changeBalance($seller, $product, -$quantity, 'available');
                 KamsStockSaleItem::query()->create([
                     'sale_id' => $sale->id,
                     'product_id' => $product->id,
                     'quantity' => $quantity,
-                    'unit_price' => $field,
-                    'unit_cost' => $cost,
-                    'field_price' => $field,
-                    'manager_price' => $managerPrice,
-                    'company_price' => $companyPrice,
-                    'seller_margin' => $field - $managerPrice,
-                    'manager_margin' => $managerPrice - $companyPrice,
+                    'unit_price' => $salePrice,
+                    'unit_cost' => $purchasePrice,
+                    'field_price' => $salePrice,
+                    'manager_price' => $purchasePrice,
+                    'company_price' => $purchasePrice,
+                    'seller_margin' => 0,
+                    'manager_margin' => 0,
                 ]);
-                $this->recordMovement($product, $quantity, 'sale', $userId, $seller->id, null, $sale, $member->id, $notes, 'available', $userId, $cost);
+                $this->recordMovement($product, $quantity, 'sale', $userId, $seller->id, null, $sale, $member->id, $notes, 'available', $userId, $purchasePrice);
                 $this->syncProductStock($product);
-                $subtotal += $quantity * $field;
-                $costTotal += $quantity * $cost;
-                $fieldTotal += $quantity * $field;
-                $managerTotal += $quantity * $managerPrice;
-                $companyTotal += $quantity * $companyPrice;
-                $sellerMargin += $quantity * ($field - $managerPrice);
-                $managerMargin += $quantity * ($managerPrice - $companyPrice);
+                $subtotal += $quantity * $salePrice;
+                $costTotal += $quantity * $purchasePrice;
+                $fieldTotal += $quantity * $salePrice;
+                $managerTotal += $quantity * $purchasePrice;
+                $companyTotal += $quantity * $purchasePrice;
             }
 
             $sale->update([
@@ -529,8 +563,8 @@ class StockInventory
                 'field_total' => round($fieldTotal, 2),
                 'manager_total' => round($managerTotal, 2),
                 'company_total' => round($companyTotal, 2),
-                'seller_margin' => round($sellerMargin, 2),
-                'manager_margin' => round($managerMargin, 2),
+                'seller_margin' => 0,
+                'manager_margin' => 0,
                 'cost_total' => round($costTotal, 2),
                 'margin' => round($subtotal - $costTotal, 2),
             ]);
@@ -539,8 +573,8 @@ class StockInventory
                 'sale_id' => $sale->id,
                 'member_id' => $member->id,
                 'status' => 'estimated',
-                'estimated_amount' => round($sellerMargin, 2),
-                'adjusted_amount' => round($sellerMargin, 2),
+                'estimated_amount' => 0,
+                'adjusted_amount' => 0,
             ]);
             $fresh = $sale->fresh(['member', 'client', 'items.product', 'commission']);
             app(RevenueShareService::class)->accrue($fresh);
@@ -616,7 +650,7 @@ class StockInventory
                     'product_id' => $product->id,
                     'quantity' => (int) $item['quantity'],
                     'unit_cost' => $this->unitCost($product),
-                    'unit_price' => (float) $product->price,
+                    'unit_price' => $product->salePrice(),
                 ]);
             }
 
@@ -992,9 +1026,12 @@ class StockInventory
     }
 
     /**
+     * Post sales, returns, compensation, and treasury for an agent assignment already closed.
+     * Only invoked from closeDay — never from per-agent close.
+     *
      * @param  list<array{id:int, quantity_returned:int, quantity_lost:int}>  $items
      */
-    public function settle(
+    private function settle(
         KamsStockAssignment $assignment,
         array $items,
         float $collectedAmount,
@@ -1002,11 +1039,11 @@ class StockInventory
         ?int $userId = null,
         bool $depositSurplus = false,
     ): KamsStockAssignment {
-        abort_unless(in_array($assignment->status, ['open', 'closed'], true), 422, __('This assignment is already settled.'));
+        abort_unless($assignment->status === 'closed', 422, __('Close the agent first, then close the day to post sales and compensation.'));
 
         return DB::transaction(function () use ($assignment, $items, $collectedAmount, $notes, $userId, $depositSurplus) {
             $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
-            abort_unless(in_array($assignment->status, ['open', 'closed'], true), 422, __('This assignment is already settled.'));
+            abort_unless($assignment->status === 'closed', 422, __('Close the agent first, then close the day to post sales and compensation.'));
             $assignment->load(['items.product', 'member']);
             $member = $assignment->member;
             $byId = collect($items)->keyBy('id');
@@ -1158,8 +1195,16 @@ class StockInventory
     private function unitCost(KamsProduct $product): float
     {
         $avg = (float) $product->avg_cost;
+        if ($avg > 0) {
+            return $avg;
+        }
 
-        return $avg > 0 ? $avg : (float) $product->cost;
+        $cost = (float) $product->cost;
+        if ($cost > 0) {
+            return $cost;
+        }
+
+        return $product->purchasePrice();
     }
 
     private function changeBalance(KamsDepot $location, KamsProduct $product, int $delta, string $condition = 'available'): void

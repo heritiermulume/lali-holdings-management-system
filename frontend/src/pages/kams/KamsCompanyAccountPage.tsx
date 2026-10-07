@@ -289,13 +289,13 @@ export function KamsCompanyAccountPage() {
       {data ? (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            {data.can_deposit ? (
+            {data.can_deposit && hasPermission('kams.finance.company.deposit') ? (
               <Button onClick={() => openAction('deposit')}>{t('kams.makeDeposit')}</Button>
             ) : null}
-            {data.can_withdraw ? (
+            {data.can_withdraw && hasPermission('kams.finance.company.withdraw') ? (
               <Button variant="secondary" disabled={(data.balance ?? 0) <= 0.001} onClick={() => openAction('withdraw')}>{t('kams.makeWithdrawal')}</Button>
             ) : null}
-            {data.can_expense ? (
+            {data.can_expense && hasPermission('kams.finance.company.expense') ? (
               <Button variant="accent" disabled={(data.balance ?? 0) <= 0.001} onClick={() => openAction('expense')}>{t('kams.ledger.expense')}</Button>
             ) : null}
             <div className="ml-auto">
@@ -317,7 +317,7 @@ export function KamsCompanyAccountPage() {
             title={t('kams.transactionsFor', { holder: data.account.is_central ? 'KAMS' : (data.account.office?.name || data.account.name) })}
             subtitle={data.account.name}
             entries={data.entries}
-            onDecide={data.can_decide ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
+            onDecide={data.can_decide && hasPermission('kams.finance.company.approve') ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
             onRowsChange={(count) => setHasPrintableRows(count > 0)}
           />
         </>

@@ -3,6 +3,7 @@
 namespace App\Modules\Kams\Services;
 
 use App\Models\Office;
+use App\Modules\Kams\Models\KamsAsset;
 use App\Modules\Kams\Models\KamsSavingsAccount;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockBalance;
@@ -25,7 +26,8 @@ class KamsFinanceService
      *     assets: float,
      *     liabilities: float,
      *     receivables: float,
-     *     payables: float
+     *     payables: float,
+     *     patrimoine_value: float
      * }
      */
     public function summarize(?int $companyId = null, ?string $from = null, ?string $to = null, array $officeIds = []): array
@@ -40,6 +42,7 @@ class KamsFinanceService
             ->value('value'), 2);
         $cash = $this->cash($companyId, $officeIds);
         $inventory = $this->inventoryValue($companyId, $officeIds);
+        $patrimoine = $this->patrimoineValue($companyId, $officeIds);
         $payables = $this->payables($companyId, $officeIds);
         $savings = $this->savings($companyId, $officeIds);
 
@@ -48,10 +51,11 @@ class KamsFinanceService
             'expenses' => $expenses,
             'profit' => $margin,
             'cash' => $cash,
-            'assets' => round($inventory + $cash + max(0, $receivables), 2),
+            'assets' => round($inventory + $cash + max(0, $receivables) + $patrimoine, 2),
             'liabilities' => round($savings + $payables, 2),
             'receivables' => max(0, $receivables),
             'payables' => $payables,
+            'patrimoine_value' => $patrimoine,
         ];
     }
 
@@ -337,6 +341,19 @@ class KamsFinanceService
             ->when($officeIds !== [], fn ($query) => $query->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
             ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
             ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
+            ->value('value'), 2);
+    }
+
+    /**
+     * @param  list<int>  $officeIds
+     */
+    public function patrimoineValue(?int $companyId, array $officeIds = []): float
+    {
+        return round((float) KamsAsset::query()
+            ->where('status', 'active')
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($query) => $query->whereIn('office_id', $officeIds))
+            ->selectRaw('COALESCE(SUM(quantity * unit_value), 0) as value')
             ->value('value'), 2);
     }
 

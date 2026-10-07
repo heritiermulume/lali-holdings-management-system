@@ -20,6 +20,7 @@ import type { SystemModule } from '../../types'
 import {
   buildPermissionTree,
   collectPermissions,
+  filterTreeByGates,
   filterTreeByQuery,
   isPermissionEnabled,
   isPermissionGatedOff,
@@ -51,8 +52,11 @@ function moduleTitle(module: SystemModule | undefined, slug: string, localeFr: b
 }
 
 function sectionStats(section: PermissionSection, permissionIds: number[], allVisible: Permission[]) {
-  const total = section.permissions.length
-  const enabled = section.permissions.filter((permission) => isPermissionEnabled(permissionIds, permission, allVisible)).length
+  const visible = section.permissions.filter(
+    (permission) => !isPermissionGatedOff(permissionIds, permission, allVisible),
+  )
+  const total = visible.length
+  const enabled = visible.filter((permission) => isPermissionEnabled(permissionIds, permission, allVisible)).length
   return { total, enabled, all: total > 0 && enabled === total, some: enabled > 0 && enabled < total }
 }
 
@@ -123,7 +127,7 @@ export function RolesSettingsPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [permissionIds, setPermissionIds] = useState<number[]>([])
   const [openModules, setOpenModules] = useState<string[]>(['system', 'kams'])
-  const [openSections, setOpenSections] = useState<string[]>(['administration', 'kams', 'platform'])
+  const [openSections, setOpenSections] = useState<string[]>(['platform', 'administration', 'kams'])
   const [query, setQuery] = useState('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -179,7 +183,7 @@ export function RolesSettingsPage() {
       group === 'administration'
       || group === moduleSlug
       || (hasAreas ? group.startsWith(`${moduleSlug}.`) : false)
-      || ['notifications', 'reports', 'finance', 'modules', 'files'].includes(group)
+      || ['notifications'].includes(group)
     ))
 
     return Object.fromEntries(entries)
@@ -207,15 +211,15 @@ export function RolesSettingsPage() {
     [permissionTree],
   )
 
-  const visibleTree = useMemo(
-    () => filterTreeByQuery(
+  const visibleTree = useMemo(() => {
+    const searched = filterTreeByQuery(
       permissionTree,
       query,
       (permission) => permissionLabel(t, permission),
       (node) => t(node.labelKey, { defaultValue: node.labelDefault }),
-    ),
-    [permissionTree, query, t],
-  )
+    )
+    return filterTreeByGates(searched, permissionIds, allVisiblePermissions)
+  }, [permissionTree, query, t, permissionIds, allVisiblePermissions])
 
   const dirty = useMemo(() => {
     if (!selected) return false
@@ -301,20 +305,17 @@ export function RolesSettingsPage() {
 
   const renderNode = (node: PermissionNode, depth = 0): ReactNode => {
     if (node.kind === 'leaf') {
-      const gatedOff = isPermissionGatedOff(permissionIds, node.permission, allVisiblePermissions)
       const checked = isPermissionEnabled(permissionIds, node.permission, allVisiblePermissions)
       return (
         <label
           key={node.key}
           className={cn(
-            'flex min-h-10 items-center gap-3 rounded-xl px-3 py-1.5 text-sm transition',
-            gatedOff ? 'text-muted' : 'hover:bg-lhms/5',
+            'flex min-h-10 items-center gap-3 rounded-xl px-3 py-1.5 text-sm transition hover:bg-lhms/5',
             node.indent && 'ml-4',
           )}
         >
           <PermissionToggle
             checked={checked}
-            disabled={gatedOff}
             onChange={() => togglePermission(node.permission)}
           />
           <span className="min-w-0 flex-1 leading-snug">{permissionLabel(t, node.permission)}</span>
@@ -336,10 +337,15 @@ export function RolesSettingsPage() {
         className={cn(
           isRoot
             ? 'overflow-hidden rounded-2xl border border-line bg-white'
-            : 'rounded-xl border border-line/80 bg-surface/40',
+            : 'overflow-hidden rounded-xl border border-line/80 bg-white',
         )}
       >
-        <div className={cn('flex items-center gap-2 px-3', isRoot ? 'bg-lhms/[0.04] py-3' : 'py-2.5')}>
+        <div
+          className={cn(
+            'flex items-center gap-2 border-b border-line/60 px-3',
+            isRoot ? 'bg-lhms/[0.08] py-3' : 'bg-surface py-2.5',
+          )}
+        >
           <SectionCheckbox
             all={stats.all}
             some={stats.some}
@@ -377,7 +383,7 @@ export function RolesSettingsPage() {
           </button>
         </div>
         {open ? (
-          <div className={cn('space-y-2', isRoot ? 'p-3 pt-0' : 'px-2 pb-2')}>
+          <div className={cn('space-y-2', isRoot ? 'p-3' : 'px-2 pb-2 pt-2')}>
             {node.children.map((child) => renderNode(child, depth + 1))}
           </div>
         ) : null}

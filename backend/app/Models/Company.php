@@ -42,11 +42,6 @@ class Company extends Model
         return $this->hasMany(Office::class);
     }
 
-    public function departments(): HasMany
-    {
-        return $this->hasMany(Department::class);
-    }
-
     public function activities(): HasMany
     {
         return $this->hasMany(Activity::class);
@@ -57,10 +52,5 @@ class Company extends Model
         return $this->belongsToMany(SystemModule::class, 'company_module')
             ->withPivot(['is_enabled', 'settings'])
             ->withTimestamps();
-    }
-
-    public function financialSnapshots(): HasMany
-    {
-        return $this->hasMany(FinancialSnapshot::class);
     }
 }

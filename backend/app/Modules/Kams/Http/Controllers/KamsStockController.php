@@ -70,7 +70,7 @@ class KamsStockController extends Controller
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
                 ->where('status', 'active')
                 ->orderBy('name')
-                ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'stock', 'image_path', 'description']),
+                ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'stock', 'image_path']),
             'clients' => KamsClient::query()
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
                 ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
@@ -244,17 +244,26 @@ class KamsStockController extends Controller
         $from = KamsDepot::query()->findOrFail($data['from_depot_id']);
         $to = KamsDepot::query()->findOrFail($data['to_depot_id']);
         $this->assertCompany($request, (int) $from->company_id);
-        if ($to->office_id) {
+        abort_unless(in_array($to->kind, ['depot', 'warehouse'], true), 422, __('Transfers must arrive in a warehouse or office depot.'));
+        if ($to->kind === 'warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+        } elseif ($to->office_id) {
             abort_unless($request->user()->canAccessOffice((int) $to->office_id), 403);
         }
-        $transfer = $this->inventory->transfer($from, $to, $data['items'], $request->user()->id, $data['notes'] ?? null);
-        StockJournal::record('create', $transfer, [], $data);
-
         $autoReceive = array_key_exists('auto_receive', $data) ? (bool) $data['auto_receive'] : true;
-        if ($autoReceive && $transfer->status === 'in_transit') {
-            $transfer = $this->inventory->receiveTransfer($transfer, $request->user()->id);
-            StockJournal::record('update', $transfer, [], ['status' => 'received', 'auto_receive' => true]);
-        }
+        $transfer = $this->inventory->transfer(
+            $from,
+            $to,
+            $data['items'],
+            $request->user()->id,
+            $data['notes'] ?? null,
+            $autoReceive,
+        );
+        StockJournal::record('create', $transfer, [], [
+            ...$data,
+            'auto_receive' => $autoReceive,
+            'status' => $transfer->status,
+        ]);
 
         return $this->created($transfer);
     }
@@ -611,51 +620,24 @@ class KamsStockController extends Controller
         $posted = $this->inventory->closeDay($companyId, $officeId, $request->user()->id, $request->user()->isOfficeScoped() ? ($request->user()->accessibleOfficeIds() ?: [0]) : null);
         foreach ($posted as $settled) {
             StockJournal::record('update', $settled, ['status' => 'closed'], ['status' => 'settled']);
+            if ($settled->getAttribute('surplus_entry')) {
+                $entryId = data_get($settled->getAttribute('surplus_entry'), 'id');
+                if ($entryId) {
+                    $entry = KamsSavingsEntry::query()->find($entryId);
+                    if ($entry) {
+                        StockJournal::record('create', $entry, [], [
+                            'reason' => 'day_closing_surplus',
+                            'assignment_id' => $settled->id,
+                            'amount' => $settled->getAttribute('surplus_deposited'),
+                        ]);
+                    }
+                }
+            }
         }
 
         return $this->ok([
             'settled_count' => count($posted),
         ]);
-    }
-
-    public function settleAssignment(Request $request, KamsStockAssignment $assignment): JsonResponse
-    {
-        $this->assertCompany($request, (int) $assignment->company_id);
-        abort_unless($request->user()->canAccessOffice((int) $assignment->office_id), 403);
-        $data = $request->validate([
-            'collected_amount' => ['required', 'numeric', 'min:0'],
-            'deposit_surplus' => ['sometimes', 'boolean'],
-            'notes' => ['nullable', 'string'],
-            'items' => ['required', 'array', 'min:1'],
-            'items.*.id' => ['required', 'exists:kams_stock_assignment_items,id'],
-            'items.*.quantity_returned' => ['required', 'integer', 'min:0'],
-            'items.*.quantity_lost' => ['required', 'integer', 'min:0'],
-        ]);
-        $before = $this->assignmentAuditSnapshot($assignment, true);
-        $settled = $this->inventory->settle(
-            $assignment,
-            $data['items'],
-            (float) $data['collected_amount'],
-            $data['notes'] ?? null,
-            $request->user()->id,
-            (bool) ($data['deposit_surplus'] ?? false),
-        );
-        StockJournal::record('update', $settled, $before, $data);
-        if ($settled->getAttribute('surplus_entry')) {
-            $entryId = data_get($settled->getAttribute('surplus_entry'), 'id');
-            if ($entryId) {
-                $entry = KamsSavingsEntry::query()->find($entryId);
-                if ($entry) {
-                    StockJournal::record('create', $entry, [], [
-                        'reason' => 'day_closing_surplus',
-                        'assignment_id' => $settled->id,
-                        'amount' => $settled->getAttribute('surplus_deposited'),
-                    ]);
-                }
-            }
-        }
-
-        return $this->ok($settled);
     }
 
     public function sales(Request $request): JsonResponse

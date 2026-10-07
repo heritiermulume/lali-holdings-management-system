@@ -36,8 +36,6 @@ const PRINT_STYLES = `
     --surface: #f4f7f5;
   }
   * { box-sizing: border-box; }
-  @page { margin: 12mm 12mm 14mm; }
-  @page landscape { size: A4 landscape; }
   html, body {
     margin: 0;
     padding: 0;
@@ -65,11 +63,20 @@ const PRINT_STYLES = `
   .mark {
     display: grid;
     place-items: center;
-    width: 44px;
-    height: 44px;
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
+    padding: 4px;
     border-radius: 12px;
-    background: rgba(255,255,255,0.12);
+    background: var(--lhms);
     border: 1px solid rgba(255,255,255,0.18);
+    overflow: hidden;
+  }
+  .mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
   }
   .eyebrow {
     margin: 0;
@@ -177,9 +184,10 @@ const PRINT_STYLES = `
   }
 `
 
-const MARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-  <path d="M18 18h8v28h-8V18zm12 0h16c6 0 10 4 10 10s-4 10-10 10H38v8h-8V18zm8 8v6h6c2 0 4-1.4 4-3s-2-3-4-3h-6z" fill="#FFFFFF"/>
-</svg>`
+function printLogoSrc() {
+  if (typeof window === 'undefined') return '/lali_holdings_logo.png'
+  return `${window.location.origin}/lali_holdings_logo.png`
+}
 
 type BrandedDocumentOptions = {
   title: string
@@ -200,13 +208,17 @@ export function buildBrandedDocumentHtml(options: BrandedDocumentOptions) {
   )).join('')
   const generated = new Date().toLocaleString()
   const brand = escapeHtml(groupName() || 'LHMS')
-  const pageCss = options.orientation === 'landscape' ? '@page { size: A4 landscape; margin: 10mm 12mm 12mm; }' : ''
+  const logoSrc = escapeHtml(printLogoSrc())
+  // Single @page rule (browsers often ignore a later override when printing from iframes).
+  const pageCss = options.orientation === 'landscape'
+    ? '@page { size: A4 landscape; margin: 10mm 12mm 12mm; }'
+    : '@page { size: A4 portrait; margin: 12mm 12mm 14mm; }'
 
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${title} — LHMS</title>
+  <title>${title} · LHMS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -216,7 +228,7 @@ export function buildBrandedDocumentHtml(options: BrandedDocumentOptions) {
   <div class="sheet">
     <header class="hero">
       <div class="brand">
-        <div class="mark">${MARK_SVG}</div>
+        <div class="mark"><img src="${logoSrc}" alt="${brand}" /></div>
         <div>
           <p class="eyebrow">${brand}</p>
           <p class="brand-title">LHMS</p>
@@ -238,7 +250,7 @@ export function buildBrandedDocumentHtml(options: BrandedDocumentOptions) {
       ${options.body}
       <footer class="foot">
         <span>${brand}</span>
-        <span>${escapeHtml(options.footerNote || 'Document interne — usage confidentiel')}</span>
+        <span>${escapeHtml(options.footerNote || 'Document interne · usage confidentiel')}</span>
       </footer>
     </main>
   </div>
@@ -247,9 +259,21 @@ export function buildBrandedDocumentHtml(options: BrandedDocumentOptions) {
 }
 
 export function printHtml(html: string) {
+  // Zero-size iframes make Chromium/Safari ignore @page landscape; keep a real off-screen box.
   const iframe = document.createElement('iframe')
   iframe.setAttribute('aria-hidden', 'true')
-  Object.assign(iframe.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' })
+  iframe.setAttribute('title', 'print')
+  Object.assign(iframe.style, {
+    position: 'fixed',
+    top: '0',
+    left: '0',
+    width: '297mm',
+    height: '210mm',
+    border: '0',
+    opacity: '0',
+    pointerEvents: 'none',
+    zIndex: '-1',
+  })
   document.body.appendChild(iframe)
   const doc = iframe.contentDocument
   if (!doc || !iframe.contentWindow) {
@@ -260,11 +284,28 @@ export function printHtml(html: string) {
   doc.write(html)
   doc.close()
   const frame = iframe.contentWindow
-  window.setTimeout(() => {
-    frame?.focus()
-    frame?.print()
-    window.setTimeout(() => iframe.remove(), 2000)
-  }, 400)
+  const cleanup = () => {
+    iframe.remove()
+    frame?.removeEventListener?.('afterprint', cleanup)
+  }
+  frame.addEventListener?.('afterprint', cleanup)
+  const waitForImages = Promise.all(
+    Array.from(doc.images).map((img) => (
+      img.complete
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+          img.onload = () => resolve()
+          img.onerror = () => resolve()
+        })
+    )),
+  )
+  void waitForImages.then(() => {
+    window.setTimeout(() => {
+      frame.focus()
+      frame.print()
+      window.setTimeout(cleanup, 60_000)
+    }, 100)
+  })
 }
 
 export function printBrandedDocument(options: BrandedDocumentOptions) {
@@ -331,7 +372,7 @@ export function buildServiceCardHtml(options: ServiceCardOptions) {
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${fullName} — Carte de service</title>
+  <title>${fullName} · Carte de service</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />

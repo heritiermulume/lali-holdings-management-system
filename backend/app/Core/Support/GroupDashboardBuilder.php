@@ -72,9 +72,11 @@ class GroupDashboardBuilder
             ? [$officeId]
             : $scopedOfficeIds;
 
-        $canSeeFinance = $user->hasPermission('finance.view') || $user->hasPermission('administration.view');
-        $canSeeKams = $canSeeFinance || $user->hasPermission('kams.finance.dashboard.view');
-        $canSeeRecruitment = $user->hasPermission('kams.recruitment.view')
+        $canSeeFinance = $user->hasPermission('administration.view')
+            || $user->hasPermission('kams.finance.dashboard.view');
+        $canSeeKams = $canSeeFinance;
+        $canSeeRecruitment = $user->hasPermission('kams.recruitment.applications.view')
+            || $user->hasPermission('kams.recruitment.reports.view')
             || $user->hasPermission('kams.dashboard.recruitment.view')
             || $user->hasPermission('administration.view');
 
@@ -272,6 +274,7 @@ class GroupDashboardBuilder
             'liabilities' => 0.0,
             'receivables' => 0.0,
             'payables' => 0.0,
+            'patrimoine_value' => 0.0,
         ];
 
         foreach ($companies as $company) {
@@ -417,6 +420,7 @@ class GroupDashboardBuilder
             'guy_savings' => 0.0,
             'assistant_manager_savings' => 0.0,
             'manager_savings' => 0.0,
+            'divisionnaire_savings' => 0.0,
         ];
 
         foreach ($companies as $company) {
@@ -428,6 +432,7 @@ class GroupDashboardBuilder
                 'guy_savings' => (float) (clone $query)->where('kind', 'guy')->sum('balance'),
                 'assistant_manager_savings' => (float) (clone $query)->where('kind', 'assistant_manager')->sum('balance'),
                 'manager_savings' => (float) (clone $query)->where('kind', 'manager')->sum('balance'),
+                'divisionnaire_savings' => (float) (clone $query)->where('kind', 'divisionnaire')->sum('balance'),
             ];
             $converted = $this->fx->convertBag($row, $fromCurrency, $currency);
             foreach ($totals as $key => $value) {

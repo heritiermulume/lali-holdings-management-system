@@ -10,7 +10,6 @@ use App\Models\City;
 use App\Models\Commune;
 use App\Models\Company;
 use App\Models\Country;
-use App\Models\Department;
 use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Permission;
@@ -20,7 +19,6 @@ use App\Models\Setting;
 use App\Models\SystemModule;
 use App\Models\Task;
 use App\Models\User;
-use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsDepot;
@@ -61,7 +59,6 @@ class DatabaseSeeder extends Seeder
     {
         $permissions = collect(PermissionCatalog::core())
             ->concat(PermissionCatalog::forKams())
-            ->concat(PermissionCatalog::forModule('kams'))
             ->concat(PermissionCatalog::forModule('heavy-equipment'))
             ->concat(PermissionCatalog::forModule('real-estate'))
             ->concat(PermissionCatalog::forModule('rice-mills'))
@@ -395,15 +392,6 @@ class DatabaseSeeder extends Seeder
             'address' => 'Gombe, Kinshasa',
         ]);
 
-        Department::query()->updateOrCreate(['company_id' => $holdings->id, 'code' => 'FIN'], [
-            'office_id' => $hq->id,
-            'name' => 'Finance',
-        ]);
-        Department::query()->updateOrCreate(['company_id' => $king->id, 'code' => 'COM'], [
-            'office_id' => $gomaOffice->id,
-            'name' => 'Commercial',
-        ]);
-
         Activity::query()->updateOrCreate(['company_id' => $king->id, 'name' => 'Retail fashion']);
         Activity::query()->updateOrCreate(['company_id' => $rice->id, 'name' => 'Rice milling']);
 
@@ -542,14 +530,14 @@ class DatabaseSeeder extends Seeder
         );
 
         $products = collect([
-            ['sku' => 'KA-TEE-01', 'name' => 'King Attitude Tee', 'category' => 'Apparel', 'collection' => 'Core', 'price' => 35, 'field_price' => 35, 'manager_price' => 28, 'company_price' => 21, 'cost' => 21, 'stock' => 180],
-            ['sku' => 'KA-HD-02', 'name' => 'Crown Hoodie', 'category' => 'Apparel', 'collection' => 'Essentials', 'price' => 72, 'field_price' => 72, 'manager_price' => 58, 'company_price' => 43, 'cost' => 43, 'stock' => 90],
-            ['sku' => 'KA-CAP-03', 'name' => 'Signature Cap', 'category' => 'Accessories', 'collection' => 'Core', 'price' => 28, 'field_price' => 28, 'manager_price' => 22, 'company_price' => 17, 'cost' => 17, 'stock' => 140],
-            ['sku' => 'KA-BAG-04', 'name' => 'Attitude Tote', 'category' => 'Accessories', 'collection' => 'Limited', 'price' => 46, 'field_price' => 46, 'manager_price' => 37, 'company_price' => 28, 'cost' => 28, 'stock' => 60],
-            ['sku' => 'KA-DI-05', 'name' => 'DI', 'category' => 'Core', 'collection' => 'Daily', 'price' => 7500, 'field_price' => 7500, 'manager_price' => 6000, 'company_price' => 4500, 'cost' => 4500, 'stock' => 0],
+            ['sku' => 'KA-TEE-01', 'name' => 'King Attitude Tee', 'category' => 'Apparel', 'collection' => 'Core', 'price' => 35, 'field_price' => 35, 'manager_price' => 21, 'company_price' => 21, 'cost' => 21],
+            ['sku' => 'KA-HD-02', 'name' => 'Crown Hoodie', 'category' => 'Apparel', 'collection' => 'Essentials', 'price' => 72, 'field_price' => 72, 'manager_price' => 43, 'company_price' => 43, 'cost' => 43],
+            ['sku' => 'KA-CAP-03', 'name' => 'Signature Cap', 'category' => 'Accessories', 'collection' => 'Core', 'price' => 28, 'field_price' => 28, 'manager_price' => 17, 'company_price' => 17, 'cost' => 17],
+            ['sku' => 'KA-BAG-04', 'name' => 'Attitude Tote', 'category' => 'Accessories', 'collection' => 'Limited', 'price' => 46, 'field_price' => 46, 'manager_price' => 28, 'company_price' => 28, 'cost' => 28],
+            ['sku' => 'KA-DI-05', 'name' => 'DI', 'category' => 'Core', 'collection' => 'Daily', 'price' => 7500, 'field_price' => 7500, 'manager_price' => 4500, 'company_price' => 4500, 'cost' => 4500],
         ])->map(fn ($product) => KamsProduct::query()->updateOrCreate(
             ['company_id' => $company->id, 'sku' => $product['sku']],
-            $product + ['status' => 'active']
+            $product + ['status' => 'active', 'stock' => 0, 'avg_cost' => $product['cost']]
         ));
 
         if (! KamsOrder::query()->where('company_id', $company->id)->exists()) {
@@ -583,18 +571,6 @@ class DatabaseSeeder extends Seeder
                 'ordered_at' => now()->subDays(12),
             ]);
         }
-
-        KamsCampaign::query()->updateOrCreate(
-            ['company_id' => $company->id, 'name' => 'Autumn Attitude'],
-            [
-                'channel' => 'social',
-                'status' => 'active',
-                'budget' => 1800,
-                'starts_on' => now()->subDays(10),
-                'ends_on' => now()->addDays(20),
-                'description' => 'Launch campaign for the new collection.',
-            ]
-        );
     }
 
     private function seedKamsRecruitment(Company $company): void
@@ -709,27 +685,51 @@ class DatabaseSeeder extends Seeder
             $legacy->delete();
         }
 
+        $warehouses = KamsDepot::query()
+            ->where('company_id', $company->id)
+            ->where('kind', 'warehouse')
+            ->get();
+        $adminId = User::query()->orderBy('id')->value('id');
+
+        // Initial warehouse stock lives in balances (not the denormalized products.stock column).
+        $initialWarehouseStock = [
+            'KA-TEE-01' => 180,
+            'KA-HD-02' => 90,
+            'KA-CAP-03' => 140,
+            'KA-BAG-04' => 60,
+            'KA-DI-05' => 0,
+        ];
+        foreach ($initialWarehouseStock as $sku => $qty) {
+            $seedProduct = KamsProduct::query()->where('company_id', $company->id)->where('sku', $sku)->first();
+            if (! $seedProduct) {
+                continue;
+            }
+            foreach ($warehouses as $warehouse) {
+                KamsStockBalance::query()->firstOrCreate(
+                    ['depot_id' => $warehouse->id, 'product_id' => $seedProduct->id, 'condition' => 'available'],
+                    ['company_id' => $company->id, 'quantity' => 0]
+                );
+            }
+            $onHand = (int) KamsStockBalance::query()->where('product_id', $seedProduct->id)->sum('quantity');
+            if ($qty > $onHand && $adminId) {
+                $inventory->receive($northWarehouse, $seedProduct, $qty - $onHand, (int) $adminId, 'Stock initial entrepôt');
+            }
+        }
+
         $product = KamsProduct::query()->where('company_id', $company->id)->where('sku', 'KA-TEE-01')->first();
         $hoodie = KamsProduct::query()->where('company_id', $company->id)->where('sku', 'KA-HD-02')->first();
         $gomaDepot = $gomaOffice ? $inventory->officeDepot($gomaOffice) : null;
         $kinDepot = $kinOffice ? $inventory->officeDepot($kinOffice) : null;
 
-        $adminId = User::query()->orderBy('id')->value('id');
         if (! KamsStockTransfer::query()->where('company_id', $company->id)->exists() && $product && $gomaDepot && $inventory->quantityAt($northWarehouse, $product) >= 60) {
-            $gomaTransfer = $inventory->transfer($northWarehouse, $gomaDepot, [
+            $inventory->transfer($northWarehouse, $gomaDepot, [
                 ['product_id' => $product->id, 'quantity' => 40],
                 ...($hoodie && $inventory->quantityAt($northWarehouse, $hoodie) >= 20 ? [['product_id' => $hoodie->id, 'quantity' => 20]] : []),
-            ], $adminId, 'Réapprovisionnement bureau Goma');
-            if ($adminId) {
-                $inventory->receiveTransfer($gomaTransfer, (int) $adminId);
-            }
+            ], $adminId, 'Réapprovisionnement bureau Goma', true);
             if ($kinDepot && $inventory->quantityAt($northWarehouse, $product) >= 20) {
-                $kinTransfer = $inventory->transfer($northWarehouse, $kinDepot, [
+                $inventory->transfer($northWarehouse, $kinDepot, [
                     ['product_id' => $product->id, 'quantity' => 20],
-                ], $adminId, 'Réapprovisionnement bureau Kinshasa');
-                if ($adminId) {
-                    $inventory->receiveTransfer($kinTransfer, (int) $adminId);
-                }
+                ], $adminId, 'Réapprovisionnement bureau Kinshasa', true);
             }
         }
 

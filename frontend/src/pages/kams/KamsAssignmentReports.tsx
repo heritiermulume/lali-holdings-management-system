@@ -1,10 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useOutletContext, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronLeft, ChevronRight, Info, Package } from 'lucide-react'
+import { ChevronDown, Info, Package } from 'lucide-react'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
+import { PaginationButtons } from '../../components/PaginationButtons'
 import { Badge, Card, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { money } from '../../lib/format'
@@ -171,6 +173,7 @@ function sortAssignments(rows: Assignment[], sort: DaySort) {
 
 export function KamsAssignmentReports() {
   const { t, i18n } = useTranslation()
+  const { hasPermission } = useAuth()
   const { date: reportDate } = useParams()
   const detailDate = reportDate && /^\d{4}-\d{2}-\d{2}$/.test(reportDate) ? reportDate : ''
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
@@ -400,7 +403,9 @@ export function KamsAssignmentReports() {
   if (loading && !data) return <LoadingScreen />
 
   const totals = data?.totals
-  const canPrint = Boolean(data && (data.days || []).length > 0)
+  const hasPrintableRows = Boolean(data && (data.days || []).length > 0)
+  const canPrint = hasPermission('kams.stock.reports.print') && hasPrintableRows
+  const canPreview = hasPermission('kams.stock.reports.preview') && hasPrintableRows
   const lines = (data?.days || []).flatMap((day) => (day.assignments || []).map((assignment) => ({ date: day.date, assignment })))
   const lastPage = Math.max(1, Math.ceil(lines.length / perPage) || 1)
   const safePage = Math.min(page, lastPage)
@@ -437,7 +442,7 @@ export function KamsAssignmentReports() {
               </button>
               <KamsTransactionsPrintMenu
                 buttonClassName="px-2.5 sm:px-4"
-                canPreview={canPrint}
+                canPreview={canPreview}
                 canPrint={canPrint}
                 disabled={!days.length}
                 onPreview={() => data && previewDays(data.days.map(sortedDay), allTitle, allSubtitle, true)}
@@ -537,13 +542,12 @@ export function KamsAssignmentReports() {
                   {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
                 </select>
               </label>
-              <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safeDayPage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safeDayPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-                <ChevronLeft size={16} /> {t('common.prev')}
-              </button>
-              <span className="px-1 text-sm font-semibold">{safeDayPage} / {dayLastPage}</span>
-              <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safeDayPage >= dayLastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safeDayPage >= dayLastPage} onClick={() => setPage((value) => Math.min(dayLastPage, value + 1))}>
-                {t('common.next')} <ChevronRight size={16} />
-              </button>
+              <PaginationButtons
+                page={safeDayPage}
+                lastPage={dayLastPage}
+                onPrev={() => setPage((value) => Math.max(1, value - 1))}
+                onNext={() => setPage((value) => Math.min(dayLastPage, value + 1))}
+              />
             </div>
           </div>
         </div>
@@ -573,7 +577,7 @@ export function KamsAssignmentReports() {
           <div className="flex shrink-0 items-center justify-end gap-1.5">
             <KamsTransactionsPrintMenu
               buttonClassName="px-2.5 sm:px-4"
-              canPreview={canPrint}
+              canPreview={canPreview}
               canPrint={canPrint}
               disabled={!data?.days?.length}
               onPreview={() => data && previewDays(data.days.map(sortedDay), allTitle, allSubtitle)}
@@ -714,25 +718,12 @@ export function KamsAssignmentReports() {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
-              disabled={safePage <= 1}
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-            >
-              <ChevronLeft size={16} />
-              {t('common.prev')}
-            </button>
-            <span className="px-1 text-sm font-semibold">{safePage} / {lastPage}</span>
-            <button
-              type="button"
-              className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
-              disabled={safePage >= lastPage}
-              onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
-            >
-              {t('common.next')}
-              <ChevronRight size={16} />
-            </button>
+            <PaginationButtons
+              page={safePage}
+              lastPage={lastPage}
+              onPrev={() => setPage((value) => Math.max(1, value - 1))}
+              onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+            />
           </div>
         </div>
       </div>

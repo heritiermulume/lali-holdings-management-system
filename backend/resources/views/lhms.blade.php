@@ -2,10 +2,11 @@
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png?v=3" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3" />
-    <link rel="shortcut icon" href="/favicon.png?v=3" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3" />
+    <link rel="icon" href="/favicon.ico?v=4" sizes="any" />
+    <link rel="icon" type="image/png" href="/favicon.png?v=4" sizes="64x64" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
+    <link rel="shortcut icon" href="/favicon.ico?v=4" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#043711" />
     <title>LHMS — LALI Holdings Management System</title>
@@ -19,6 +20,13 @@
   <body>
     <div id="root"></div>
     @if ($useVite)
+      <script type="module">
+        import RefreshRuntime from '{{ $devServer }}/@react-refresh'
+        RefreshRuntime.injectIntoGlobalHook(window)
+        window.$RefreshReg$ = () => {}
+        window.$RefreshSig$ = () => (type) => type
+        window.__vite_plugin_react_preamble_installed__ = true
+      </script>
       <script type="module" src="{{ $devServer }}/@@vite/client"></script>
       <script type="module" src="{{ $devServer }}/src/main.tsx"></script>
     @elseif (! empty($assets['js']))

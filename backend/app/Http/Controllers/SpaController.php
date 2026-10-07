@@ -11,12 +11,14 @@ class SpaController extends Controller
     {
         $devServer = rtrim((string) env('FRONTEND_DEV_SERVER', 'http://127.0.0.1:5173'), '/');
         $assets = $this->builtAssets();
-        $useVite = empty($assets['js']) && $this->shouldUseVite($devServer);
+        // Prefer the Vite HMR server in local so frontend edits appear live
+        // without rebuilding, even when a production build already exists.
+        $useVite = $this->shouldUseVite($devServer);
 
         return view('lhms', [
             'useVite' => $useVite,
             'devServer' => $devServer,
-            'assets' => $assets,
+            'assets' => $useVite ? ['js' => null, 'css' => []] : $assets,
         ]);
     }
 

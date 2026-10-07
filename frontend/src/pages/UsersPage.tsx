@@ -1,7 +1,8 @@
-import { Camera, ChevronLeft, ChevronRight, Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserRound, Users as UsersIcon, VenusAndMars } from 'lucide-react'
+import { Camera, Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserRound, Users as UsersIcon, VenusAndMars } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
+import { PaginationButtons } from '../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal, Select } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
@@ -834,23 +835,13 @@ export function UsersPage() {
                     ))}
                   </select>
                 </label>
-                <button
-                  type="button"
-                  className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
-                  disabled={safePage <= 1 || loading}
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                >
-                  <ChevronLeft size={16} /> {t('common.prev')}
-                </button>
-                <span className="px-1 text-sm font-semibold">{safePage} / {lastPage}</span>
-                <button
-                  type="button"
-                  className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')}
-                  disabled={safePage >= lastPage || loading}
-                  onClick={() => setPage((value) => Math.min(lastPage, value + 1))}
-                >
-                  {t('common.next')} <ChevronRight size={16} />
-                </button>
+                <PaginationButtons
+                  page={safePage}
+                  lastPage={lastPage}
+                  disabled={loading}
+                  onPrev={() => setPage((value) => Math.max(1, value - 1))}
+                  onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+                />
               </div>
             </div>
           </>

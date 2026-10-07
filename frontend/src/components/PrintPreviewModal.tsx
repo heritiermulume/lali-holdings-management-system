@@ -1,5 +1,5 @@
 import { Printer } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { printHtml } from '../lib/printDocument'
 
@@ -16,6 +16,7 @@ export function PrintPreviewModal({
 }) {
   const { t } = useTranslation()
   const [src, setSrc] = useState('')
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
     if (!open || !html) {
@@ -26,6 +27,16 @@ export function PrintPreviewModal({
     setSrc(url)
     return () => URL.revokeObjectURL(url)
   }, [open, html])
+
+  const handlePrint = () => {
+    const frame = iframeRef.current?.contentWindow
+    if (frame) {
+      frame.focus()
+      frame.print()
+      return
+    }
+    printHtml(html)
+  }
 
   if (!open) return null
 
@@ -40,11 +51,11 @@ export function PrintPreviewModal({
           <button
             type="button"
             className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-lhms hover:bg-lhms-soft"
-            onClick={() => printHtml(html)}
+            onClick={handlePrint}
           >
             <Printer size={16} /> {t('common.print')}
           </button>
-          <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-xl text-white/80 hover:bg-white/10" aria-label={t('common.close')}>
+          <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-xl border border-white/45 text-white/90 hover:bg-white/10" aria-label={t('common.close')}>
             ✕
           </button>
         </div>
@@ -52,7 +63,7 @@ export function PrintPreviewModal({
       <div className="min-h-0 flex-1 overflow-auto bg-[#d5e0d8] p-3 sm:p-6">
         <div className="mx-auto min-h-full max-w-6xl overflow-hidden rounded-2xl bg-white shadow-2xl">
           {src ? (
-            <iframe title={title} src={src} className="block h-[min(78vh,920px)] w-full border-0 bg-white" />
+            <iframe ref={iframeRef} title={title} src={src} className="block h-[min(78vh,920px)] w-full border-0 bg-white" />
           ) : null}
         </div>
       </div>

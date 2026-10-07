@@ -26,10 +26,12 @@ class MemberRegistrationService
 
         if ($candidate->member_id) {
             $member = $candidate->member()->firstOrFail();
+            $credentials = $this->accounts->provision($member);
+            $this->accounts->mailCredentials($member->fresh('user'), $credentials);
 
             return [
                 'member' => $member->load(['office', 'user', 'role']),
-                'credentials' => $this->accounts->provision($member),
+                'credentials' => $credentials,
             ];
         }
 
@@ -83,6 +85,7 @@ class MemberRegistrationService
             $credentials = $this->accounts->provision($member);
             $this->wallets->ensureWallet($member);
             $fresh = $member->fresh(['office', 'user', 'role']);
+            $this->accounts->mailCredentials($fresh, $credentials);
             $this->communications->notifyFinalApproval($candidate, $fresh, $locale, $credentials);
 
             return [
@@ -94,7 +97,7 @@ class MemberRegistrationService
 
     public function applyProfileChange(KamsMember $member, string $field, mixed $value, ?string $reason, bool $requiresApproval = false): void
     {
-        $tracked = ['office_id', 'trainer_name', 'trainer_user_id', 'manager_name', 'manager_member_id', 'assistant_manager_member_id', 'fixed_salary', 'team_name', 'rank', 'role_id', 'status', 'phone', 'address'];
+        $tracked = ['office_id', 'trainer_name', 'trainer_user_id', 'coach_member_id', 'coach_name', 'manager_name', 'manager_member_id', 'assistant_manager_member_id', 'fixed_salary', 'team_name', 'rank', 'role_id', 'status', 'phone', 'address'];
 
         if (! in_array($field, $tracked, true)) {
             $member->forceFill([$field => $value])->save();

@@ -25,10 +25,10 @@ return new class extends Migration
             ->pluck('id', 'slug');
 
         $map = [
-            'kams.view' => ['kams.dashboard.view', 'kams.members.view', 'kams.recruitment.view', 'kams.clients.view', 'kams.products.view', 'kams.orders.view', 'kams.campaigns.view'],
-            'kams.create' => ['kams.members.create', 'kams.recruitment.create', 'kams.clients.create', 'kams.products.create', 'kams.orders.create', 'kams.campaigns.create'],
-            'kams.update' => ['kams.members.update', 'kams.recruitment.update', 'kams.clients.update', 'kams.products.update', 'kams.orders.update', 'kams.campaigns.update'],
-            'kams.delete' => ['kams.members.delete', 'kams.recruitment.delete', 'kams.clients.delete', 'kams.products.delete', 'kams.campaigns.delete'],
+            'kams.view' => ['kams.dashboard.view', 'kams.members.view', 'kams.recruitment.view', 'kams.clients.view', 'kams.products.view', 'kams.orders.view'],
+            'kams.create' => ['kams.members.create', 'kams.recruitment.create', 'kams.clients.create', 'kams.products.create', 'kams.orders.create'],
+            'kams.update' => ['kams.members.update', 'kams.recruitment.update', 'kams.clients.update', 'kams.products.update', 'kams.orders.update'],
+            'kams.delete' => ['kams.members.delete', 'kams.recruitment.delete', 'kams.clients.delete', 'kams.products.delete'],
             'kams.approve' => ['kams.recruitment.approve'],
             'kams.export' => ['kams.orders.export'],
         ];

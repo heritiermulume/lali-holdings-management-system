@@ -44,6 +44,7 @@ type Account = {
   entries: Entry[]
   can_post_deposit?: boolean
   can_post_withdraw?: boolean
+  can_decide?: boolean
   can_browse_agents?: boolean
   agents: AgentOption[]
 }
@@ -109,6 +110,19 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
   const available = Math.max(0, (data?.balance ?? 0) - (data?.pending_withdrawals ?? 0))
   const withdrawTooHigh = action === 'withdraw' && amount !== '' && Number(amount) > available + 0.001
 
+  const decide = async (id: number, decision: 'approve' | 'reject', notesValue: string) => {
+    setError('')
+    try {
+      const res = await api.post(`/modules/kams/finance/account/entries/${id}/${decision}`, {
+        notes: notesValue,
+      })
+      setData(res.data.data)
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    }
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!action || !data || !memberId) return
@@ -154,8 +168,8 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
 
           {!loading && data ? (
             <>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="min-w-0 flex-1">
+              <div className="space-y-3">
+                <div className="min-w-0">
                   <div className="font-semibold">{data.member.full_name}</div>
                   <p className="text-sm text-muted">
                     {data.member.member_code}
@@ -163,23 +177,25 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                     {data.member.role ? ` · ${roleLabel(t, data.member.role)}` : data.member.rank ? ` · ${t(`kams.rank.${data.member.rank}`, { defaultValue: data.member.rank })}` : ''}
                   </p>
                 </div>
-                {data.can_post_deposit ? (
-                  <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>
-                    {t('kams.makeDeposit')}
-                  </Button>
-                ) : null}
-                {data.can_post_withdraw ? (
-                  <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>
-                    {t('kams.makeWithdrawal')}
-                  </Button>
-                ) : null}
-                <KamsTransactionsPrintMenu
-                  canPreview={hasPermission('kams.finance.account.preview')}
-                  canPrint={hasPermission('kams.finance.account.print')}
-                  onPreview={() => transactionsRef.current?.preview()}
-                  onPrint={() => transactionsRef.current?.print()}
-                  disabled={!hasPrintableRows}
-                />
+                <div className="flex flex-wrap items-center gap-2">
+                  {data.can_post_deposit && (hasPermission('kams.finance.company.deposit') || hasPermission('kams.finance.account.deposit')) ? (
+                    <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>
+                      {t('kams.makeDeposit')}
+                    </Button>
+                  ) : null}
+                  {data.can_post_withdraw && (hasPermission('kams.finance.company.withdraw') || hasPermission('kams.finance.account.withdraw')) ? (
+                    <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>
+                      {t('kams.makeWithdrawal')}
+                    </Button>
+                  ) : null}
+                  <KamsTransactionsPrintMenu
+                    canPreview={hasPermission('kams.finance.account.preview')}
+                    canPrint={hasPermission('kams.finance.account.print')}
+                    onPreview={() => transactionsRef.current?.preview()}
+                    onPrint={() => transactionsRef.current?.print()}
+                    disabled={!hasPrintableRows}
+                  />
+                </div>
               </div>
 
               {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
@@ -200,6 +216,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                 subtitle={data.member.full_name}
                 entries={data.entries}
                 showMember={false}
+                onDecide={data.can_decide && hasPermission('kams.finance.company.approve') ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
                 onRowsChange={(count) => setHasPrintableRows(count > 0)}
               />
             </>

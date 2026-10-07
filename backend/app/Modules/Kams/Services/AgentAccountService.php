@@ -43,6 +43,7 @@ class AgentAccountService
         $user = User::query()->create([
             'first_name' => $member->first_name ?: Str::of($member->full_name)->before(' ')->toString() ?: $member->full_name,
             'last_name' => $member->last_name ?: Str::of($member->full_name)->after(' ')->toString() ?: $member->member_code,
+            'gender' => $member->gender,
             'email' => $email,
             'phone' => $member->phone,
             'avatar_path' => $member->photo_path,
@@ -63,8 +64,6 @@ class AgentAccountService
             'user_id' => $user->id,
             'login_password' => $password,
         ])->save();
-
-        $this->queueCredentialsMail($user, $password, $this->mailRecipient($member, $email));
 
         return $this->credentials($member->fresh('user'), true);
     }
@@ -131,6 +130,22 @@ class AgentAccountService
     }
 
     /**
+     * @param  array{email?: ?string, phone?: ?string, password?: ?string, is_active?: bool}|null  $credentials
+     */
+    public function mailCredentials(KamsMember $member, ?array $credentials = null): void
+    {
+        $member->loadMissing('user');
+        $user = $member->user;
+        $password = $credentials['password'] ?? ($member->login_password ?: $user?->login_password);
+        if (! $user || blank($password)) {
+            return;
+        }
+
+        $loginEmail = $credentials['email'] ?? $user->email;
+        $this->queueCredentialsMail($user, (string) $password, $this->mailRecipient($member, (string) $loginEmail));
+    }
+
+    /**
      * @return array{email: string, phone: ?string, password: ?string, is_active: bool}
      */
     private function ensureCredentials(KamsMember $member, User $user): array
@@ -151,7 +166,6 @@ class AgentAccountService
                 'user_id' => $user->id,
                 'login_password' => $plain,
             ])->save();
-            $this->queueCredentialsMail($user, $plain, $this->mailRecipient($member, $user->email));
 
             return $this->credentials($member->fresh('user'), true);
         }
@@ -195,6 +209,7 @@ class AgentAccountService
         $user->forceFill([
             'first_name' => $member->first_name ?: $user->first_name,
             'last_name' => $member->last_name ?: $user->last_name,
+            'gender' => $member->gender ?: $user->gender,
             'email' => $email,
             'phone' => $member->phone ?: $user->phone,
             'primary_company_id' => $member->company_id,

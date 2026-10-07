@@ -10,6 +10,7 @@ export type KamsWorkspaceTab = {
 
 export function KamsWorkspaceTabs({ tabs }: { tabs: KamsWorkspaceTab[] }) {
   const visible = tabs.filter((tab) => tab.show !== false)
+  if (visible.length === 0) return null
 
   return (
     <nav className="mb-5 flex flex-wrap gap-2">

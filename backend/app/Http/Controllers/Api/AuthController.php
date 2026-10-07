@@ -240,6 +240,13 @@ class AuthController extends Controller
         $user->load(['roles.permissions', 'scopes', 'primaryCompany', 'primaryOffice']);
         SettingsCatalog::ensure();
 
+        $gender = $user->gender;
+        if (! in_array($gender, ['male', 'female'], true)) {
+            $gender = KamsMember::query()
+                ->where('user_id', $user->id)
+                ->value('gender');
+        }
+
         return [
             'id' => $user->id,
             'first_name' => $user->first_name,
@@ -247,6 +254,7 @@ class AuthController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $user->phone,
+            'gender' => in_array($gender, ['male', 'female'], true) ? $gender : null,
             'avatar_url' => $user->avatar_path ? '/storage/'.$user->avatar_path : null,
             'locale' => $user->locale,
             'timezone' => $user->timezone,

@@ -1,8 +1,9 @@
-import { ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import { Eye } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { PaginationButtons } from '../../components/PaginationButtons'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -179,13 +180,12 @@ export function KamsMemberAccountsPage() {
                 {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
               </select>
             </label>
-            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-              <ChevronLeft size={16} /> {t('common.prev')}
-            </button>
-            <span className="px-1 text-sm font-semibold">{safePage} / {lastPage}</span>
-            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safePage >= lastPage} onClick={() => setPage((value) => Math.min(lastPage, value + 1))}>
-              {t('common.next')} <ChevronRight size={16} />
-            </button>
+            <PaginationButtons
+              page={safePage}
+              lastPage={lastPage}
+              onPrev={() => setPage((value) => Math.max(1, value - 1))}
+              onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+            />
           </div>
         </div>
       </div>

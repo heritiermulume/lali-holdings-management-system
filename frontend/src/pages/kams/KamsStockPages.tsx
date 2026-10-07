@@ -1,6 +1,6 @@
 import { AlertTriangle } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Navigate, Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Area,
@@ -80,19 +80,33 @@ function formatDay(value: string, locale: string) {
   return parseDate(value).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
 }
 
+export function KamsStockIndex() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('kams.stock.statistics.view')) return <KamsStockStats />
+  if (hasPermission('kams.stock.warehouses.view')) return <Navigate to="/modules/kams/stock/warehouses" replace />
+  if (hasPermission('kams.stock.depots.view')) return <Navigate to="/modules/kams/stock/depots" replace />
+  if (hasPermission('kams.stock.assignments.view')) return <Navigate to="/modules/kams/stock/assignments" replace />
+  if (hasPermission('kams.stock.reports.view')) return <Navigate to="/modules/kams/stock/assignments/reports" replace />
+  if (hasPermission('kams.stock.journal.view')) return <Navigate to="/modules/kams/stock/assignments/journal" replace />
+  return <Navigate to="/modules/kams" replace />
+}
+
 export function KamsStockWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
-  const canStock = hasPermission('kams.products.view')
+  const canStats = hasPermission('kams.stock.statistics.view')
+  const canWarehouses = hasPermission('kams.stock.warehouses.view')
+  const canDepots = hasPermission('kams.stock.depots.view')
+  const canAssignments = hasPermission('kams.stock.assignments.view') || hasPermission('kams.stock.reports.view') || hasPermission('kams.stock.journal.view')
 
   return (
     <div>
       <KamsWorkspaceTabs
         tabs={[
-          { to: '/modules/kams/stock', end: true, label: t('kams.statistics'), show: canStock || hasPermission('kams.orders.view') },
-          { to: '/modules/kams/stock/warehouses', end: true, label: t('kams.warehouses'), show: canStock },
-          { to: '/modules/kams/stock/depots', end: true, label: t('kams.depots'), show: canStock },
-          { to: '/modules/kams/stock/assignments', label: t('kams.commercialOperations'), show: canStock },
+          { to: '/modules/kams/stock', end: true, label: t('kams.statistics'), show: canStats },
+          { to: '/modules/kams/stock/warehouses', label: t('kams.warehouses'), show: canWarehouses },
+          { to: '/modules/kams/stock/depots', label: t('kams.depots'), show: canDepots },
+          { to: '/modules/kams/stock/assignments', label: t('kams.commercialOperations'), show: canAssignments },
         ]}
       />
       <Outlet />

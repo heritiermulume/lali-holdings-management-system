@@ -3,6 +3,8 @@
 namespace App\Modules\Kams\Services;
 
 use App\Core\Support\RoleCatalog;
+use App\Mail\FinanceRequestDecisionMail;
+use App\Models\AppNotification;
 use App\Models\Company;
 use App\Models\Office;
 use App\Models\User;
@@ -14,6 +16,8 @@ use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Throwable;
 
 class TreasuryLedger
 {
@@ -687,8 +691,82 @@ class TreasuryLedger
                 }
             }
 
-            return $entry->fresh(['createdBy', 'requestedBy', 'performedBy', 'member', 'account.office']);
+            $fresh = $entry->fresh(['createdBy', 'requestedBy', 'performedBy', 'member', 'account.office']);
+            $this->notifyRequester($fresh, $decision, $motif);
+
+            return $fresh;
         });
+    }
+
+    private function notifyRequester(KamsTreasuryEntry $entry, string $decision, string $motif): void
+    {
+        $userId = (int) ($entry->requested_by ?: 0);
+        if ($userId <= 0) {
+            return;
+        }
+
+        $payload = [
+            'decision' => $decision,
+            'type' => (string) $entry->type,
+            'amount' => (float) $entry->amount,
+            'notes' => $entry->notes,
+            'reason' => $decision === 'reject' ? $motif : null,
+            'member_name' => $entry->member?->full_name,
+            'entry_id' => $entry->id,
+        ];
+
+        $send = function () use ($userId, $payload) {
+            $user = User::query()->find($userId);
+            if (! $user) {
+                return;
+            }
+
+            $locale = $user->locale === 'en' ? 'en' : 'fr';
+            $approved = ($payload['decision'] ?? '') === 'approve';
+            $type = $payload['type'] === 'deposit'
+                ? ($locale === 'en' ? 'deposit' : 'dépôt')
+                : ($locale === 'en' ? 'withdrawal' : 'retrait');
+            $amount = number_format(abs((float) ($payload['amount'] ?? 0)), 2, '.', ' ');
+            $title = $locale === 'en'
+                ? ($approved ? 'Finance request approved' : 'Finance request rejected')
+                : ($approved ? 'Demande financière acceptée' : 'Demande financière refusée');
+            $body = $locale === 'en'
+                ? ("Your {$type} request of {$amount} was ".($approved ? 'approved' : 'rejected').'.')
+                : ("Votre demande de {$type} de {$amount} a été ".($approved ? 'acceptée' : 'refusée').'.');
+            if (! $approved && ! empty($payload['reason'])) {
+                $body .= $locale === 'en'
+                    ? (' Reason: '.$payload['reason'])
+                    : (' Motif : '.$payload['reason']);
+            }
+
+            AppNotification::query()->create([
+                'user_id' => $user->id,
+                'type' => $approved ? 'finance_approved' : 'finance_rejected',
+                'title' => $title,
+                'body' => $body,
+                'channel' => 'in_app',
+                'data' => [
+                    'module' => 'kams',
+                    'entry_id' => $payload['entry_id'] ?? null,
+                    'decision' => $payload['decision'] ?? null,
+                    'type' => $payload['type'] ?? null,
+                ],
+            ]);
+
+            if (filled($user->email)) {
+                try {
+                    Mail::to($user->email)->send(new FinanceRequestDecisionMail($user, $payload));
+                } catch (Throwable) {
+                    // Decision must succeed even if mail delivery fails.
+                }
+            }
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($send);
+        } else {
+            $send();
+        }
     }
 
     private function queueMemberRequest(KamsMember $member, string $type, float $amount, string $notes, int $userId): KamsTreasuryEntry
@@ -719,8 +797,94 @@ class TreasuryLedger
                 $entry,
             );
 
-            return $entry->fresh(['createdBy', 'requestedBy', 'member', 'account.office']);
+            $fresh = $entry->fresh(['createdBy', 'requestedBy', 'member', 'account.office']);
+            $this->notifyApprovers($fresh);
+
+            return $fresh;
         });
+    }
+
+    private function notifyApprovers(KamsTreasuryEntry $entry): void
+    {
+        $entry->loadMissing(['member', 'account.office']);
+        $companyId = (int) $entry->company_id;
+        $officeId = $entry->office_id ? (int) $entry->office_id : null;
+        // Keep request alerts inside the office: no office => no office validators to ping.
+        if (! $officeId) {
+            return;
+        }
+
+        $excludeIds = collect([(int) ($entry->requested_by ?: 0), (int) ($entry->created_by ?: 0)])
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        $send = function () use ($entry, $companyId, $officeId, $excludeIds) {
+            $approvers = User::query()
+                ->where('is_active', true)
+                ->when($excludeIds !== [], fn ($query) => $query->whereNotIn('id', $excludeIds))
+                ->whereHas('roles.permissions', fn ($permissions) => $permissions->where('slug', 'kams.finance.company.approve'))
+                ->whereDoesntHave('roles', fn ($roles) => $roles->whereIn('slug', RoleCatalog::fullAccessSlugs()))
+                ->with(['roles.permissions', 'scopes'])
+                ->get();
+
+            $officeName = (string) ($entry->account?->office?->name ?: '');
+            $amount = number_format(abs((float) $entry->amount), 2, '.', ' ');
+            $isDeposit = $entry->type === 'deposit';
+            $rawMemberName = trim((string) ($entry->member?->full_name ?: ''));
+
+            foreach ($approvers as $user) {
+                // Global roles (super admin / president) and company-wide roles stay out of office request alerts.
+                if ($user->isGroupAdmin() || ! $user->isOfficeScoped()) {
+                    continue;
+                }
+                if (! $user->canAccessCompany($companyId) || ! $user->canAccessOffice($officeId)) {
+                    continue;
+                }
+
+                $locale = $user->locale === 'en' ? 'en' : 'fr';
+                $memberName = $rawMemberName !== ''
+                    ? $rawMemberName
+                    : ($locale === 'en' ? 'A member' : 'Un membre');
+                $typeLabel = $isDeposit
+                    ? ($locale === 'en' ? 'deposit' : 'dépôt')
+                    : ($locale === 'en' ? 'withdrawal' : 'retrait');
+                $title = $locale === 'en'
+                    ? ('New '.$typeLabel.' request')
+                    : ('Nouvelle demande de '.$typeLabel);
+                $body = $locale === 'en'
+                    ? ("{$memberName} requested a {$typeLabel} of {$amount}.")
+                    : ("{$memberName} a demandé un {$typeLabel} de {$amount}.");
+                if ($officeName !== '') {
+                    $body .= $locale === 'en'
+                        ? (" Office: {$officeName}.")
+                        : (" Bureau : {$officeName}.");
+                }
+
+                AppNotification::query()->create([
+                    'user_id' => $user->id,
+                    'type' => 'finance_request',
+                    'title' => $title,
+                    'body' => $body,
+                    'channel' => 'in_app',
+                    'data' => [
+                        'module' => 'kams',
+                        'entry_id' => $entry->id,
+                        'type' => $entry->type,
+                        'office_id' => $officeId,
+                        'company_id' => $companyId,
+                        'member_id' => $entry->member_id,
+                    ],
+                ]);
+            }
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($send);
+        } else {
+            $send();
+        }
     }
 
     private function savingsFor(KamsTreasuryEntry $entry): ?KamsSavingsEntry

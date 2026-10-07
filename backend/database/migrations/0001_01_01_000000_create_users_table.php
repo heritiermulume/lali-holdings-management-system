@@ -21,7 +21,6 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->foreignId('primary_company_id')->nullable();
             $table->foreignId('primary_office_id')->nullable();
-            $table->foreignId('primary_department_id')->nullable();
             $table->timestamp('email_verified_at')->nullable();
             $table->timestamp('last_login_at')->nullable();
             $table->string('password');

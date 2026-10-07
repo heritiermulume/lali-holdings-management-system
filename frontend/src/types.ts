@@ -14,6 +14,7 @@ export type User = {
   name: string
   email: string
   phone?: string | null
+  gender?: string | null
   avatar_url?: string | null
   locale: string
   timezone: string

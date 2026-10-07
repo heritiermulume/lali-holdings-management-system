@@ -1,6 +1,6 @@
 import { Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
@@ -57,17 +57,25 @@ function toneFor(status: string): 'green' | 'amber' | 'red' | 'slate' {
   return 'slate'
 }
 
+export function KamsClientsIndex() {
+  const { hasPermission } = useAuth()
+  if (hasPermission('kams.clients.view')) return <KamsClientsList />
+  if (hasPermission('kams.suppliers.view')) return <Navigate to="/modules/kams/clients/suppliers" replace />
+  return <Navigate to="/modules/kams" replace />
+}
+
 export function KamsClientsWorkspace() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
-  const canView = hasPermission('kams.clients.view')
+  const canClients = hasPermission('kams.clients.view')
+  const canSuppliers = hasPermission('kams.suppliers.view')
 
   return (
     <div>
       <KamsWorkspaceTabs
         tabs={[
-          { to: '/modules/kams/clients', end: true, label: t('kams.clients'), show: canView },
-          { to: '/modules/kams/clients/suppliers', end: true, label: t('kams.suppliers'), show: canView },
+          { to: '/modules/kams/clients', end: true, label: t('kams.clients'), show: canClients },
+          { to: '/modules/kams/clients/suppliers', end: true, label: t('kams.suppliers'), show: canSuppliers },
         ]}
       />
       <Outlet />

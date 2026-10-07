@@ -52,6 +52,7 @@ type FinanceBlock = {
   liabilities: number
   receivables: number
   payables: number
+  patrimoine_value?: number
 }
 
 type OperationsBlock = {
@@ -143,6 +144,7 @@ type DashboardData = {
     guy_savings: number
     assistant_manager_savings: number
     manager_savings: number
+    divisionnaire_savings?: number
   } | null
   recruitment?: {
     applications: number
@@ -449,7 +451,17 @@ export function GroupOverviewPage() {
   const currency = data.currency
   const selectedCompany = data.scope.companies.find((item) => item.id === data.scope.company_id)
   const selectedOffice = data.scope.offices.find((item) => item.id === data.scope.office_id)
-  const financeKeys = ['revenue', 'profit', 'cash', 'receivables', 'payables', 'expenses', 'assets', 'liabilities'] as const
+  const financeKpis = [
+    { key: 'revenue' as const, label: t('dashboard.revenue') },
+    { key: 'profit' as const, label: t('dashboard.profit') },
+    { key: 'cash' as const, label: t('dashboard.cash') },
+    { key: 'receivables' as const, label: t('dashboard.receivables') },
+    { key: 'payables' as const, label: t('dashboard.payables') },
+    { key: 'expenses' as const, label: t('dashboard.expenses') },
+    { key: 'assets' as const, label: t('dashboard.assets') },
+    { key: 'liabilities' as const, label: t('dashboard.liabilities') },
+    { key: 'patrimoine_value' as const, label: t('kams.patrimoineValue') },
+  ]
 
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
@@ -464,7 +476,7 @@ export function GroupOverviewPage() {
               {selectedOffice ? ` · ${selectedOffice.name}` : ''}
             </p>
             <p className="mt-2 text-xs text-white/60">
-              {roleLabel(t, user?.roles?.[0])}{data.welcome.company ? ` · ${data.welcome.company}` : ''}
+              {roleLabel(t, user?.roles?.[0], user?.gender)}{data.welcome.company ? ` · ${data.welcome.company}` : ''}
             </p>
           </div>
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-[minmax(12rem,1.55fr)_minmax(12rem,1.55fr)_minmax(7rem,0.9fr)]">
@@ -519,10 +531,10 @@ export function GroupOverviewPage() {
             <h3 className="text-sm font-semibold sm:text-base">{t('groupDash.financeTitle')}</h3>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-            {financeKeys.map((key) => (
+            {financeKpis.map(({ key, label }) => (
               <KpiCard
                 key={key}
-                label={t(`dashboard.${key}`)}
+                label={label}
                 value={money(data.finances?.[key], currency)}
                 delta={data.finances_delta?.[key]}
                 tone={key === 'expenses' || key === 'liabilities' || key === 'payables' ? 'danger' : key === 'receivables' ? 'accent' : 'default'}
@@ -841,11 +853,12 @@ export function GroupOverviewPage() {
         <Card className="min-w-0 p-4 sm:p-5">
           <div className="mb-1 font-semibold">{t('dashboard.kamsSavings')}</div>
           <p className="mb-4 text-sm text-muted">{t('dashboard.kamsSavingsHint')}</p>
-          <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-4">
             {[
               ['guy_savings', data.kams_savings.guy_savings],
               ['assistant_manager_savings', data.kams_savings.assistant_manager_savings],
               ['manager_savings', data.kams_savings.manager_savings],
+              ['divisionnaire_savings', data.kams_savings.divisionnaire_savings ?? 0],
             ].map(([key, value]) => (
               <div key={String(key)} className="rounded-xl bg-surface p-3 sm:p-4">
                 <div className="text-xs text-muted sm:text-sm">{t(`dashboard.${String(key)}`)}</div>

@@ -123,6 +123,7 @@ export function KamsRecruitmentDashboard() {
     { key: 'observations', value: data.totals.observations },
     { key: 'approved', value: data.totals.approved },
     { key: 'rejected', value: data.totals.rejected },
+    { key: 'conversion', value: `${data.totals.conversion_rate}%`, accent: true },
   ]
 
   const funnel = [
@@ -198,28 +199,13 @@ export function KamsRecruitmentDashboard() {
         </div> : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
         {kpis.map((item) => (
           <Card key={item.key} className="min-w-0 p-4 sm:p-5">
             <div className="text-xs text-muted sm:text-sm">{t(`kams.${item.key}`)}</div>
-            <div className="mt-2 text-2xl font-extrabold sm:mt-3 sm:text-3xl">{item.value}</div>
+            <div className={cn('mt-2 text-2xl font-extrabold sm:mt-3 sm:text-3xl', item.accent && 'text-lhms')}>{item.value}</div>
           </Card>
         ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-        <Card className="min-w-0 p-4 sm:p-5">
-          <div className="text-xs text-muted sm:text-sm">{t('kams.conversion')}</div>
-          <div className="mt-2 text-lg font-bold text-lhms sm:mt-3 sm:text-2xl">{data.totals.conversion_rate}%</div>
-        </Card>
-        <Card className="min-w-0 p-4 sm:p-5">
-          <div className="text-xs text-muted sm:text-sm">{t('kams.interviewAttendance')}</div>
-          <div className="mt-2 text-lg font-bold sm:mt-3 sm:text-2xl">{data.totals.interview_attendance}%</div>
-        </Card>
-        <Card className="col-span-2 min-w-0 p-4 sm:col-span-1 sm:p-5">
-          <div className="text-xs text-muted sm:text-sm">{t('kams.observationAttendance')}</div>
-          <div className="mt-2 text-lg font-bold sm:mt-3 sm:text-2xl">{data.totals.observation_attendance}%</div>
-        </Card>
       </div>
 
       <Card className="p-4 sm:p-5">

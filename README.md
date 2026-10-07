@@ -43,11 +43,11 @@ Le frontend React est une SPA. En développement, Vite tourne sur le port `5173`
 |---|---|
 | Authentification | Login / logout, jeton Sanctum, profil, avatar, mot de passe |
 | Tableau de bord groupe | Vue consolidée, actions, dashboards par module |
-| Organisation | Pays → provinces → villes → sociétés → bureaux → départements → activités |
+| Organisation | Pays → provinces → villes → sociétés → bureaux → activités |
 | Sociétés | CRUD, devise, rattachement géographique, activation de modules |
 | Utilisateurs | CRUD, rôles, scopes (groupe / société) |
 | Modules | Catalogue, statut (actif, en développement, bientôt, inactif), activation par société |
-| KAMS | Clients, produits, commandes, campagnes, indicateurs financiers |
+| KAMS | Clients, produits, commandes, indicateurs financiers |
 | Notifications | Liste, marquer comme lu |
 | Tâches | Suivi d’actions internes |
 | Audit | Journal des actions sensibles |
@@ -248,7 +248,7 @@ Le seeder installe une géographie et des sociétés représentatives du groupe 
 | `KAMS` | King Attitude | RDC — Goma |
 | `LMRM` | LALI Miembeni Rice Mills | Tanzanie — Zanzibar |
 
-Pays seedés : **CD** (USD) et **TZ** (TZS). KAMS reçoit des clients, produits, une commande démo et des campagnes.
+Pays seedés : **CD** (USD) et **TZ** (TZS). KAMS reçoit des clients, produits et une commande démo.
 
 ---
 
@@ -256,7 +256,7 @@ Pays seedés : **CD** (USD) et **TZ** (TZS). KAMS reçoit des clients, produits,
 
 | Slug | Nom | Statut | Contenu |
 |---|---|---|---|
-| `kams` | King Attitude Management System | **Actif** (v1.0.0) | Clients, produits, commandes, campagnes, contribution financière au dashboard |
+| `kams` | King Attitude Management System | **Actif** (v1.0.0) | Clients, produits, commandes, contribution financière au dashboard |
 | `heavy-equipment` | LALI Heavy Equipment | En développement | Stub (parc, locations, maintenance) |
 | `real-estate` | LALI Apartments / Real Estate | Bientôt | Stub |
 | `rice-mills` | LALI Miembeni Rice Mills | Bientôt | Stub |
@@ -274,9 +274,8 @@ Préfixe API : `/api/v1/modules/kams`
 | Clients | liste, création, mise à jour, suppression |
 | Produits | SKU, stock, collections |
 | Commandes | création, mise à jour de statut |
-| Campagnes | marketing / collections |
 
-Écrans React : `/modules/kams`, `/clients`, `/stock`, `/finance`, `/campaigns`.
+Écrans React : `/modules/kams`, `/clients`, `/stock`, `/finance`.
 
 ---
 
@@ -337,11 +336,11 @@ Authentification : `POST /auth/login` → jeton Bearer. En-tête : `Authorizatio
 | `GET` | `/dashboard` | authentifié |
 | `GET/POST` | `/notifications`, `…/read`, `…/read-all` | authentifié |
 | `GET/POST/PUT` | `/tasks` | authentifié |
-| `GET/PUT` | `/modules`, `/modules/{module}` | `modules.view` / `modules.manage` |
-| `PUT` | `/companies/{company}/modules` | `modules.manage` |
+| `GET/PUT` | `/modules`, `/modules/{module}` | `administration.view` / `settings.manage` |
+| `PUT` | `/companies/{company}/modules` | `settings.manage` |
 | `CRUD` | `/users` | `users.*` |
 | `GET/PUT` | `/roles`, `GET /permissions` | `roles.view` / `roles.manage` |
-| `CRUD` | `/countries`, `/provinces`, `/cities`, `/offices`, `/departments`, `/activities` | `organization.*` |
+| `CRUD` | `/countries`, `/provinces`, `/cities`, `/offices`, `/activities` | `organization.*` |
 | `CRUD` | `/companies` | `companies.*` |
 | `GET` | `/organization/tree` | `organization.view` |
 | `GET` | `/audit-logs` | `audit.view` |

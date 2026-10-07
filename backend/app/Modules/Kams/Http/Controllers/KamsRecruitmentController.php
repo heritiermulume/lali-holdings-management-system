@@ -468,7 +468,7 @@ class KamsRecruitmentController extends Controller
     public function members(Request $request): JsonResponse
     {
         $query = $this->scopedMembers($request)
-            ->with(['office', 'role', 'trainer', 'candidate', 'openingPositions', 'user'])
+            ->with(['office', 'role', 'trainer', 'coach', 'candidate.sponsor', 'openingPositions', 'user'])
             ->latest();
 
         if ($origin = $request->string('origin')->toString()) {
@@ -499,6 +499,7 @@ class KamsRecruitmentController extends Controller
     {
         $request->merge([
             'trainer_user_id' => $request->filled('trainer_user_id') ? $request->input('trainer_user_id') : null,
+            'coach_member_id' => $request->filled('coach_member_id') ? $request->input('coach_member_id') : null,
             'role_id' => $request->filled('role_id') ? $request->input('role_id') : null,
         ]);
 
@@ -515,6 +516,7 @@ class KamsRecruitmentController extends Controller
             'address' => ['nullable', 'string'],
             'trainer_name' => ['nullable', 'string', 'max:255'],
             'trainer_user_id' => ['nullable', 'exists:users,id'],
+            'coach_member_id' => ['nullable', 'exists:kams_members,id'],
             'manager_name' => ['nullable', 'string', 'max:255'],
             'manager_member_id' => ['nullable', 'exists:kams_members,id'],
             'assistant_manager_member_id' => ['nullable', 'exists:kams_members,id'],
@@ -531,6 +533,7 @@ class KamsRecruitmentController extends Controller
         unset($data['photo']);
         $data = array_merge($data, PersonName::fromParts($data['first_name'], $data['last_name']));
         $data = $this->withTrainerUser($data);
+        $data = $this->withCoachMember($data, (int) $data['company_id']);
 
         $member = KamsMember::query()->create([
             ...$data,
@@ -543,10 +546,17 @@ class KamsRecruitmentController extends Controller
             'migrated_at' => now(),
         ]);
 
-        $this->accounts->provision($member);
+        $credentials = $this->accounts->provision($member);
         $this->wallets->ensureWallet($member);
+        $fresh = $member->fresh(['office', 'role', 'trainer', 'coach', 'user', 'managerMember', 'assistantManager']);
+        $locale = $request->getPreferredLanguage() === 'en' ? 'en' : 'fr';
+        $this->accounts->mailCredentials($fresh, $credentials);
+        $this->communications->notifyMemberRegistered($fresh, $locale, $credentials);
 
-        return $this->created($member->fresh(['office', 'role', 'trainer', 'user', 'managerMember', 'assistantManager']));
+        return $this->created([
+            'member' => $fresh,
+            'credentials' => $credentials,
+        ]);
     }
 
     public function showMember(Request $request, KamsMember $member): JsonResponse
@@ -588,6 +598,9 @@ class KamsRecruitmentController extends Controller
             'trainer_user_id' => $request->exists('trainer_user_id') && ! $request->filled('trainer_user_id')
                 ? null
                 : $request->input('trainer_user_id'),
+            'coach_member_id' => $request->exists('coach_member_id') && ! $request->filled('coach_member_id')
+                ? null
+                : $request->input('coach_member_id'),
             'role_id' => $request->exists('role_id') && ! $request->filled('role_id')
                 ? null
                 : $request->input('role_id'),
@@ -606,6 +619,7 @@ class KamsRecruitmentController extends Controller
             'address' => ['nullable', 'string'],
             'trainer_name' => ['nullable', 'string'],
             'trainer_user_id' => ['nullable', 'exists:users,id'],
+            'coach_member_id' => ['nullable', 'exists:kams_members,id'],
             'manager_name' => ['nullable', 'string'],
             'manager_member_id' => ['nullable', 'exists:kams_members,id'],
             'assistant_manager_member_id' => ['nullable', 'exists:kams_members,id'],
@@ -629,6 +643,9 @@ class KamsRecruitmentController extends Controller
         }
 
         $data = $this->withTrainerUser($data, array_key_exists('trainer_user_id', $data));
+        if (array_key_exists('coach_member_id', $data)) {
+            $data = $this->withCoachMember($data, (int) $member->company_id);
+        }
 
         $photoPath = $this->storePeoplePhoto($request);
         if ($photoPath) {
@@ -643,10 +660,10 @@ class KamsRecruitmentController extends Controller
             $this->registration->applyProfileChange($member, $field, $value, $reason, $sensitive);
         }
 
-        $member = $member->fresh(['office', 'role', 'trainer', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']);
+        $member = $member->fresh(['office', 'role', 'trainer', 'coach', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']);
         $this->accounts->syncFromMember($member);
 
-        return $this->ok($member->fresh(['office', 'role', 'trainer', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']));
+        return $this->ok($member->fresh(['office', 'role', 'trainer', 'coach', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']));
     }
 
     public function destroyMember(Request $request, KamsMember $member): JsonResponse
@@ -946,6 +963,27 @@ class KamsRecruitmentController extends Controller
         }
 
         $data['trainer_name'] = User::query()->whereKey($trainerId)->value('name');
+
+        return $data;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function withCoachMember(array $data, int $companyId): array
+    {
+        $coachId = $data['coach_member_id'] ?? null;
+        if (! $coachId) {
+            $data['coach_member_id'] = null;
+            $data['coach_name'] = null;
+
+            return $data;
+        }
+
+        $coach = KamsMember::query()->find($coachId);
+        abort_unless($coach && (int) $coach->company_id === $companyId, 422, 'The selected coach does not belong to this company.');
+        $data['coach_name'] = $coach->full_name;
 
         return $data;
     }

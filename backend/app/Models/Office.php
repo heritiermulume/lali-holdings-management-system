@@ -132,11 +132,6 @@ class Office extends Model
         return $this->belongsTo(Neighborhood::class);
     }
 
-    public function departments(): HasMany
-    {
-        return $this->hasMany(Department::class);
-    }
-
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class)->withTimestamps();

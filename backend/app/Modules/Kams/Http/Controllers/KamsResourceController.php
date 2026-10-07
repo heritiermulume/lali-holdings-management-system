@@ -7,7 +7,6 @@ use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
-use App\Modules\Kams\Models\KamsCampaign;
 use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsOrder;
@@ -178,7 +177,7 @@ class KamsResourceController extends Controller
                     'office:id,name,code,city_id',
                     'office.city:id,name',
                     'province:id,name,name_fr',
-                    'balances.product:id,name,sku,price,cost,field_price,manager_price,company_price,description,image_path,stock',
+                    'balances.product:id,name,sku,price,cost,field_price,manager_price,company_price,image_path,stock',
                 ]),
                 $request
             )->latest()->paginate($request->integer('per_page', 50))
@@ -283,9 +282,8 @@ class KamsResourceController extends Controller
             'collection' => ['nullable', 'string'],
             'price' => ['required', 'numeric', 'min:0'],
             'field_price' => ['nullable', 'numeric', 'min:0'],
-            'manager_price' => ['nullable', 'numeric', 'min:0'],
             'company_price' => ['nullable', 'numeric', 'min:0'],
-            'cost' => ['nullable', 'numeric', 'min:0'],
+            'cost' => ['required', 'numeric', 'min:0'],
             'stock' => ['nullable', 'integer', 'min:0'],
             'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
@@ -294,7 +292,6 @@ class KamsResourceController extends Controller
             'warehouse_ids.*' => ['integer', 'exists:kams_depots,id'],
             'assign_all_warehouses' => ['nullable', 'boolean'],
             'status' => ['nullable', 'in:active,draft,archived'],
-            'description' => ['nullable', 'string'],
             'image' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'depot_ids' => ['nullable', 'array'],
             'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
@@ -313,14 +310,22 @@ class KamsResourceController extends Controller
             $data['assign_all_warehouses'],
             $data['depot_ids'],
             $data['assign_all_depots'],
-            $data['image']
+            $data['image'],
+            $data['manager_price']
         );
-        $data['field_price'] = $data['field_price'] ?? $data['price'];
-        $data['cost'] = $data['cost'] ?? $data['company_price'] ?? 0;
-        $data['company_price'] = $data['company_price'] ?? $data['cost'];
-        $data['manager_price'] = $data['manager_price'] ?? 0;
-        $data['price'] = $data['field_price'];
-        $data['avg_cost'] = $data['cost'];
+        $sale = (float) ($data['field_price'] ?? $data['price']);
+        $purchase = (float) ($data['cost'] ?? $data['company_price'] ?? 0);
+        abort_unless(
+            $sale >= $purchase,
+            422,
+            __('Sale price must be greater than or equal to purchase price.'),
+        );
+        $data['field_price'] = $sale;
+        $data['price'] = $sale;
+        $data['cost'] = $purchase;
+        $data['company_price'] = $purchase;
+        $data['manager_price'] = $purchase;
+        $data['avg_cost'] = $purchase;
         $data['seller_share_percent'] = $data['seller_share_percent'] ?? 0;
         $data['stock'] = 0;
         $data['status'] = $data['status'] ?? 'active';
@@ -369,13 +374,11 @@ class KamsResourceController extends Controller
             'collection' => ['nullable', 'string'],
             'price' => ['sometimes', 'numeric', 'min:0'],
             'field_price' => ['nullable', 'numeric', 'min:0'],
-            'manager_price' => ['nullable', 'numeric', 'min:0'],
             'company_price' => ['nullable', 'numeric', 'min:0'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', 'in:active,draft,archived'],
-            'description' => ['nullable', 'string'],
             'image' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'remove_image' => ['nullable', 'boolean'],
             'warehouse_ids' => ['nullable', 'array'],
@@ -397,18 +400,23 @@ class KamsResourceController extends Controller
             $data['depot_ids'],
             $data['assign_all_depots'],
             $data['image'],
-            $data['remove_image']
+            $data['remove_image'],
+            $data['manager_price']
         );
 
-        if ($request->has('field_price') || $request->has('price')) {
-            $field = (float) ($data['field_price'] ?? $data['price'] ?? $product->field_price ?? $product->price);
-            $data['field_price'] = $field;
-            $data['price'] = $field;
-        }
-        if (array_key_exists('company_price', $data) || array_key_exists('cost', $data)) {
-            $companyPrice = $data['company_price'] ?? $data['cost'] ?? $product->company_price ?? $product->cost;
-            $data['company_price'] = $companyPrice;
-            $data['cost'] = $companyPrice;
+        $sale = (float) ($data['field_price'] ?? $data['price'] ?? $product->field_price ?? $product->price);
+        $purchase = (float) ($data['company_price'] ?? $data['cost'] ?? $product->company_price ?? $product->cost);
+        if ($request->has('field_price') || $request->has('price') || array_key_exists('company_price', $data) || array_key_exists('cost', $data)) {
+            abort_unless(
+                $sale >= $purchase,
+                422,
+                __('Sale price must be greater than or equal to purchase price.'),
+            );
+            $data['field_price'] = $sale;
+            $data['price'] = $sale;
+            $data['company_price'] = $purchase;
+            $data['cost'] = $purchase;
+            $data['manager_price'] = $purchase;
         }
 
         if ($path = $this->storeProductImage($request)) {
@@ -595,43 +603,6 @@ class KamsResourceController extends Controller
         ]))->save();
 
         return $this->ok($order->fresh(['client', 'items.product']));
-    }
-
-    public function campaigns(Request $request): JsonResponse
-    {
-        return $this->paginated($this->scoped(KamsCampaign::query(), $request)->latest()->paginate($request->integer('per_page', 15)));
-    }
-
-    public function storeCampaign(Request $request): JsonResponse
-    {
-        return $this->store(KamsCampaign::class, $request->validate([
-            'company_id' => ['required', 'exists:companies,id'],
-            'name' => ['required', 'string'],
-            'channel' => ['nullable', 'string'],
-            'status' => ['nullable', 'in:planned,active,completed,paused'],
-            'budget' => ['nullable', 'numeric', 'min:0'],
-            'starts_on' => ['nullable', 'date'],
-            'ends_on' => ['nullable', 'date'],
-            'description' => ['nullable', 'string'],
-        ]), $request);
-    }
-
-    public function updateCampaign(Request $request, KamsCampaign $campaign): JsonResponse
-    {
-        return $this->update($campaign, $request->validate([
-            'name' => ['sometimes', 'string'],
-            'channel' => ['nullable', 'string'],
-            'status' => ['nullable', 'in:planned,active,completed,paused'],
-            'budget' => ['nullable', 'numeric', 'min:0'],
-            'starts_on' => ['nullable', 'date'],
-            'ends_on' => ['nullable', 'date'],
-            'description' => ['nullable', 'string'],
-        ]), $request);
-    }
-
-    public function destroyCampaign(Request $request, KamsCampaign $campaign): JsonResponse
-    {
-        return $this->destroy($campaign, $request);
     }
 
     private function scoped(Builder $query, Request $request): Builder

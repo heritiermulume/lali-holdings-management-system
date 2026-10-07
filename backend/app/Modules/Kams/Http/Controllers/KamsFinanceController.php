@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
@@ -64,6 +65,7 @@ class KamsFinanceController extends Controller
         $previousPosition = $finance->summarize($companyId, $previous['from'], $previous['to'], $officeIds);
         $savings = $finance->savingsByKind($companyId, $officeIds);
         $inventory = round((float) ($payload['totals']['inventory_value'] ?? 0), 2);
+        $patrimoine = round((float) ($position['patrimoine_value'] ?? 0), 2);
         $equity = round((float) $position['assets'] - (float) $position['liabilities'], 2);
         $includeCentral = $selectedOfficeId === null && ! $restricted;
         $treasuryAccounts = $companyId
@@ -87,6 +89,7 @@ class KamsFinanceController extends Controller
         $payload['position'] = array_merge($position, [
             'equity' => $equity,
             'inventory_value' => $inventory,
+            'patrimoine_value' => $patrimoine,
             'net_margin' => round((float) $position['profit'] - (float) $position['expenses'], 2),
             'treasury_balance' => $treasuryBalance,
         ]);
@@ -291,6 +294,16 @@ class KamsFinanceController extends Controller
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal recorded.'));
     }
 
+    public function accountApprove(Request $request, KamsSavingsEntry $savingsEntry, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
+    {
+        return $this->accountDecide($request, $savingsEntry, $ledger, $treasury, $accounts, 'approve');
+    }
+
+    public function accountReject(Request $request, KamsSavingsEntry $savingsEntry, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
+    {
+        return $this->accountDecide($request, $savingsEntry, $ledger, $treasury, $accounts, 'reject');
+    }
+
     public function companyApprove(Request $request, KamsTreasuryAccount $treasuryAccount, KamsTreasuryEntry $treasuryEntry, TreasuryLedger $treasury): JsonResponse
     {
         return $this->companyDecide($request, $treasuryAccount, $treasuryEntry, $treasury, 'approve');
@@ -372,7 +385,7 @@ class KamsFinanceController extends Controller
         $payload['can_post_deposit'] = $this->canPostAgentMovement($request, 'deposit');
         $payload['can_post_withdraw'] = $this->canPostAgentMovement($request, 'withdraw');
         $payload['can_expense'] = false;
-        $payload['can_decide'] = false;
+        $payload['can_decide'] = $this->hasFinancePermission($request, 'kams.finance.company.approve');
         $payload['can_browse_agents'] = $canViewAgents;
         $officeId = $request->filled('office_id') ? (int) $request->integer('office_id') : null;
         $payload['agents'] = $canViewAgents ? $this->agentOptions($request, $member, $officeId) : [];
@@ -397,6 +410,51 @@ class KamsFinanceController extends Controller
 
         return $this->ok(
             $this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury),
+            $decision === 'approve' ? __('Request approved.') : __('Request rejected.'),
+        );
+    }
+
+    private function accountDecide(
+        Request $request,
+        KamsSavingsEntry $savingsEntry,
+        SavingsLedger $ledger,
+        TreasuryLedger $treasury,
+        KamsAccountProvisioner $accounts,
+        string $decision,
+    ): JsonResponse {
+        abort_unless($this->hasFinancePermission($request, 'kams.finance.company.approve'), 403);
+        abort_unless($savingsEntry->status === 'pending', 422, __('This request cannot be processed.'));
+        abort_unless(in_array($savingsEntry->type, ['deposit_request', 'withdrawal_request'], true), 422, __('This request cannot be processed.'));
+
+        $savingsEntry->loadMissing(['member', 'source']);
+        $member = $savingsEntry->member;
+        abort_unless($member, 404);
+        $this->assertCompany($request, (int) $member->company_id);
+        $this->assertCashierCanAccessMember($request, $member);
+        $accounts->ensureWallet($member);
+
+        $data = $request->validate([
+            'notes' => [$decision === 'reject' ? 'required' : 'nullable', 'string', 'max:500'],
+        ]);
+
+        $treasuryEntry = $savingsEntry->source;
+        if (! $treasuryEntry instanceof KamsTreasuryEntry) {
+            $treasuryEntry = KamsTreasuryEntry::query()
+                ->where('member_id', $member->id)
+                ->where('status', 'pending')
+                ->where('type', $savingsEntry->type === 'deposit_request' ? 'deposit' : 'withdrawal')
+                ->where('amount', round((float) $savingsEntry->amount, 2))
+                ->orderByDesc('id')
+                ->first();
+        }
+        abort_unless($treasuryEntry instanceof KamsTreasuryEntry, 422, __('This request cannot be processed.'));
+
+        $treasury->decide($treasuryEntry, $decision, $request->user()->id, (string) ($data['notes'] ?? ''));
+
+        $request->merge(['member_id' => $member->id]);
+
+        return $this->ok(
+            $this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts),
             $decision === 'approve' ? __('Request approved.') : __('Request rejected.'),
         );
     }

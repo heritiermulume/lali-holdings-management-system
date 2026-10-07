@@ -28,7 +28,6 @@ use Laravel\Sanctum\HasApiTokens;
     'is_active',
     'primary_company_id',
     'primary_office_id',
-    'primary_department_id',
     'password',
     'last_login_at',
 ])]
@@ -64,11 +63,6 @@ class User extends Authenticatable
     public function primaryOffice(): BelongsTo
     {
         return $this->belongsTo(Office::class, 'primary_office_id');
-    }
-
-    public function primaryDepartment(): BelongsTo
-    {
-        return $this->belongsTo(Department::class, 'primary_department_id');
     }
 
     public function notifications()

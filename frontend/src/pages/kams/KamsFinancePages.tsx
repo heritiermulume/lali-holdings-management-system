@@ -50,6 +50,7 @@ type Position = {
   payables: number
   equity?: number
   inventory_value?: number
+  patrimoine_value?: number
   net_margin?: number
   treasury_balance?: number
 }
@@ -272,7 +273,7 @@ export function KamsFinanceWorkspace() {
         tabs={[
           { to: '/modules/kams/finance', end: true, label: t('nav.dashboard'), show: hasPermission('kams.finance.dashboard.view') },
           { to: '/modules/kams/finance/account', end: true, label: t('kams.myAccount'), show: hasPermission('kams.finance.account.view') },
-          { to: '/modules/kams/finance/accounts', end: true, label: t('kams.agentAccounts'), show: hasPermission('kams.finance.dashboard.view') },
+          { to: '/modules/kams/finance/accounts', end: true, label: t('kams.agentAccounts'), show: hasPermission('kams.finance.accounts.view') },
           { to: '/modules/kams/finance/company', end: true, label: t('kams.companyAccount'), show: hasPermission('kams.finance.company.view') },
         ]}
       />
@@ -284,6 +285,7 @@ export function KamsFinanceWorkspace() {
 export function KamsFinanceIndex() {
   const { hasPermission } = useAuth()
   if (hasPermission('kams.finance.dashboard.view')) return <KamsFinanceDashboard />
+  if (hasPermission('kams.finance.accounts.view')) return <Navigate to="/modules/kams/finance/accounts" replace />
   if (hasPermission('kams.finance.account.view')) return <Navigate to="/modules/kams/finance/account" replace />
   if (hasPermission('kams.finance.company.view')) return <Navigate to="/modules/kams/finance/company" replace />
   return <Navigate to="/modules/kams" replace />
@@ -295,7 +297,6 @@ export function KamsFinanceDashboard() {
   const initial = useMemo(() => presetRange('week'), [])
   const today = useMemo(() => isoDate(new Date()), [])
   const [period, setPeriod] = useState<Period>('week')
-  const [lastPreset, setLastPreset] = useState<Exclude<Period, 'custom'>>('week')
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
   const [officeId, setOfficeId] = useState('')
@@ -329,7 +330,6 @@ export function KamsFinanceDashboard() {
 
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)
-    setLastPreset(item)
     setPeriod(item)
     setFrom(next.from)
     setTo(next.to)
@@ -372,6 +372,7 @@ export function KamsFinanceDashboard() {
   const composition = [
     { key: 'cash', label: t('dashboard.cash'), value: position?.cash || 0 },
     { key: 'inventory', label: t('kams.inventoryValue'), value: position?.inventory_value || data.totals.inventory_value || 0 },
+    { key: 'patrimoine', label: t('kams.patrimoineValue'), value: position?.patrimoine_value || 0 },
     { key: 'receivables', label: t('dashboard.receivables'), value: position?.receivables || 0 },
     { key: 'savings', label: t('kams.totalSavings'), value: savings?.total || 0 },
     { key: 'payables', label: t('dashboard.payables'), value: position?.payables || 0 },
@@ -425,28 +426,14 @@ export function KamsFinanceDashboard() {
 
       <Card className="p-3 sm:p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setFiltersOpen((open) => !open)}
-              className={cn('min-h-10 rounded-full px-4 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-surface text-lhms')}
-            >
-              {filtersOpen ? t('common.hide') : t('common.filter')}
-            </button>
-            <button
-              type="button"
-              onClick={() => (period === 'custom' ? applyPreset(lastPreset) : setPeriod('custom'))}
-              className="min-h-10 rounded-full bg-surface px-4 text-sm font-semibold text-lhms"
-            >
-              {period === 'custom' ? t('dashboard.presetPeriod') : t('dashboard.customPeriod')}
-            </button>
-          </div>
-          {period === 'custom' ? (
-            <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
-              <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
-              <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
-            </div>
-          ) : (
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('min-h-10 w-fit rounded-full px-4 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-surface text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
+          <div className="flex min-w-0 flex-col gap-2 sm:items-end">
             <div className="flex w-full overflow-x-auto rounded-full bg-surface p-1 sm:w-auto">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
@@ -458,8 +445,21 @@ export function KamsFinanceDashboard() {
                   {t(`kams.period.${item}`)}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setPeriod('custom')}
+                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t('dashboard.customPeriod')}
+              </button>
             </div>
-          )}
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
+                <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
+              </div>
+            ) : null}
+          </div>
         </div>
         {filtersOpen && data.can_filter_offices ? (
           <div className="mt-3 max-w-sm">
@@ -504,6 +504,7 @@ export function KamsFinanceDashboard() {
           <KpiCard label={t('dashboard.receivables')} value={money(position?.receivables)} delta={delta.receivables} tone="accent" />
           <KpiCard label={t('dashboard.payables')} value={money(position?.payables)} delta={delta.payables} tone="danger" />
           <KpiCard label={t('kams.inventoryValue')} value={money(position?.inventory_value || data.totals.inventory_value)} />
+          <KpiCard label={t('kams.patrimoineValue')} value={money(position?.patrimoine_value || 0)} />
           <KpiCard label={t('kams.totalSavings')} value={money(savings?.total || 0)} hint={t('kams.savingsAsLiability')} />
         </div>
       </div>
@@ -709,9 +710,9 @@ export function KamsFinanceDashboard() {
         </Card>
       ) : null}
 
-      <div>
-        <SectionTitle icon={Building2} title={t('kams.officeFinance')} hint={t('kams.officeFinanceHint')} />
-        {(data.offices || []).length === 0 ? <Empty>{t('common.empty')}</Empty> : (
+      {(data.offices || []).length > 1 ? (
+        <div>
+          <SectionTitle icon={Building2} title={t('kams.officeFinance')} hint={t('kams.officeFinanceHint')} />
           <div className="grid gap-3">
             {(data.offices || []).map((office) => {
               const open = openOffice === office.id
@@ -767,8 +768,8 @@ export function KamsFinanceDashboard() {
               )
             })}
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }

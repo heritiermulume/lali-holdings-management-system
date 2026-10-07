@@ -10,7 +10,6 @@ use App\Models\City;
 use App\Models\Commune;
 use App\Models\Company;
 use App\Models\Country;
-use App\Models\Department;
 use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Province;
@@ -32,7 +31,7 @@ class OrganizationController extends Controller
     {
         return $this->ok(
             Country::query()
-                ->with(['provinces.cities.communes.neighborhoods', 'cities.communes.neighborhoods', 'companies.offices.departments'])
+                ->with(['provinces.cities.communes.neighborhoods', 'cities.communes.neighborhoods', 'companies.offices'])
                 ->orderBy('name')
                 ->get()
         );
@@ -236,7 +235,7 @@ class OrganizationController extends Controller
         $user = $request->user();
         $query = Company::query()
             ->with($this->companyRelations())
-            ->withCount(['offices', 'departments']);
+            ->withCount(['offices']);
 
         if ($request->boolean('business')) {
             $query->whereNotNull('system_module_id');
@@ -270,7 +269,7 @@ class OrganizationController extends Controller
 
     public function showCompany(Company $company): JsonResponse
     {
-        return $this->ok($company->load([...$this->companyRelations(), 'departments', 'activities', 'modules']));
+        return $this->ok($company->load([...$this->companyRelations(), 'activities', 'modules']));
     }
 
     public function updateCompany(Request $request, Company $company): JsonResponse
@@ -383,38 +382,6 @@ class OrganizationController extends Controller
     public function destroyOffice(Office $office): JsonResponse
     {
         return $this->destroyModel($office);
-    }
-
-    public function departments(Request $request): JsonResponse
-    {
-        return $this->list(Department::query()->with(['company', 'office'])->when($request->company_id, fn ($q) => $q->where('company_id', $request->company_id)), $request);
-    }
-
-    public function storeDepartment(Request $request): JsonResponse
-    {
-        return $this->storeModel(Department::class, $request->validate([
-            'company_id' => ['required', 'exists:companies,id'],
-            'office_id' => ['nullable', 'exists:offices,id'],
-            'name' => ['required', 'string'],
-            'code' => ['required', 'string'],
-            'is_active' => ['boolean'],
-        ]));
-    }
-
-    public function updateDepartment(Request $request, Department $department): JsonResponse
-    {
-        return $this->updateModel($department, $request->validate([
-            'company_id' => ['sometimes', 'exists:companies,id'],
-            'office_id' => ['nullable', 'exists:offices,id'],
-            'name' => ['sometimes', 'string'],
-            'code' => ['sometimes', 'string'],
-            'is_active' => ['boolean'],
-        ]));
-    }
-
-    public function destroyDepartment(Department $department): JsonResponse
-    {
-        return $this->destroyModel($department, ['users']);
     }
 
     public function activities(Request $request): JsonResponse

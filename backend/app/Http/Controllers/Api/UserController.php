@@ -232,7 +232,6 @@ class UserController extends Controller
             'is_active' => ['boolean'],
             'primary_company_id' => ['nullable', 'exists:companies,id'],
             'primary_office_id' => ['nullable', 'exists:offices,id'],
-            'primary_department_id' => ['nullable', 'exists:departments,id'],
             'password' => [$userId ? 'nullable' : 'nullable', 'string', 'min:8'],
             'avatar' => ['nullable', 'image', 'max:2048'],
             'remove_avatar' => ['sometimes', 'boolean'],

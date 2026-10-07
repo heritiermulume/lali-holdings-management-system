@@ -45,7 +45,7 @@ class MemberMigrationService
             $issueCount = 0;
 
             foreach ($rows as $index => $payload) {
-                $normalized = $this->resolveLinkedRecords($this->normalizeRow($payload));
+                $normalized = $this->resolveLinkedRecords($this->normalizeRow($payload), $companyId);
                 $issues = $this->detectIssues($companyId, $normalized);
                 $member = $this->createPendingMember($companyId, $normalized, $issues);
                 $credentials = $this->accounts->provision($member);
@@ -61,13 +61,17 @@ class MemberMigrationService
                 ]);
 
                 $this->storeOpeningPositions($companyId, $member, $normalized);
-                $this->communications->notifyMigration(
-                    $member,
-                    $issues === [] ? 'profile_verification' : 'missing_information',
-                    'fr',
-                    implode(', ', $issues),
-                    $credentials,
-                );
+                $this->accounts->mailCredentials($member, $credentials);
+                $this->communications->notifyMemberRegistered($member, 'fr', $credentials);
+                if ($issues !== []) {
+                    $this->communications->notifyMigration(
+                        $member,
+                        'missing_information',
+                        'fr',
+                        implode(', ', $issues),
+                        $credentials,
+                    );
+                }
 
                 if ($issues !== []) {
                     $issueCount++;
@@ -145,13 +149,17 @@ class MemberMigrationService
             'full_name' => ['full_name', 'nom', 'name', 'nom_complet'],
             'first_name' => ['first_name', 'prenom', 'prénom', 'firstname'],
             'last_name' => ['last_name', 'nom_famille', 'lastname', 'family_name'],
-            'phone' => ['phone', 'telephone', 'tel'],
+            'phone' => ['phone', 'telephone', 'tel', 'whatsapp'],
             'address' => ['address', 'adresse'],
+            'birth_date' => ['birth_date', 'date_naissance', 'birthday', 'dob'],
             'guardian_name' => ['guardian_name', 'parent', 'tuteur'],
             'guardian_phone' => ['guardian_phone', 'contact_parent'],
-            'trainer_name' => ['trainer_name', 'formateur', 'trainer'],
-            'trainer_email' => ['trainer_email', 'formateur_email', 'encadreur_email'],
-            'trainer_user_id' => ['trainer_user_id', 'trainer_id', 'formateur_id'],
+            'trainer_name' => ['trainer_name', 'formateur', 'trainer', 'parrain_name', 'sponsor_name'],
+            'trainer_email' => ['trainer_email', 'formateur_email', 'encadreur_email', 'parrain_email', 'sponsor_email'],
+            'trainer_user_id' => ['trainer_user_id', 'trainer_id', 'formateur_id', 'parrain_user_id'],
+            'coach_member_code' => ['coach_member_code', 'coach_code', 'encadreur_code', 'encadreur_member_code', 'supervisor_code'],
+            'coach_name' => ['coach_name', 'encadreur', 'encadreur_name', 'supervisor_name'],
+            'sponsor_member_code' => ['sponsor_member_code', 'sponsor_code', 'parrain_code', 'parrain_member_code'],
             'manager_name' => ['manager_name', 'manager'],
             'office_code' => ['office_code', 'bureau', 'office', 'location'],
             'joined_on' => ['joined_on', 'date_adhesion', 'join_date'],
@@ -183,14 +191,29 @@ class MemberMigrationService
             }
         }
 
+        if (array_key_exists('gender', $normalized)) {
+            $normalized['gender'] = $this->normalizeGender((string) $normalized['gender']);
+        }
+
         return $normalized;
+    }
+
+    private function normalizeGender(string $value): ?string
+    {
+        $raw = Str::of($value)->lower()->ascii()->trim()->toString();
+
+        return match ($raw) {
+            'male', 'm', 'homme', 'h', 'masculin', 'man' => 'male',
+            'female', 'f', 'femme', 'feminin', 'woman' => 'female',
+            default => null,
+        };
     }
 
     /**
      * @param  array<string, mixed>  $row
      * @return array<string, mixed>
      */
-    private function resolveLinkedRecords(array $row): array
+    private function resolveLinkedRecords(array $row, int $companyId): array
     {
         $trainerId = $row['trainer_user_id'] ?? null;
         $trainerEmail = $row['trainer_email'] ?? null;
@@ -206,6 +229,38 @@ class MemberMigrationService
                 $row['trainer_name'] = $trainer->name;
             } else {
                 $row['trainer_unresolved'] = true;
+            }
+        }
+
+        if (blank($row['trainer_user_id'] ?? null) && filled($row['sponsor_member_code'] ?? null)) {
+            $sponsor = KamsMember::query()
+                ->where('company_id', $companyId)
+                ->where('member_code', $row['sponsor_member_code'])
+                ->first();
+
+            if ($sponsor?->user_id) {
+                $row['trainer_user_id'] = $sponsor->user_id;
+                $row['trainer_name'] = $sponsor->full_name;
+            } else {
+                $row['trainer_unresolved'] = true;
+            }
+        }
+
+        if (filled($row['coach_member_code'] ?? null) || filled($row['coach_name'] ?? null)) {
+            $coach = KamsMember::query()
+                ->where('company_id', $companyId)
+                ->when(
+                    filled($row['coach_member_code'] ?? null),
+                    fn ($q) => $q->where('member_code', $row['coach_member_code']),
+                    fn ($q) => $q->where('full_name', $row['coach_name']),
+                )
+                ->first();
+
+            if ($coach) {
+                $row['coach_member_id'] = $coach->id;
+                $row['coach_name'] = $coach->full_name;
+            } else {
+                $row['coach_unresolved'] = true;
             }
         }
 
@@ -238,7 +293,7 @@ class MemberMigrationService
     {
         $issues = [];
 
-        if (blank($row['full_name'] ?? null)) {
+        if (blank($row['full_name'] ?? null) && blank($row['first_name'] ?? null) && blank($row['last_name'] ?? null)) {
             $issues[] = 'missing_information';
         }
 
@@ -270,7 +325,11 @@ class MemberMigrationService
             }
         }
 
-        if (! empty($row['trainer_unresolved']) || (blank($row['trainer_name'] ?? null) && blank($row['trainer_user_id'] ?? null))) {
+        if (! empty($row['trainer_unresolved'])) {
+            $issues[] = 'incorrect_trainer';
+        }
+
+        if (! empty($row['coach_unresolved'])) {
             $issues[] = 'incorrect_trainer';
         }
 
@@ -337,6 +396,7 @@ class MemberMigrationService
             'member_code' => $code,
             ...$names,
             'gender' => $row['gender'] ?? null,
+            'birth_date' => $row['birth_date'] ?? null,
             'phone' => $row['phone'] ?? null,
             'email' => $row['email'] ?? null,
             'address' => $row['address'] ?? null,
@@ -344,6 +404,8 @@ class MemberMigrationService
             'guardian_phone' => $row['guardian_phone'] ?? null,
             'trainer_name' => $row['trainer_name'] ?? null,
             'trainer_user_id' => $row['trainer_user_id'] ?? null,
+            'coach_member_id' => $row['coach_member_id'] ?? null,
+            'coach_name' => $row['coach_name'] ?? null,
             'manager_name' => $row['manager_name'] ?? null,
             'team_name' => $row['team_name'] ?? null,
             'rank' => $row['rank'] ?? null,

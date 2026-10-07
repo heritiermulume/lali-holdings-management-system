@@ -66,7 +66,7 @@ export function KamsReceipts() {
                 </div>
               ))}
             </div>
-            {row.status === 'pending' && hasPermission('kams.products.update') ? (
+            {row.status === 'pending' && hasPermission('kams.stock.update') ? (
               <div className="mt-4 flex gap-2">
                 <Button onClick={() => void act(row.id, 'validate')}>{t('kams.validateReceipt')}</Button>
                 <Button variant="secondary" onClick={() => void act(row.id, 'cancel')}>{t('kams.cancelReceipt')}</Button>
@@ -153,7 +153,7 @@ export function KamsReturns() {
   return (
     <div>
       <div className="mb-4 flex justify-end">
-        {hasPermission('kams.products.update') ? <Button onClick={() => { setError(''); setOpen(true) }}>{t('kams.newReturn')}</Button> : null}
+        {hasPermission('kams.stock.update') ? <Button onClick={() => { setError(''); setOpen(true) }}>{t('kams.newReturn')}</Button> : null}
       </div>
       {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       <div className="grid gap-3">
@@ -175,7 +175,7 @@ export function KamsReturns() {
                 </div>
               ))}
             </div>
-            {row.status === 'requested' && hasPermission('kams.products.update') ? (
+            {row.status === 'requested' && hasPermission('kams.stock.update') ? (
               <Button className="mt-4" onClick={() => void accept(row.id)}>{t('kams.acceptReturn')}</Button>
             ) : null}
           </Card>
@@ -278,7 +278,7 @@ export function KamsCommissions() {
               </Badge>
             </div>
             <div className="mt-3 text-sm">{t('kams.payable')}: <b>{money(row.payable_amount)}</b> · {t('kams.paid')}: <b>{money(row.paid_amount)}</b></div>
-            {row.status === 'payable' && hasPermission('kams.products.update') ? (
+            {row.status === 'payable' && hasPermission('kams.stock.update') ? (
               <Button className="mt-4" onClick={() => { setPaying(row.id); setAmount(String(row.payable_amount - row.paid_amount)); setError('') }}>{t('kams.payCommission')}</Button>
             ) : null}
           </Card>

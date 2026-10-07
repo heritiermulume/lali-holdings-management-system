@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('kams_products', function (Blueprint $table) {
-            $table->string('image_path')->nullable()->after('description');
+            $table->string('image_path')->nullable()->after('status');
         });
     }
 

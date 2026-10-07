@@ -18,10 +18,8 @@ type Product = {
   price: number
   cost: number
   field_price?: number
-  manager_price?: number
   company_price?: number
   stock: number
-  description?: string | null
   image_path?: string | null
   image_url?: string | null
   balances?: Array<{ id: number; quantity: number; depot_id?: number; depot?: { id: number; name: string; kind: string } | null }>
@@ -99,6 +97,51 @@ function assignedWarehouseIds(product: Product) {
   return assignedLocationIds(product, 'warehouse')
 }
 
+type WarehouseProductRow = {
+  id: number | string
+  quantity: number
+  condition?: string
+  product: Product
+}
+
+/** Products linked to a warehouse from DB balances / product assignments (no static catalog). */
+function productsForWarehouse(warehouse: Location, catalog: Product[]): WarehouseProductRow[] {
+  const balanceByProductId = new Map<number, Balance>()
+  for (const balance of warehouse.balances || []) {
+    const productId = balance.product?.id
+    if (!productId || (balance.condition || 'available') !== 'available') continue
+    balanceByProductId.set(productId, balance)
+  }
+
+  const rows: WarehouseProductRow[] = []
+  const seen = new Set<number>()
+
+  for (const product of catalog) {
+    const balance = balanceByProductId.get(product.id)
+    const assigned = assignedWarehouseIds(product).includes(warehouse.id)
+    if (!balance && !assigned) continue
+    seen.add(product.id)
+    rows.push({
+      id: balance?.id ?? `product-${product.id}`,
+      quantity: balance?.quantity ?? 0,
+      condition: balance?.condition || 'available',
+      product,
+    })
+  }
+
+  for (const [productId, balance] of balanceByProductId) {
+    if (seen.has(productId) || !balance.product) continue
+    rows.push({
+      id: balance.id,
+      quantity: balance.quantity,
+      condition: balance.condition,
+      product: balance.product,
+    })
+  }
+
+  return rows.sort((a, b) => a.product.name.localeCompare(b.product.name))
+}
+
 export function KamsWarehouses() {
   const { t, i18n } = useTranslation()
   const { hasPermission, user } = useAuth()
@@ -130,8 +173,8 @@ export function KamsWarehouses() {
   const [transferLines, setTransferLines] = useState<Array<{ to_depot_id: string; quantity: string }>>([{ to_depot_id: '', quantity: '1' }])
   const imageInput = useRef<HTMLInputElement>(null)
 
-  const loadWarehouses = () => api.get('/modules/kams/depots', { params: { kind: 'warehouse', per_page: 50 } }).then((res) => setRows(res.data.data))
-  const loadProducts = () => api.get('/modules/kams/products', { params: { per_page: 100 } }).then((res) => setProducts(res.data.data))
+  const loadWarehouses = () => api.get('/modules/kams/depots', { params: { kind: 'warehouse', per_page: 100 } }).then((res) => setRows(res.data.data || []))
+  const loadProducts = () => api.get('/modules/kams/products', { params: { per_page: 200 } }).then((res) => setProducts(res.data.data || []))
 
   useEffect(() => {
     void loadWarehouses()
@@ -171,12 +214,8 @@ export function KamsWarehouses() {
     setProductForm({
       name: product.name,
       sku: product.sku || '',
-      field_price: String(product.field_price || product.price || ''),
       price: String(product.field_price || product.price || ''),
-      manager_price: product.manager_price != null ? String(product.manager_price) : '',
-      company_price: String(product.company_price || product.cost || ''),
       cost: String(product.company_price || product.cost || ''),
-      description: product.description || '',
     })
     setSelectedWarehouseIds(warehouseIds)
     setAssignAllWarehouses(allWarehouseIds.length > 0 && allWarehouseIds.every((id) => warehouseIds.includes(id)))
@@ -273,14 +312,10 @@ export function KamsWarehouses() {
         if (!editingProduct && companyId) payload.append('company_id', String(companyId))
         payload.append('name', productForm.name || '')
         if (productForm.sku) payload.append('sku', productForm.sku)
-        payload.append('price', productForm.field_price || productForm.price || '0')
-        payload.append('field_price', productForm.field_price || productForm.price || '0')
-        if (productForm.manager_price) payload.append('manager_price', productForm.manager_price)
-        if (productForm.company_price || productForm.cost) {
-          payload.append('company_price', productForm.company_price || productForm.cost)
-          payload.append('cost', productForm.company_price || productForm.cost)
-        }
-        if (productForm.description) payload.append('description', productForm.description)
+        payload.append('price', productForm.price || '0')
+        payload.append('field_price', productForm.price || '0')
+        payload.append('company_price', productForm.cost || '0')
+        payload.append('cost', productForm.cost || '0')
         if (!editingProduct) {
           payload.append('stock', productForm.stock || '0')
           if (initialWarehouseId) payload.append('warehouse_id', String(initialWarehouseId))
@@ -303,12 +338,10 @@ export function KamsWarehouses() {
           company_id: companyId,
           name: productForm.name,
           sku: productForm.sku || null,
-          price: Number(productForm.field_price || productForm.price),
-          field_price: Number(productForm.field_price || productForm.price),
-          manager_price: productForm.manager_price ? Number(productForm.manager_price) : undefined,
-          company_price: productForm.company_price ? Number(productForm.company_price) : (productForm.cost ? Number(productForm.cost) : undefined),
-          cost: productForm.company_price ? Number(productForm.company_price) : (productForm.cost ? Number(productForm.cost) : undefined),
-          description: productForm.description || null,
+          price: Number(productForm.price || 0),
+          field_price: Number(productForm.price || 0),
+          company_price: Number(productForm.cost || 0),
+          cost: Number(productForm.cost || 0),
           stock: productForm.stock ? Number(productForm.stock) : 0,
           warehouse_id: initialWarehouseId || undefined,
           assign_all_warehouses: assignAllWarehouses,
@@ -421,7 +454,8 @@ export function KamsWarehouses() {
       <div className="grid gap-3">
         {rows.map((row) => {
           const expanded = openWarehouseIds.includes(row.id)
-          const warehouseProducts = (row.balances || []).filter((item) => (item.condition || 'available') === 'available' && item.product)
+          const warehouseProducts = productsForWarehouse(row, products)
+          const warehouseUnits = warehouseProducts.reduce((sum, item) => sum + (item.quantity || 0), 0)
           return (
             <Card key={row.id} className="overflow-hidden">
               <button
@@ -442,7 +476,7 @@ export function KamsWarehouses() {
                     <div className="mt-1 text-xs text-muted">
                       {t('kams.products')}: {warehouseProducts.length}
                       {' · '}
-                      {t('kams.quantity')}: {locationUnits(row)}
+                      {t('kams.quantity')}: {warehouseUnits}
                     </div>
                   </div>
                 </div>
@@ -455,70 +489,72 @@ export function KamsWarehouses() {
                   ) : (
                     <div className="space-y-3">
                       {warehouseProducts.map((item) => (
-                        <div key={item.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 text-sm sm:flex sm:items-center sm:gap-3">
-                          <ProductThumb name={item.product?.name || ''} url={item.product?.image_url} />
+                        <div key={item.id} className="grid grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 rounded-xl border border-line bg-white px-3 py-3 text-sm sm:flex sm:items-center sm:gap-3">
+                          <ProductThumb name={item.product.name || ''} url={item.product.image_url} />
                           <div className="min-w-0 sm:flex-1">
                             <div className="text-base font-bold">
-                              {item.product?.name}
+                              {item.product.name}
                               {item.condition && item.condition !== 'available' ? ` (${item.condition})` : ''}
                             </div>
-                            {item.product ? (
-                              <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
-                                <span>
-                                  {item.product.sku ? `${item.product.sku} · ` : ''}
-                                  {t('kams.price')} {money(item.product.field_price || item.product.price)}
-                                </span>
-                                <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
-                              </div>
-                            ) : null}
+                            <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
+                              <span>
+                                {item.product.sku ? `${item.product.sku} · ` : ''}
+                                {t('kams.salePrice')} {money(item.product.field_price || item.product.price)}
+                              </span>
+                              <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
+                            </div>
                           </div>
                           <span className="hidden shrink-0 font-semibold sm:inline">{item.quantity}</span>
                           <div className="col-start-2 flex flex-wrap items-center gap-1 sm:col-auto sm:shrink-0">
-                            {lookups?.can_manage_warehouses && hasPermission('kams.products.update') && item.product ? (
+                            {lookups?.can_manage_warehouses && hasPermission('kams.stock.update') ? (
                               <button
                                 type="button"
                                 aria-label={t('kams.replenishStock')}
                                 title={t('kams.replenishStock')}
-                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
-                                onClick={() => item.product && openReplenish(row, item.product)}
+                                className="inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-lg text-sm text-ink hover:bg-surface md:w-auto md:px-3"
+                                onClick={() => openReplenish(row, item.product)}
                               >
                                 <PackagePlus size={16} />
+                                <span className="hidden md:inline">{t('kams.replenishStock')}</span>
                               </button>
                             ) : null}
-                            {hasPermission('kams.products.update') && item.product && item.quantity > 0 ? (
+                            {hasPermission('kams.stock.update') && item.quantity > 0 ? (
                               <button
                                 type="button"
                                 aria-label={t('kams.transferStock')}
                                 title={t('kams.transferStock')}
-                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
-                                onClick={() => item.product && openTransfer(row, item.product, item.quantity)}
+                                className="inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-lg text-sm text-ink hover:bg-surface md:w-auto md:px-3"
+                                onClick={() => openTransfer(row, item.product, item.quantity)}
                               >
                                 <Truck size={16} />
+                                <span className="hidden md:inline">{t('kams.transferStock')}</span>
                               </button>
                             ) : null}
-                            {hasPermission('kams.products.update') && item.product ? (
+                            {hasPermission('kams.products.update') ? (
                               <button
                                 type="button"
                                 aria-label={t('common.edit')}
                                 title={t('common.edit')}
-                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
+                                className="inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-lg text-sm text-ink hover:bg-surface md:w-auto md:px-3"
                                 onClick={() => {
-                                  const catalog = products.find((product) => product.id === item.product?.id) || item.product
-                                  if (catalog) openEditProduct(catalog)
+                                  const catalog = products.find((product) => product.id === item.product.id) || item.product
+                                  openEditProduct(catalog)
                                 }}
                               >
                                 <Pencil size={16} />
+                                <span className="hidden md:inline">{t('common.edit')}</span>
                               </button>
                             ) : null}
-                            {hasPermission('kams.products.delete') && item.product ? (
+                            {hasPermission('kams.products.delete') ? (
                               <button
                                 type="button"
                                 aria-label={t('common.delete')}
                                 title={t('common.delete')}
-                                className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white"
-                                onClick={() => { setProductError(''); setDeletingProduct(item.product || null) }}
+                                className="inline-flex h-9 w-9 items-center justify-center gap-1.5 rounded-lg text-sm text-danger hover:bg-surface md:w-auto md:px-3"
+                                onClick={() => { setProductError(''); setDeletingProduct(item.product) }}
                               >
                                 <Trash2 size={16} />
+                                <span className="hidden md:inline">{t('common.delete')}</span>
                               </button>
                             ) : null}
                           </div>
@@ -530,7 +566,7 @@ export function KamsWarehouses() {
                     {hasPermission('kams.products.create') ? (
                       <Button onClick={() => openCreateProduct(row)}>{t('kams.addProduct')}</Button>
                     ) : null}
-                    {lookups?.can_manage_warehouses && hasPermission('kams.products.update') ? (
+                    {lookups?.can_manage_warehouses && hasPermission('kams.stock.update') ? (
                       <Button
                         variant="secondary"
                         onClick={() => openReplenish(row)}
@@ -538,9 +574,9 @@ export function KamsWarehouses() {
                         {t('kams.receiveStock')}
                       </Button>
                     ) : null}
-                    {hasPermission('kams.products.view') ? (
+                    {hasPermission('kams.products.view') || hasPermission('kams.stock.warehouses.view') || hasPermission('kams.stock.depots.view') ? (
                       <>
-                        {(lookups?.can_manage_warehouses && hasPermission('kams.products.update')) || hasPermission('kams.products.create') ? (
+                        {(lookups?.can_manage_warehouses && hasPermission('kams.stock.update')) || hasPermission('kams.products.create') ? (
                           <span className="mx-1 hidden h-8 w-px bg-line sm:inline-block" aria-hidden />
                         ) : null}
                         <Button
@@ -708,17 +744,18 @@ export function KamsWarehouses() {
                 event.target.value = ''
               }}
             />
-            <p className="text-center text-xs text-muted">{t('kams.productImageHint')}</p>
           </div>
           <Field label={t('org.name')} value={productForm.name || ''} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} required />
           <Field label="SKU" value={productForm.sku || ''} onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })} />
-          <Field label={t('kams.fieldPrice')} type="number" min="0" step="0.01" value={productForm.field_price || productForm.price || ''} onChange={(e) => setProductForm({ ...productForm, field_price: e.target.value, price: e.target.value })} required />
-          <Field label={t('kams.managerPrice')} type="number" min="0" step="0.01" value={productForm.manager_price || ''} onChange={(e) => setProductForm({ ...productForm, manager_price: e.target.value })} />
-          <Field label={t('kams.companyPrice')} type="number" min="0" step="0.01" value={productForm.company_price || productForm.cost || ''} onChange={(e) => setProductForm({ ...productForm, company_price: e.target.value, cost: e.target.value })} />
-          <Field label={t('kams.notes')} value={productForm.description || ''} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t('kams.purchasePrice')} type="number" min="0" step="0.01" value={productForm.cost || ''} onChange={(e) => setProductForm({ ...productForm, cost: e.target.value })} required />
+            <Field label={t('kams.salePrice')} type="number" min="0" step="0.01" value={productForm.price || ''} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} required />
+          </div>
           {!editingProduct ? (
             <>
-              <Field label={t('kams.initialStock')} type="number" min="0" value={productForm.stock || ''} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={t('kams.initialStock')} type="number" min="0" value={productForm.stock || ''} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} />
+              </div>
               <p className="text-xs text-muted">{t('kams.initialStockHint')}</p>
               {(assignAllWarehouses ? (lookups?.warehouses || []).map((row) => row.id) : selectedWarehouseIds).length > 1 ? (
                 <Select label={t('kams.initialStockWarehouse')} value={productForm.warehouse_id || ''} onChange={(e) => setProductForm({ ...productForm, warehouse_id: e.target.value })}>
@@ -809,7 +846,7 @@ export function KamsWarehouses() {
         </div>
       </Modal>
 
-      <Modal open={Boolean(transferTarget)} title={t('kams.transferStock')} onClose={() => setTransferTarget(null)}>
+      <Modal open={Boolean(transferTarget)} title={t('kams.transferStockTitle')} onClose={() => setTransferTarget(null)}>
         <form className="space-y-3" onSubmit={(e) => void submitTransfer(e)}>
           {transferError ? <p className="text-sm text-red-600">{transferError}</p> : null}
           <p className="text-sm text-muted">
@@ -892,7 +929,7 @@ export function KamsWarehouses() {
             onChange={(e) => setTransferForm({ ...transferForm, notes: e.target.value })}
           />
           <p className="text-xs text-muted">{t('kams.transferStockHint')}</p>
-          <Button type="submit" className="w-full">{t('common.save')}</Button>
+          <Button type="submit" className="w-full">{t('kams.transferStock')}</Button>
         </form>
       </Modal>
     </div>
@@ -1223,7 +1260,7 @@ export function KamsDepots() {
                               <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
                                 <span>
                                   {item.product.sku ? `${item.product.sku} · ` : ''}
-                                  {t('kams.price')} {money(item.product.field_price || item.product.price)}
+                                  {t('kams.salePrice')} {money(item.product.field_price || item.product.price)}
                                 </span>
                                 <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
                               </div>
@@ -1240,7 +1277,7 @@ export function KamsDepots() {
                             >
                               <Info size={16} />
                             </button>
-                            {hasPermission('kams.products.update') ? (
+                            {hasPermission('kams.stock.update') ? (
                               <button
                                 type="button"
                                 aria-label={t('kams.supplyStock')}
@@ -1259,7 +1296,7 @@ export function KamsDepots() {
                                 <PackagePlus size={16} />
                               </button>
                             ) : null}
-                            {item.product && item.quantity > 0 && hasPermission('kams.products.update') ? (
+                            {item.product && item.quantity > 0 && hasPermission('kams.stock.update') ? (
                               <button
                                 type="button"
                                 aria-label={t('kams.removeFromDepot')}
@@ -1270,7 +1307,7 @@ export function KamsDepots() {
                                 <Truck size={16} />
                               </button>
                             ) : null}
-                            {hasPermission('kams.products.update') ? (
+                            {hasPermission('kams.stock.update') ? (
                               <button
                                 type="button"
                                 aria-label={t('kams.adjustStock')}
@@ -1292,14 +1329,14 @@ export function KamsDepots() {
                     </div>
                   )}
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {hasPermission('kams.products.update') ? (
+                    {hasPermission('kams.stock.update') ? (
                       <Button variant="secondary" onClick={() => openReceive(row)}>
                         {t('kams.receiveStock')}
                       </Button>
                     ) : null}
-                    {hasPermission('kams.products.view') ? (
+                    {hasPermission('kams.products.view') || hasPermission('kams.stock.warehouses.view') || hasPermission('kams.stock.depots.view') ? (
                       <>
-                        {hasPermission('kams.products.update') ? (
+                        {hasPermission('kams.stock.update') ? (
                           <span className="mx-1 hidden h-8 w-px bg-line sm:inline-block" aria-hidden />
                         ) : null}
                         <Button
@@ -1494,12 +1531,11 @@ export function KamsDepots() {
               </div>
             </div>
             <div className="grid gap-2 text-sm sm:grid-cols-2">
-              <div>{t('kams.fieldPrice')}: <strong>{money(infoProduct.product.field_price || infoProduct.product.price)}</strong></div>
-              <div>{t('kams.managerPrice')}: <strong>{money(infoProduct.product.manager_price || 0)}</strong></div>
-              <div>{t('kams.companyPrice')}: <strong>{money(infoProduct.product.company_price || infoProduct.product.cost)}</strong></div>
+              <div>{t('kams.purchasePrice')}: <strong>{money(infoProduct.product.company_price || infoProduct.product.cost)}</strong></div>
+              <div>{t('kams.salePrice')}: <strong>{money(infoProduct.product.field_price || infoProduct.product.price)}</strong></div>
+              <div>{t('kams.grossProfit')}: <strong>{money(Math.max(0, (infoProduct.product.field_price || infoProduct.product.price) - (infoProduct.product.company_price || infoProduct.product.cost)))}</strong></div>
               <div>{t('kams.quantity')}: <strong>{infoProduct.quantity}</strong></div>
             </div>
-            {infoProduct.product.description ? <p className="text-sm text-muted">{infoProduct.product.description}</p> : null}
             <div className="space-y-2">
               <div className="text-sm font-medium">{t('kams.adjustmentHistory')}</div>
               {infoAdjustments.length === 0 ? (

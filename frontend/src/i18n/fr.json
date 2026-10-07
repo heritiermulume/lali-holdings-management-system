@@ -94,12 +94,13 @@
     "kamsCompensation": "Rémunération KAMS",
     "kamsCompensationHint": "Répartition des revenus sur la période récente : manager, assistants, divisionnaire et secrétaire.",
     "kamsSavings": "Épargne KAMS",
-    "kamsSavingsHint": "Soldes d'épargne des distributeurs et des assistants managers.",
+    "kamsSavingsHint": "Soldes d'épargne des distributeurs, assistants managers, managers et divisionnaires.",
     "viewKamsAccounts": "Voir les comptes membres",
     "viewKamsRevenue": "Configurer la rémunération",
     "guy_savings": "Épargne des distributeurs",
     "assistant_manager_savings": "Épargne assistants managers",
     "manager_savings": "Épargne managers",
+    "divisionnaire_savings": "Épargne divisionnaires",
     "compensation": {
       "generated": "Revenu généré",
       "posted": "Montants distribués",
@@ -241,7 +242,7 @@
   },
   "org": {
     "title": "Organisation",
-    "subtitle": "Pays, provinces, villes, communes, quartiers et départements",
+    "subtitle": "Pays, provinces, villes, communes et quartiers",
     "countries": "Pays",
     "provinces": "Provinces",
     "cities": "Villes",
@@ -272,7 +273,6 @@
     "recordedBy": "Enregistré par",
     "noOfficeActors": "Créateur et responsable non renseignés",
     "address": "Adresse",
-    "departments": "Départements",
     "add": "Ajouter",
     "pickCountry": "Choisir un pays",
     "searchCountry": "Rechercher un pays…",
@@ -455,6 +455,33 @@
     "clientsAndSuppliers": "Clients & Fournisseurs",
     "clientsAndSuppliersHint": "Gérez vos clients et vos fournisseurs au même endroit.",
     "clientsPageHint": "Retrouvez et gérez les clients de chaque bureau.",
+    "patrimoine": "Patrimoine",
+    "patrimoineHint": "Enregistrez les biens et ressources de chaque bureau.",
+    "patrimoineTotal": "Valeur totale",
+    "patrimoineValue": "Valeur patrimoine",
+    "assetImage": "Image du bien",
+    "addAsset": "Ajouter un bien",
+    "editAsset": "Modifier le bien",
+    "deleteAsset": "Supprimer le bien",
+    "deleteAssetConfirm": "Supprimer le bien « {{name}} » ?",
+    "searchAssets": "Rechercher un bien…",
+    "requiredAssetFields": "Le nom et le bureau sont obligatoires.",
+    "assetCategory": "Catégorie",
+    "unitValue": "Valeur unitaire",
+    "acquiredOn": "Date d'acquisition",
+    "assetCategoryOption": {
+      "furniture": "Mobilier",
+      "equipment": "Équipement",
+      "vehicle": "Véhicule",
+      "electronics": "Électronique",
+      "real_estate": "Immobilier",
+      "other": "Autre"
+    },
+    "assetStatus": {
+      "active": "Actif",
+      "maintenance": "Maintenance",
+      "disposed": "Cédé"
+    },
     "suppliers": "Fournisseurs",
     "suppliersHint": "Retrouvez et gérez les fournisseurs qui approvisionnent votre stock.",
     "addSupplier": "Ajouter un fournisseur",
@@ -531,7 +558,7 @@
     "financePlTitle": "Compte de résultat",
     "financePlHint": "Revenus, dépenses, marge et encaissements sur la période sélectionnée.",
     "financeBalanceTitle": "Bilan & liquidités",
-    "financeBalanceHint": "Actifs, passifs, trésorerie, créances, dettes et stocks à date.",
+    "financeBalanceHint": "Actifs, passifs, trésorerie, créances, dettes, stocks et patrimoine à date.",
     "financeCompositionTitle": "Structure financière",
     "financeCompositionHint": "Répartition des principaux postes de trésorerie, actifs et passifs.",
     "revenueExpenseTrend": "Évolution revenus & dépenses",
@@ -668,11 +695,12 @@
     "headOfficeStock": "Entrepôt principal",
     "remainingOffice": "Dépôt bureau",
     "stockFormula": "Reçu / restant",
-    "fieldPrice": "Prix terrain",
+    "fieldPrice": "Prix de vente",
     "price": "Prix",
+    "purchasePrice": "Prix d'achat",
     "managerPrice": "Prix manager",
-    "companyPrice": "Prix compagnie",
-    "companyShare": "Part compagnie",
+    "companyPrice": "Prix d'achat",
+    "companyShare": "Coût d'achat",
     "ledger": {
       "opening": "Solde d'ouverture",
       "settlement": "Règlement",
@@ -887,6 +915,7 @@
     "initialStock": "Stock initial",
     "cost": "Coût",
     "salePrice": "Prix de vente",
+    "grossProfit": "Bénéfice",
     "region": "Région",
     "noRegion": "Sans région",
     "addWarehouse": "Créer",
@@ -964,12 +993,10 @@
       "settleAssignment": "Clôturer la journée de {{agent}}.",
       "investigateLoss": "Analyser les pertes sur {{product}}."
     },
-    "campaignsHint": "Campagnes marketing, canaux et budgets.",
     "clients": "Clients",
     "products": "Produits",
     "assignmentValue": "Valeurs",
     "orders": "Commandes",
-    "campaigns": "Campagnes",
     "newClient": "Nouveau client",
     "addClient": "Ajouter",
     "editClient": "Modifier le client",
@@ -991,6 +1018,7 @@
     "newProduct": "Nouveau produit",
     "addProduct": "Ajouter un produit",
     "transferStock": "Transférer",
+    "transferStockTitle": "Transfère",
     "transferDestination": "Destination",
     "addTransferDestination": "Ajouter une destination",
     "removeDestination": "Retirer",
@@ -1003,7 +1031,6 @@
     "deleteProduct": "Supprimer le produit",
     "deleteProductConfirm": "Supprimer le produit {{name}} ? Cette action est définitive.",
     "productImage": "Image du produit",
-    "productImageHint": "Cliquez pour ajouter ou changer l'image. Elle n'est enregistrée qu'avec Enregistrer.",
     "removeImage": "Retirer l'image",
     "assignDepots": "Affecter aux dépôts",
     "allDepots": "Tous les dépôts",
@@ -1032,7 +1059,6 @@
     "noAdjustments": "Aucun ajustement pour ce produit.",
     "availableQty": "Dispo",
     "newOrder": "Nouvelle commande",
-    "newCampaign": "Nouvelle campagne",
     "recruitment": "Recrutements",
     "recruitmentHint": "Parcours des nouveaux membres, de la candidature à l'enregistrement.",
     "recruitmentReports": "Rapports",
@@ -1216,7 +1242,7 @@
     "importNeedRows": "Ajoutez un fichier Excel/CSV ou collez des lignes.",
     "importNeedCompany": "Choisissez une société.",
     "pasteRows": "Coller des lignes CSV, TSV ou JSON",
-    "pasteRowsHint": "Optionnel si vous importez un fichier. Utilisez le même modèle que l'export : office_code, role (slug) et trainer_email (utilisateur lié).",
+    "pasteRowsHint": "Optionnel si vous importez un fichier. Utilisez le même modèle que l'export : office_code, role (slug), coach_member_code (encadreur), sponsor_member_code ou trainer_email (parrain).",
     "source": {
       "poster": "Affiche",
       "qr_code": "QR Code",
@@ -1313,7 +1339,16 @@
     "title": "Notifications",
     "subtitle": "Alertes et messages du système.",
     "markAll": "Tout marquer comme lu",
-    "empty": "Aucune notification."
+    "markRead": "Marquer comme lu",
+    "read": "Lu",
+    "empty": "Aucune notification.",
+    "types": {
+      "alert": "Alerte",
+      "approval": "Validation",
+      "finance_request": "Finance",
+      "finance_approved": "Finance",
+      "finance_rejected": "Finance"
+    }
   },
   "settings": {
     "title": "Paramètres",
@@ -1337,8 +1372,7 @@
     "rolesCollapseAll": "Réduire",
     "rolesNoVisiblePermissions": "Aucune autorisation visible avec vos droits actuels.",
     "rolesPlatformAccess": "Accès transverses",
-    "rolesPermissionOptions": "Options du tableau de bord",
-    "rolesModuleRoot": "Accès module",
+    "rolesPermissionOptions": "Options",
     "rolesOtherPermissions": "Autres",
     "rolesOffices": "Bureaux",
     "rolesOfficesHint": "Le rôle est disponible dans les bureaux sélectionnés.",
@@ -1360,12 +1394,8 @@
       "roles": "Rôles",
       "organization": "Organisation",
       "companies": "Sociétés",
-      "finance": "Finance",
-      "reports": "Rapports",
-      "modules": "Modules",
       "notifications": "Notifications",
       "settings": "Paramètres",
-      "files": "Fichiers",
       "kams": {
         "dashboard": "Tableau de bord",
         "dashboardPages": {
@@ -1377,7 +1407,9 @@
         "members": "Membres",
         "recruitment": "Recrutements",
         "clients": "Clients",
+        "patrimoine": "Patrimoine",
         "products": "Produits",
+        "stock": "Opérations stock",
         "orders": "Commandes",
         "finance": "Finance",
         "financePages": {
@@ -1385,8 +1417,7 @@
           "account": "Mon compte",
           "company": "Comptes entreprise",
           "revenue": "Rémunération"
-        },
-        "campaigns": "Campagnes"
+        }
       },
       "heavy-equipment": "Heavy Equipment",
       "real-estate": "Immobilier",
@@ -1440,38 +1471,13 @@
         "update": "Modifier les sociétés",
         "delete": "Supprimer des sociétés"
       },
-      "finance": {
-        "view": "Consulter les finances",
-        "create": "Créer des écritures financières",
-        "update": "Modifier les écritures financières",
-        "approve": "Approuver les écritures financières",
-        "export": "Exporter les données financières"
-      },
-      "reports": {
-        "view": "Consulter les rapports",
-        "export": "Exporter les rapports",
-        "print": "Imprimer les rapports"
-      },
-      "modules": {
-        "view": "Consulter les modules",
-        "manage": "Activer et configurer les modules"
-      },
       "notifications": {
         "view": "Consulter les notifications"
       },
       "settings": {
         "manage": "Gérer les paramètres"
       },
-      "files": {
-        "manage": "Gérer les fichiers"
-      },
       "kams": {
-        "view": "Consulter KAMS",
-        "create": "Créer dans KAMS",
-        "update": "Modifier dans KAMS",
-        "delete": "Supprimer dans KAMS",
-        "approve": "Approuver dans KAMS",
-        "export": "Exporter depuis KAMS",
         "dashboard": {
           "view": "Consulter le tableau de bord",
           "products": {
@@ -1488,7 +1494,6 @@
           }
         },
         "members": {
-          "view": "Consulter les membres",
           "create": "Créer un membre",
           "update": "Modifier un membre",
           "delete": "Supprimer un membre",
@@ -1496,14 +1501,32 @@
           "export": "Exporter les membres",
           "print": "Imprimer les membres",
           "preview": "Prévisualiser les membres",
-          "activate": "Activer un membre"
+          "activate": "Activer un membre",
+          "agents": {
+            "view": "Consulter la page Agents"
+          },
+          "statistics": {
+            "view": "Consulter les statistiques membres"
+          }
         },
         "recruitment": {
-          "view": "Consulter le recrutement",
+          "applications": {
+            "view": "Consulter la page Candidatures"
+          },
           "create": "Créer une candidature",
           "update": "Modifier une candidature",
           "delete": "Supprimer une candidature",
-          "approve": "Approuver un recrutement"
+          "reports": {
+            "view": "Consulter la page Rapports recrutement",
+            "print": "Imprimer les rapports de recrutement",
+            "preview": "Prévisualiser les rapports de recrutement"
+          },
+          "interview": {
+            "update": "Enregistrer un entretien"
+          },
+          "observation": {
+            "update": "Enregistrer une observation"
+          }
         },
         "clients": {
           "view": "Consulter les clients",
@@ -1511,23 +1534,54 @@
           "update": "Modifier un client",
           "delete": "Supprimer un client"
         },
+        "suppliers": {
+          "view": "Consulter les fournisseurs"
+        },
+        "patrimoine": {
+          "view": "Consulter le patrimoine",
+          "create": "Ajouter un bien",
+          "update": "Modifier un bien",
+          "delete": "Supprimer un bien"
+        },
         "products": {
           "view": "Consulter les produits",
           "create": "Créer un produit",
           "update": "Modifier un produit",
           "delete": "Supprimer un produit"
         },
+        "stock": {
+          "update": "Gérer les opérations stock",
+          "assignments": {
+            "view": "Consulter la page Affectations"
+          },
+          "statistics": {
+            "view": "Consulter les statistiques stock"
+          },
+          "warehouses": {
+            "view": "Consulter les entrepôts"
+          },
+          "depots": {
+            "view": "Consulter les dépôts"
+          },
+          "reports": {
+            "view": "Consulter la page Rapports d'affectations",
+            "print": "Imprimer les rapports d'affectations",
+            "preview": "Prévisualiser les rapports d'affectations"
+          },
+          "journal": {
+            "view": "Consulter le journal stock"
+          }
+        },
         "orders": {
-          "view": "Consulter les commandes",
-          "create": "Créer une commande",
-          "update": "Modifier une commande",
-          "export": "Exporter les commandes",
-          "print": "Imprimer une commande"
+          "view": "Consulter les commandes"
         },
         "finance": {
           "dashboard": {
             "view": "Consulter le tableau de bord finance",
             "update": "Filtrer le tableau de bord par bureau"
+          },
+          "accounts": {
+            "view": "Consulter les comptes agents"
           },
           "account": {
             "view": "Consulter Mon compte",
@@ -1546,12 +1600,6 @@
             "print": "Imprimer les transactions entreprise",
             "preview": "Prévisualiser les transactions entreprise"
           }
-        },
-        "campaigns": {
-          "view": "Consulter les campagnes",
-          "create": "Créer une campagne",
-          "update": "Modifier une campagne",
-          "delete": "Supprimer une campagne"
         }
       },
       "heavy-equipment": {

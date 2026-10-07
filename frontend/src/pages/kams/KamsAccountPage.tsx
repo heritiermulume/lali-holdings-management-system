@@ -260,8 +260,8 @@ export function KamsAccountPage() {
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        {data.can_deposit ? <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestDeposit')}</Button> : null}
-        {data.can_withdraw ? <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestWithdrawal')}</Button> : null}
+        {data.can_deposit && hasPermission('kams.finance.account.deposit') ? <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestDeposit')}</Button> : null}
+        {data.can_withdraw && hasPermission('kams.finance.account.withdraw') ? <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestWithdrawal')}</Button> : null}
       </div>
 
       {showCompensation && (compensation || compensationEntries.length > 0) ? (

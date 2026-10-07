@@ -1,7 +1,8 @@
-import { ChevronLeft, ChevronRight, Eye, Info, ListFilter, Printer } from 'lucide-react'
+import { Eye, Info, ListFilter, Printer } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
+import { PaginationButtons } from '../../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { dateTime, money } from '../../lib/format'
@@ -276,7 +277,7 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
   const filtersActive = Boolean(type || status || from || to)
 
   return (
-    <Card className="p-5">
+    <Card className="p-3 sm:p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="font-semibold">{title}</div>
         <Button
@@ -316,8 +317,8 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
       ) : null}
 
       {onDecide && pending.length > 0 ? (
-        <div className="mb-5 space-y-2">
-          <div className="text-sm font-semibold">{t('kams.pendingRequests')} ({pending.length})</div>
+        <div className="mb-5 space-y-3">
+          <div className="text-sm font-semibold text-amber-900">{t('kams.pendingRequests')} ({pending.length})</div>
           {pending.map((entry) => (
             <TransactionRow
               key={entry.uid || entry.id}
@@ -351,7 +352,15 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
                   <td colSpan={showMember ? 8 : 7} className="px-3 py-8 text-center text-muted">{t('common.empty')}</td>
                 </tr>
               ) : visible.map((entry, index) => (
-                <tr key={entry.uid || entry.id} className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
+                <tr
+                  key={entry.uid || entry.id}
+                  className={cn(
+                    'border-t border-line',
+                    entry.status === 'pending'
+                      ? 'bg-amber-50'
+                      : index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white',
+                  )}
+                >
                   <td className={cn('w-px whitespace-nowrap px-3 text-muted', compact ? 'py-1.5' : 'py-3')}>{dateTime(entry.occurred_on, entry.created_at)}</td>
                   <td className={cn('px-3 font-semibold whitespace-nowrap', compact ? 'py-1.5' : 'py-3')}>{t(`kams.ledger.${ledgerType(entry)}`, { defaultValue: entry.type })}</td>
                   {showMember ? <td className={cn('px-3 whitespace-nowrap', compact ? 'py-1.5' : 'py-3')}>{[entry.holder, entry.member?.full_name].filter(Boolean).join(' · ') || '—'}</td> : null}
@@ -397,13 +406,12 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
                 {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
               </select>
             </label>
-            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage <= 1 ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-              <ChevronLeft size={16} /> {t('common.prev')}
-            </button>
-            <span className="px-1 text-sm font-semibold">{safePage} / {lastPage}</span>
-            <button type="button" className={cn('inline-flex h-10 items-center gap-1 rounded-full px-3.5 text-sm font-semibold', safePage >= lastPage ? 'cursor-not-allowed bg-surface text-muted' : 'bg-lhms text-white')} disabled={safePage >= lastPage} onClick={() => setPage((value) => Math.min(lastPage, value + 1))}>
-              {t('common.next')} <ChevronRight size={16} />
-            </button>
+            <PaginationButtons
+              page={safePage}
+              lastPage={lastPage}
+              onPrev={() => setPage((value) => Math.max(1, value - 1))}
+              onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+            />
           </div>
         </div>
       </div>
@@ -482,40 +490,53 @@ function TransactionRow({
   const kind = ledgerType(entry)
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3">
-      <div className="min-w-0">
-        <div className="font-semibold">
-          {t(`kams.ledger.${kind}`, { defaultValue: entry.type })}
-          {showMember && entry.member?.full_name ? ` · ${entry.member.full_name}` : ''}
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 sm:px-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="font-semibold text-amber-950">
+            {t(`kams.ledger.${kind}`, { defaultValue: entry.type })}
+            {showMember && entry.member?.full_name ? ` · ${entry.member.full_name}` : ''}
+          </div>
+          <div className="mt-1 text-sm text-amber-900/75">
+            {dateTime(entry.occurred_on, entry.created_at)}
+            {entry.notes ? ` · ${entry.notes}` : ''}
+          </div>
+          <div className="mt-1 text-xs text-amber-900/65">
+            <div>{t('kams.requestedBy')}: {entry.requested_by?.name || '—'}</div>
+            <div className="mt-0.5">
+              {t('kams.performedBy')}: {entry.performed_by?.name || (entry.status === 'pending' ? t('kams.pendingActor') : '—')}
+            </div>
+          </div>
         </div>
-        <div className="text-sm text-muted">
-          {dateTime(entry.occurred_on, entry.created_at)}
-          {entry.notes ? ` · ${entry.notes}` : ''}
-        </div>
-        <div className="mt-1 text-xs text-muted">
-          {t('kams.requestedBy')}: {entry.requested_by?.name || '—'}
-          {' · '}
-          {t('kams.performedBy')}: {entry.performed_by?.name || (entry.status === 'pending' ? t('kams.pendingActor') : '—')}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <Badge tone={entry.status === 'posted' ? 'green' : entry.status === 'pending' ? 'amber' : 'red'}>
+            {t(`kams.status.${entry.status}`, { defaultValue: entry.status })}
+          </Badge>
+          <div className={cn('text-base font-bold tabular-nums sm:text-lg', entry.amount < 0 ? 'text-red-600' : 'text-lhms')}>
+            {money(entry.amount)}
+          </div>
         </div>
       </div>
-      <div className="flex items-center gap-3">
-        <Badge tone={entry.status === 'posted' ? 'green' : entry.status === 'pending' ? 'amber' : 'red'}>
-          {t(`kams.status.${entry.status}`, { defaultValue: entry.status })}
-        </Badge>
-        <div className={entry.amount < 0 ? 'font-bold text-red-600' : 'font-bold text-lhms'}>{money(entry.amount)}</div>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
         <Button
           type="button"
           variant="secondary"
-          className="h-11 w-11 shrink-0 px-0"
+          className="h-11 w-full sm:w-11 sm:shrink-0 sm:px-0"
           aria-label={t('kams.transactionDetails')}
           onClick={onDetails}
         >
           <Info size={20} />
+          <span className="sm:hidden">{t('kams.transactionDetails')}</span>
         </Button>
         {entry.status === 'pending' && onDecide ? (
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => onDecide(entry, 'approve')}>{t('common.approve')}</Button>
-            <Button variant="ghost" onClick={() => onDecide(entry, 'reject')}>{t('common.reject')}</Button>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:w-auto">
+            <Button variant="secondary" className="h-11 w-full sm:w-auto" onClick={() => onDecide(entry, 'approve')}>
+              {t('common.approve')}
+            </Button>
+            <Button variant="ghost" className="h-11 w-full sm:w-auto" onClick={() => onDecide(entry, 'reject')}>
+              {t('common.reject')}
+            </Button>
           </div>
         ) : null}
       </div>

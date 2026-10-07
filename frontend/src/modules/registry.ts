@@ -1,9 +1,9 @@
 import type { LucideIcon } from 'lucide-react'
 import {
-  Bell,
   Building2,
   Crown,
   Globe2,
+  Gem,
   Landmark,
   LayoutDashboard,
   Settings,
@@ -74,10 +74,11 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     icon: Crown,
     items: [
       { to: '/modules/kams', labelKey: 'nav.dashboard', descriptionKey: 'kams.dashboardHint', icon: LayoutDashboard, end: true, perm: 'kams.dashboard.view' },
-      { to: '/modules/kams/members', labelKey: 'kams.members', descriptionKey: 'kams.membersHint', icon: Users, perm: 'kams.members.view', anyPerm: ['kams.members.view', 'kams.recruitment.view'] },
-      { to: '/modules/kams/stock', labelKey: 'kams.stock', descriptionKey: 'kams.stockHint', icon: Warehouse, anyPerm: ['kams.products.view', 'kams.orders.view'] },
-      { to: '/modules/kams/finance', labelKey: 'kams.finance', descriptionKey: 'kams.financeHint', icon: Landmark, anyPerm: ['kams.finance.dashboard.view', 'kams.finance.account.view', 'kams.finance.company.view'] },
-      { to: '/modules/kams/clients', labelKey: 'kams.clientsAndSuppliers', descriptionKey: 'kams.clientsAndSuppliersHint', icon: Users, perm: 'kams.clients.view' },
+      { to: '/modules/kams/members', labelKey: 'kams.members', descriptionKey: 'kams.membersHint', icon: Users, anyPerm: ['kams.members.agents.view', 'kams.members.statistics.view', 'kams.recruitment.applications.view', 'kams.recruitment.reports.view'] },
+      { to: '/modules/kams/stock', labelKey: 'kams.stock', descriptionKey: 'kams.stockHint', icon: Warehouse, anyPerm: ['kams.products.view', 'kams.stock.assignments.view', 'kams.stock.statistics.view', 'kams.stock.warehouses.view', 'kams.stock.depots.view', 'kams.stock.reports.view', 'kams.stock.journal.view'] },
+      { to: '/modules/kams/finance', labelKey: 'kams.finance', descriptionKey: 'kams.financeHint', icon: Landmark, anyPerm: ['kams.finance.dashboard.view', 'kams.finance.accounts.view', 'kams.finance.account.view', 'kams.finance.company.view'] },
+      { to: '/modules/kams/clients', labelKey: 'kams.clientsAndSuppliers', descriptionKey: 'kams.clientsAndSuppliersHint', icon: Users, anyPerm: ['kams.clients.view', 'kams.suppliers.view'] },
+      { to: '/modules/kams/patrimoine', labelKey: 'kams.patrimoine', descriptionKey: 'kams.patrimoineHint', icon: Gem, perm: 'kams.patrimoine.view' },
     ],
   },
   users: {
@@ -87,15 +88,6 @@ export const moduleRegistry: Record<string, ModuleDefinition> = {
     icon: Users,
     items: [
       { to: '/administration/users', labelKey: 'nav.users', descriptionKey: 'users.subtitle', icon: Users, end: true, perm: 'users.view' },
-    ],
-  },
-  notifications: {
-    slug: 'notifications',
-    nameKey: 'nav.notifications',
-    titleKey: 'nav.notifications',
-    icon: Bell,
-    items: [
-      { to: '/notifications', labelKey: 'nav.notifications', descriptionKey: 'notifications.subtitle', icon: Bell, end: true, perm: 'notifications.view' },
     ],
   },
   settings: {
@@ -121,7 +113,6 @@ export function settingsNavItems(): ModuleNavItem[] {
 const platformPrefixes: Array<[string, string]> = [
   ['/administration', 'administration'],
   ['/users', 'administration'],
-  ['/notifications', 'notifications'],
   ['/settings', 'administration'],
   ['/organization', 'administration'],
   ['/companies', 'administration'],

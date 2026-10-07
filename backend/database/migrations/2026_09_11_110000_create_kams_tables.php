@@ -32,7 +32,6 @@ return new class extends Migration
             $table->decimal('price', 14, 2)->default(0);
             $table->unsignedInteger('stock')->default(0);
             $table->enum('status', ['active', 'draft', 'archived'])->default('active');
-            $table->text('description')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
@@ -60,26 +59,12 @@ return new class extends Migration
             $table->decimal('line_total', 14, 2);
             $table->timestamps();
         });
-
-        Schema::create('kams_campaigns', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('company_id')->constrained()->cascadeOnDelete();
-            $table->string('name');
-            $table->string('channel', 64)->default('store');
-            $table->enum('status', ['planned', 'active', 'completed', 'paused'])->default('planned');
-            $table->decimal('budget', 14, 2)->default(0);
-            $table->date('starts_on')->nullable();
-            $table->date('ends_on')->nullable();
-            $table->text('description')->nullable();
-            $table->timestamps();
-        });
     }
 
     public function down(): void
     {
         Schema::dropIfExists('kams_order_items');
         Schema::dropIfExists('kams_orders');
-        Schema::dropIfExists('kams_campaigns');
         Schema::dropIfExists('kams_products');
         Schema::dropIfExists('kams_clients');
     }

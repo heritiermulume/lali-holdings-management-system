@@ -33,14 +33,15 @@ Route::prefix('v1')->group(function () {
         Route::get('notifications', [NotificationController::class, 'index']);
         Route::post('notifications/{notification}/read', [NotificationController::class, 'markRead']);
         Route::post('notifications/read-all', [NotificationController::class, 'markAllRead']);
+        Route::delete('notifications/{notification}', [NotificationController::class, 'destroy']);
 
         Route::get('tasks', [TaskController::class, 'index']);
         Route::post('tasks', [TaskController::class, 'store']);
         Route::put('tasks/{task}', [TaskController::class, 'update']);
 
-        Route::get('modules', [ModuleController::class, 'index'])->middleware(EnsurePermission::class.':modules.view');
-        Route::put('modules/{module}', [ModuleController::class, 'update'])->middleware(EnsurePermission::class.':modules.manage');
-        Route::put('companies/{company}/modules', [ModuleController::class, 'syncCompany'])->middleware(EnsurePermission::class.':modules.manage');
+        Route::get('modules', [ModuleController::class, 'index'])->middleware(EnsurePermission::class.':administration.view,settings.manage');
+        Route::put('modules/{module}', [ModuleController::class, 'update'])->middleware(EnsurePermission::class.':settings.manage');
+        Route::put('companies/{company}/modules', [ModuleController::class, 'syncCompany'])->middleware(EnsurePermission::class.':settings.manage');
 
         Route::get('users', [UserController::class, 'index'])->middleware(EnsurePermission::class.':users.view');
         Route::post('users', [UserController::class, 'store'])->middleware(EnsurePermission::class.':users.create');
@@ -91,11 +92,6 @@ Route::prefix('v1')->group(function () {
         Route::post('offices', [OrganizationController::class, 'storeOffice'])->middleware(EnsurePermission::class.':organization.create');
         Route::put('offices/{office}', [OrganizationController::class, 'updateOffice'])->middleware(EnsurePermission::class.':organization.update');
         Route::delete('offices/{office}', [OrganizationController::class, 'destroyOffice'])->middleware(EnsurePermission::class.':organization.delete');
-
-        Route::get('departments', [OrganizationController::class, 'departments'])->middleware(EnsurePermission::class.':organization.view');
-        Route::post('departments', [OrganizationController::class, 'storeDepartment'])->middleware(EnsurePermission::class.':organization.create');
-        Route::put('departments/{department}', [OrganizationController::class, 'updateDepartment'])->middleware(EnsurePermission::class.':organization.update');
-        Route::delete('departments/{department}', [OrganizationController::class, 'destroyDepartment'])->middleware(EnsurePermission::class.':organization.delete');
 
         Route::get('activities', [OrganizationController::class, 'activities'])->middleware(EnsurePermission::class.':organization.view');
         Route::post('activities', [OrganizationController::class, 'storeActivity'])->middleware(EnsurePermission::class.':organization.create');

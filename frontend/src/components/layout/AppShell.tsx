@@ -12,8 +12,9 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ProfileModal } from '../ProfileModal'
+import { NotificationsModal } from '../NotificationsModal'
 import { UserAvatar } from '../UserAvatar'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
@@ -26,8 +27,7 @@ import api from '../../lib/api'
 const links = [
   { to: '/', key: 'home', icon: House },
   { to: '/administration', key: 'administration', icon: Shield, anyPerm: ADMIN_PERMS },
-  { to: '/modules', key: 'modules', icon: Crown, perm: 'modules.view' },
-  { to: '/notifications', key: 'notifications', icon: Bell, perm: 'notifications.view' },
+  { to: '/modules', key: 'modules', icon: Crown, anyPerm: ADMIN_PERMS },
 ]
 
 function navClass(isActive: boolean) {
@@ -44,11 +44,11 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [unread, setUnread] = useState(0)
   const sidebarUserRef = useRef<HTMLDivElement>(null)
   const headerUserRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
-  const navigate = useNavigate()
   const currentModule = moduleFromPath(location.pathname)
   const ModuleIcon = currentModule?.icon
   const { modules } = useSystemModules()
@@ -107,7 +107,6 @@ export function AppShell() {
       ]
     : [
         { to: '/', key: 'nav.home', icon: House, end: true },
-        ...(hasPermission('notifications.view') ? [{ to: '/notifications', key: 'nav.notifications', icon: Bell, end: false }] : []),
         ...(hasAnyPermission(ADMIN_PERMS) ? [{ to: '/administration', key: 'nav.administration', icon: Shield, end: false }] : []),
       ]
   const visibleBottomPaths = new Set(bottomItems.filter((item) => item.to !== '__more__').map((item) => item.to))
@@ -133,9 +132,16 @@ export function AppShell() {
       )}>
         <div className="flex h-full min-h-0 flex-col">
           <div className="flex shrink-0 items-center justify-between px-5 py-6">
-            <div>
-              <div className="text-xs font-semibold tracking-[0.28em] text-white/60">LALI HOLDINGS</div>
-              <div className="mt-1 text-2xl font-extrabold">{currentModule ? t(currentModule.nameKey) : 'LHMS'}</div>
+            <div className="flex min-w-0 items-center gap-3">
+              <img
+                src="/lali_holdings_logo.png"
+                alt="Lali Holdings"
+                className="h-18 w-auto shrink-0 object-contain drop-shadow-sm"
+              />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold tracking-[0.28em] text-white/60">LALI HOLDINGS</div>
+                <div className="mt-1 truncate text-2xl font-extrabold">{currentModule ? t(currentModule.nameKey) : 'LHMS'}</div>
+              </div>
             </div>
             <button className="lg:hidden" onClick={() => setOpen(false)}><X /></button>
           </div>
@@ -176,9 +182,6 @@ export function AppShell() {
                   >
                     <Icon size={18} />
                     {t(`nav.${link.key}`)}
-                    {link.to === '/notifications' && unread > 0 ? (
-                      <span className="ml-auto rounded-full bg-danger px-2 text-[11px] text-white">{unread}</span>
-                    ) : null}
                   </NavLink>
                 )
               })
@@ -198,7 +201,7 @@ export function AppShell() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold">{user?.name}</span>
-                <span className="block truncate text-xs text-white/70">{roleLabel(t, user?.roles?.[0])}</span>
+                <span className="block truncate text-xs text-white/70">{roleLabel(t, user?.roles?.[0], user?.gender)}</span>
               </span>
             </button>
             {userMenuOpen ? (
@@ -259,6 +262,12 @@ export function AppShell() {
               </div>
             ) : currentModule && ModuleIcon ? (
               <div className="flex min-w-0 items-center gap-2 text-lhms">
+                <img
+                  src="/lali_holdings_logo.png"
+                  alt="Lali Holdings"
+                  className="h-8 w-auto shrink-0 object-contain lg:hidden"
+                />
+                <span className="h-6 w-px shrink-0 bg-line lg:hidden" aria-hidden />
                 <ModuleIcon size={20} className="shrink-0" aria-hidden />
                 <div className="truncate text-sm font-semibold">
                   {isAdministration ? <span className="lg:hidden">{t('app.name')} - </span> : null}
@@ -284,9 +293,18 @@ export function AppShell() {
               <option value="en">EN</option>
             </select>
             {hasPermission('notifications.view') ? (
-            <button onClick={() => navigate('/notifications')} className={cn('relative rounded-xl p-2', isHome ? 'hover:bg-white/10' : 'hover:bg-surface')}>
+            <button
+              type="button"
+              aria-label={t('nav.notifications')}
+              onClick={() => setNotificationsOpen(true)}
+              className={cn('relative rounded-xl p-2', isHome ? 'hover:bg-white/10' : 'hover:bg-surface')}
+            >
               <Bell size={18} />
-              {unread > 0 ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger" /> : null}
+              {unread > 0 ? (
+                <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                  {unread > 99 ? '99+' : unread}
+                </span>
+              ) : null}
             </button>
             ) : null}
             <div ref={headerUserRef} className={cn('relative', !isHome && 'lg:hidden')}>
@@ -366,7 +384,6 @@ export function AppShell() {
             <>
               <span className="relative shrink-0">
                 <Icon size={20} />
-                {item.to === '/notifications' && unread > 0 ? <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-danger" /> : null}
               </span>
               <span className="w-full truncate text-center">{label}</span>
             </>
@@ -388,6 +405,11 @@ export function AppShell() {
       ) : null}
 
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <NotificationsModal
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        onUnreadChange={setUnread}
+      />
 
       {moreOpen && (plusModule || businessSlug) ? (
         <div className="fixed inset-0 z-50 lg:hidden">

@@ -28,8 +28,7 @@ class ModuleOfficePerformance
         $scopedOfficeIds = ! $user->isGroupAdmin() && $user->isOfficeScoped()
             ? ($user->accessibleOfficeIds() ?: [0])
             : [];
-        $canSeeFinance = $user->hasPermission('finance.view')
-            || $user->hasPermission('administration.view')
+        $canSeeFinance = $user->hasPermission('administration.view')
             || $user->hasPermission('kams.finance.dashboard.view');
         $allowedSlugs = $user->accessibleModuleSlugs();
         $default = $this->fx->defaultCode();
