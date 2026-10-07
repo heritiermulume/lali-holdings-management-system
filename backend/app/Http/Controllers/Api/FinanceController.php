@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Core\Support\CurrencyConverter;
 use App\Core\Support\CurrencySync;
-use App\Core\Support\TaxSettings;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Models\Country;
@@ -138,43 +137,6 @@ class FinanceController extends Controller
         return $this->ok($this->payload($fx));
     }
 
-    public function convert(Request $request, CurrencyConverter $fx): JsonResponse
-    {
-        $data = $request->validate([
-            'amount' => ['required', 'numeric', 'min:0'],
-            'from' => ['required', 'string', 'size:3'],
-            'to' => ['required', 'string', 'size:3'],
-        ]);
-
-        $from = strtoupper($data['from']);
-        $to = strtoupper($data['to']);
-        $amount = (float) $data['amount'];
-
-        try {
-            $rates = $fx->bankRates($from, $to);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], 422);
-        }
-
-        return $this->ok([
-            'amount' => $amount,
-            'from' => $from,
-            'to' => $to,
-            'rates' => $rates,
-            'mid' => $fx->convert($amount, $from, $to, 'mid'),
-            'buy' => $fx->convert($amount, $from, $to, 'buy'),
-            'sell' => $fx->convert($amount, $from, $to, 'sell'),
-            'tax' => [
-                'name' => TaxSettings::name(),
-                'rate' => TaxSettings::rate(),
-                'inclusive' => TaxSettings::inclusive(),
-            ],
-        ]);
-    }
-
     public function syncRates(CurrencyConverter $fx): JsonResponse
     {
         try {
@@ -262,7 +224,7 @@ class FinanceController extends Controller
                 'tax_rate' => $country->tax_rate,
             ])->values()->all(),
             'tax' => [
-                'inclusive' => TaxSettings::inclusive(),
+                'inclusive' => false,
             ],
             'currencies' => $currencies,
         ];

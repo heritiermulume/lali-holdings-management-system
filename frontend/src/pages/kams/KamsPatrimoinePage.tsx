@@ -5,6 +5,7 @@ import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
@@ -53,9 +54,8 @@ export function KamsPatrimoinePage() {
   const [offices, setOffices] = useState<Office[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [statuses, setStatuses] = useState<string[]>([])
-  const [canChooseOffice, setCanChooseOffice] = useState(false)
   const [totalValue, setTotalValue] = useState(0)
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, showOfficeFilter, canChooseOffice } = useOfficeScope(offices)
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState('')
   const [search, setSearch] = useState('')
@@ -114,11 +114,9 @@ export function KamsPatrimoinePage() {
 
   useEffect(() => {
     api.get('/modules/kams/patrimoine/lookups').then((res) => {
-      const list = (res.data.data?.offices ?? []) as Office[]
-      setOffices(list)
+      setOffices((res.data.data?.offices ?? []) as Office[])
       setCategories(res.data.data?.categories ?? [])
       setStatuses(res.data.data?.statuses ?? [])
-      setCanChooseOffice(Boolean(res.data.data?.can_choose_office) || list.length > 1)
     }).catch(() => undefined)
   }, [])
 
@@ -325,7 +323,7 @@ export function KamsPatrimoinePage() {
       </Card>
 
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        {canChooseOffice ? (
+        {showOfficeFilter ? (
           <select
             className="min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:w-64"
             value={officeId}

@@ -17,12 +17,32 @@ type Product = {
   sku?: string | null
   price: number
   cost: number
+  avg_cost?: number
   field_price?: number
   company_price?: number
+  base_sale_price?: number
+  sale_price?: number
+  tax_exempt?: boolean
   stock: number
   image_path?: string | null
   image_url?: string | null
   balances?: Array<{ id: number; quantity: number; depot_id?: number; depot?: { id: number; name: string; kind: string } | null }>
+}
+
+function purchaseUnitCost(product?: Pick<Product, 'avg_cost' | 'company_price' | 'cost'> | null): number {
+  const avg = Number(product?.avg_cost || 0)
+  if (avg > 0) return avg
+  const company = Number(product?.company_price || 0)
+  if (company > 0) return company
+  return Number(product?.cost || 0)
+}
+
+function saleUnitPrice(product?: Pick<Product, 'sale_price' | 'field_price' | 'price'> | null): number {
+  if (product?.sale_price != null && product.sale_price !== undefined) {
+    return Number(product.sale_price)
+  }
+  const field = Number(product?.field_price || 0)
+  return field > 0 ? field : Number(product?.price || 0)
 }
 type Balance = { id: number; quantity: number; condition?: string; product?: Product | null }
 type Location = {
@@ -158,8 +178,11 @@ export function KamsWarehouses() {
   const [target, setTarget] = useState<Location | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [productForm, setProductForm] = useState<Record<string, string>>({})
+  const [taxExempt, setTaxExempt] = useState(false)
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<number[]>([])
   const [assignAllWarehouses, setAssignAllWarehouses] = useState(true)
+  /** Warehouse where the product is created — excluded from "assign to warehouses". */
+  const [originWarehouseId, setOriginWarehouseId] = useState<number | null>(null)
   const [selectedDepotIds, setSelectedDepotIds] = useState<number[]>([])
   const [assignAllDepots, setAssignAllDepots] = useState(true)
   const [imageFile, setImageFile] = useState<File | null>(null)
@@ -185,6 +208,8 @@ export function KamsWarehouses() {
   const resetProductForm = () => {
     setEditingProduct(null)
     setProductForm({})
+    setTaxExempt(false)
+    setOriginWarehouseId(null)
     setSelectedWarehouseIds((lookups?.warehouses || []).map((row) => row.id))
     setAssignAllWarehouses(true)
     setSelectedDepotIds([])
@@ -195,13 +220,19 @@ export function KamsWarehouses() {
     setProductError('')
   }
 
+  const assignableWarehouses = (lookups?.warehouses || []).filter(
+    (warehouse) => originWarehouseId == null || warehouse.id !== originWarehouseId,
+  )
+
   const openCreateProduct = (warehouse?: Location) => {
     resetProductForm()
     const allIds = (lookups?.warehouses || []).map((row) => row.id)
-    const warehouseIds = warehouse ? [warehouse.id] : allIds
-    setSelectedWarehouseIds(warehouseIds)
-    setAssignAllWarehouses(!warehouse && allIds.length > 0)
-    setProductForm({ warehouse_id: warehouse ? String(warehouse.id) : (allIds[0] ? String(allIds[0]) : '') })
+    const originId = warehouse?.id ?? null
+    const otherIds = originId == null ? allIds : allIds.filter((id) => id !== originId)
+    setOriginWarehouseId(originId)
+    setSelectedWarehouseIds(otherIds)
+    setAssignAllWarehouses(otherIds.length > 0)
+    setProductForm({ warehouse_id: originId ? String(originId) : (allIds[0] ? String(allIds[0]) : '') })
     setProductOpen(true)
   }
 
@@ -211,10 +242,12 @@ export function KamsWarehouses() {
     const allWarehouseIds = (lookups?.warehouses || []).map((row) => row.id)
     const allDepotIds = (lookups?.depots || []).map((depot) => depot.id)
     setEditingProduct(product)
+    setOriginWarehouseId(null)
+    setTaxExempt(Boolean(product.tax_exempt))
     setProductForm({
       name: product.name,
       sku: product.sku || '',
-      price: String(product.field_price || product.price || ''),
+      price: String(product.base_sale_price ?? product.field_price ?? product.price ?? ''),
       cost: String(product.company_price || product.cost || ''),
     })
     setSelectedWarehouseIds(warehouseIds)
@@ -233,10 +266,11 @@ export function KamsWarehouses() {
   }
 
   const toggleWarehouse = (id: number) => {
+    if (originWarehouseId != null && id === originWarehouseId) return
     setAssignAllWarehouses(false)
     setSelectedWarehouseIds((current) => {
       const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-      if (!next.map(String).includes(productForm.warehouse_id || '') && next[0]) {
+      if (originWarehouseId == null && !next.map(String).includes(productForm.warehouse_id || '') && next[0]) {
         setProductForm((form) => ({ ...form, warehouse_id: String(next[0]) }))
       }
       return next
@@ -300,11 +334,18 @@ export function KamsWarehouses() {
     event.preventDefault()
     setProductError('')
     const companyId = lookups?.warehouses[0]?.company_id || user?.primary_company?.id
-    const warehouseIds = assignAllWarehouses ? (lookups?.warehouses || []).map((row) => row.id) : selectedWarehouseIds
+    const assignedOtherIds = assignAllWarehouses
+      ? assignableWarehouses.map((row) => row.id)
+      : selectedWarehouseIds.filter((id) => originWarehouseId == null || id !== originWarehouseId)
+    // Creating warehouse always receives the product; it is not listed in the assign UI.
+    const warehouseIds = originWarehouseId != null && !editingProduct
+      ? Array.from(new Set([originWarehouseId, ...assignedOtherIds]))
+      : (assignAllWarehouses ? (lookups?.warehouses || []).map((row) => row.id) : selectedWarehouseIds)
     const depotIds = assignAllDepots ? (lookups?.depots || []).map((depot) => depot.id) : selectedDepotIds
-    const initialWarehouseId = productForm.warehouse_id
-      ? Number(productForm.warehouse_id)
-      : warehouseIds[0]
+    const initialWarehouseId = originWarehouseId
+      ?? (productForm.warehouse_id ? Number(productForm.warehouse_id) : warehouseIds[0])
+    // When an origin warehouse is set, "all" only means all *other* warehouses — send explicit ids.
+    const sendAssignAllWarehouses = assignAllWarehouses && originWarehouseId == null
 
     try {
       if (imageFile || (editingProduct && removeImage)) {
@@ -316,11 +357,12 @@ export function KamsWarehouses() {
         payload.append('field_price', productForm.price || '0')
         payload.append('company_price', productForm.cost || '0')
         payload.append('cost', productForm.cost || '0')
+        payload.append('tax_exempt', taxExempt ? '1' : '0')
         if (!editingProduct) {
           payload.append('stock', productForm.stock || '0')
           if (initialWarehouseId) payload.append('warehouse_id', String(initialWarehouseId))
         }
-        payload.append('assign_all_warehouses', assignAllWarehouses ? '1' : '0')
+        payload.append('assign_all_warehouses', sendAssignAllWarehouses ? '1' : '0')
         warehouseIds.forEach((id) => payload.append('warehouse_ids[]', String(id)))
         payload.append('assign_all_depots', assignAllDepots ? '1' : '0')
         depotIds.forEach((id) => payload.append('depot_ids[]', String(id)))
@@ -342,9 +384,10 @@ export function KamsWarehouses() {
           field_price: Number(productForm.price || 0),
           company_price: Number(productForm.cost || 0),
           cost: Number(productForm.cost || 0),
+          tax_exempt: taxExempt,
           stock: productForm.stock ? Number(productForm.stock) : 0,
           warehouse_id: initialWarehouseId || undefined,
-          assign_all_warehouses: assignAllWarehouses,
+          assign_all_warehouses: sendAssignAllWarehouses,
           warehouse_ids: warehouseIds,
           assign_all_depots: assignAllDepots,
           depot_ids: depotIds,
@@ -395,7 +438,7 @@ export function KamsWarehouses() {
       quantity: '1',
       supplier_id: '',
       supplier_name: '',
-      unit_cost: product?.cost != null ? String(product.cost) : '',
+      unit_cost: product ? String(purchaseUnitCost(product)) : '',
     })
     setError('')
     setReceiveOpen(true)
@@ -499,7 +542,7 @@ export function KamsWarehouses() {
                             <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
                               <span>
                                 {item.product.sku ? `${item.product.sku} · ` : ''}
-                                {t('kams.salePrice')} {money(item.product.field_price || item.product.price)}
+                                {t('kams.salePrice')} {money(saleUnitPrice(item.product))}
                               </span>
                               <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
                             </div>
@@ -673,7 +716,7 @@ export function KamsWarehouses() {
               setForm({
                 ...form,
                 product_id: item.id,
-                unit_cost: product?.cost != null ? String(product.cost) : form.unit_cost || '',
+                unit_cost: product ? String(purchaseUnitCost(product)) : form.unit_cost || '',
               })
             }}
           />
@@ -751,13 +794,25 @@ export function KamsWarehouses() {
             <Field label={t('kams.purchasePrice')} type="number" min="0" step="0.01" value={productForm.cost || ''} onChange={(e) => setProductForm({ ...productForm, cost: e.target.value })} required />
             <Field label={t('kams.salePrice')} type="number" min="0" step="0.01" value={productForm.price || ''} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} required />
           </div>
+          <label className="flex items-start gap-2 rounded-xl border border-line px-3 py-2.5 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={taxExempt}
+              onChange={(e) => setTaxExempt(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-ink">{t('kams.taxExempt')}</span>
+              <span className="mt-0.5 block text-xs text-muted">{t('kams.taxExemptHint')}</span>
+            </span>
+          </label>
           {!editingProduct ? (
             <>
               <div className="grid grid-cols-2 gap-3">
                 <Field label={t('kams.initialStock')} type="number" min="0" value={productForm.stock || ''} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} />
               </div>
               <p className="text-xs text-muted">{t('kams.initialStockHint')}</p>
-              {(assignAllWarehouses ? (lookups?.warehouses || []).map((row) => row.id) : selectedWarehouseIds).length > 1 ? (
+              {!originWarehouseId && (assignAllWarehouses ? assignableWarehouses.map((row) => row.id) : selectedWarehouseIds).length > 1 ? (
                 <Select label={t('kams.initialStockWarehouse')} value={productForm.warehouse_id || ''} onChange={(e) => setProductForm({ ...productForm, warehouse_id: e.target.value })}>
                   <option value="">—</option>
                   {(lookups?.warehouses || [])
@@ -770,24 +825,32 @@ export function KamsWarehouses() {
           <div className="space-y-2 rounded-xl border border-line p-3">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-medium">{t('kams.assignWarehouses')}</div>
-              <label className="flex items-center gap-2 text-sm text-muted">
-                <input
-                  type="checkbox"
-                  checked={assignAllWarehouses}
-                  onChange={(e) => {
-                    setAssignAllWarehouses(e.target.checked)
-                    if (e.target.checked) {
-                      const ids = (lookups?.warehouses || []).map((row) => row.id)
-                      setSelectedWarehouseIds(ids)
-                      if (ids[0]) setProductForm((form) => ({ ...form, warehouse_id: String(ids[0]) }))
-                    }
-                  }}
-                />
-                {t('kams.allWarehouses')}
-              </label>
+              {assignableWarehouses.length > 0 ? (
+                <label className="flex items-center gap-2 text-sm text-muted">
+                  <input
+                    type="checkbox"
+                    checked={assignAllWarehouses}
+                    onChange={(e) => {
+                      setAssignAllWarehouses(e.target.checked)
+                      if (e.target.checked) {
+                        const ids = assignableWarehouses.map((row) => row.id)
+                        setSelectedWarehouseIds(ids)
+                      }
+                    }}
+                  />
+                  {t('kams.allWarehouses')}
+                </label>
+              ) : null}
             </div>
+            {originWarehouseId ? (
+              <p className="text-xs text-muted">
+                {t('kams.originWarehouseExcluded', {
+                  name: (lookups?.warehouses || []).find((row) => row.id === originWarehouseId)?.name || '',
+                })}
+              </p>
+            ) : null}
             <div className="max-h-40 space-y-2 overflow-y-auto">
-              {(lookups?.warehouses || []).map((warehouse) => (
+              {assignableWarehouses.map((warehouse) => (
                 <label key={warehouse.id} className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -798,7 +861,11 @@ export function KamsWarehouses() {
                   <span>{warehouse.name}{warehouse.code ? ` · ${warehouse.code}` : ''}</span>
                 </label>
               ))}
-              {(lookups?.warehouses || []).length === 0 ? <p className="text-xs text-muted">{t('kams.noWarehousesYet')}</p> : null}
+              {assignableWarehouses.length === 0 ? (
+                <p className="text-xs text-muted">
+                  {originWarehouseId ? t('kams.noOtherWarehouses') : t('kams.noWarehousesYet')}
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="space-y-2 rounded-xl border border-line p-3">
@@ -1054,7 +1121,7 @@ export function KamsDepots() {
       quantity: '1',
       supplier_id: '',
       supplier_name: '',
-      unit_cost: product?.cost != null ? String(product.cost) : '',
+      unit_cost: product ? String(purchaseUnitCost(product)) : '',
     })
     setReceiveError('')
     setReceiveOpen(true)
@@ -1260,7 +1327,7 @@ export function KamsDepots() {
                               <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
                                 <span>
                                   {item.product.sku ? `${item.product.sku} · ` : ''}
-                                  {t('kams.salePrice')} {money(item.product.field_price || item.product.price)}
+                                  {t('kams.salePrice')} {money(saleUnitPrice(item.product))}
                                 </span>
                                 <span className="shrink-0 text-sm font-semibold text-ink sm:hidden">{item.quantity}</span>
                               </div>
@@ -1510,7 +1577,7 @@ export function KamsDepots() {
               setReceiveForm({
                 ...receiveForm,
                 product_id: item.id,
-                unit_cost: product?.cost != null ? String(product.cost) : receiveForm.unit_cost || '',
+                unit_cost: product ? String(purchaseUnitCost(product)) : receiveForm.unit_cost || '',
               })
             }}
           />
@@ -1531,9 +1598,9 @@ export function KamsDepots() {
               </div>
             </div>
             <div className="grid gap-2 text-sm sm:grid-cols-2">
-              <div>{t('kams.purchasePrice')}: <strong>{money(infoProduct.product.company_price || infoProduct.product.cost)}</strong></div>
-              <div>{t('kams.salePrice')}: <strong>{money(infoProduct.product.field_price || infoProduct.product.price)}</strong></div>
-              <div>{t('kams.grossProfit')}: <strong>{money(Math.max(0, (infoProduct.product.field_price || infoProduct.product.price) - (infoProduct.product.company_price || infoProduct.product.cost)))}</strong></div>
+              <div>{t('kams.purchasePrice')}: <strong>{money(purchaseUnitCost(infoProduct.product))}</strong></div>
+              <div>{t('kams.salePrice')}: <strong>{money(saleUnitPrice(infoProduct.product))}</strong></div>
+              <div>{t('kams.grossProfit')}: <strong>{money(Math.max(0, saleUnitPrice(infoProduct.product) - purchaseUnitCost(infoProduct.product)))}</strong></div>
               <div>{t('kams.quantity')}: <strong>{infoProduct.quantity}</strong></div>
             </div>
             <div className="space-y-2">

@@ -2,11 +2,11 @@
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.ico?v=4" sizes="any" />
-    <link rel="icon" type="image/png" href="/favicon.png?v=4" sizes="64x64" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
-    <link rel="shortcut icon" href="/favicon.ico?v=4" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4" />
+    <link rel="icon" href="/favicon.ico?v=5" sizes="any" />
+    <link rel="icon" type="image/png" href="/favicon-32x32.png?v=5" sizes="32x32" />
+    <link rel="icon" type="image/png" href="/favicon-16x16.png?v=5" sizes="16x16" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=5" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=5" sizes="180x180" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#043711" />
     <title>LHMS — LALI Holdings Management System</title>

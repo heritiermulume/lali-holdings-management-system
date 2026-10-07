@@ -16,13 +16,13 @@ use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Services\StockJournal;
 use App\Modules\Kams\Support\DomainOptions;
+use App\Modules\Kams\Support\KamsDocumentRefs;
 use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class KamsResourceController extends Controller
 {
@@ -177,7 +177,7 @@ class KamsResourceController extends Controller
                     'office:id,name,code,city_id',
                     'office.city:id,name',
                     'province:id,name,name_fr',
-                    'balances.product:id,name,sku,price,cost,field_price,manager_price,company_price,image_path,stock',
+                    'balances.product:id,name,sku,price,cost,avg_cost,field_price,manager_price,company_price,image_path,stock',
                 ]),
                 $request
             )->latest()->paginate($request->integer('per_page', 50))
@@ -265,11 +265,26 @@ class KamsResourceController extends Controller
 
     public function products(Request $request): JsonResponse
     {
-        return $this->paginated(
-            $this->scoped(KamsProduct::query()->with(['balances.depot:id,name,kind,office_id']), $request)
-                ->latest()
-                ->paginate($request->integer('per_page', 50))
-        );
+        $query = $this->scoped(KamsProduct::query()->with(['balances.depot:id,name,kind,office_id']), $request);
+        $officeState = $this->resolveOfficeFilterState($request, $this->kamsCompanyId($request));
+        $officeIds = $officeState['office_ids'];
+
+        if ($officeIds !== []) {
+            // Office-scoped / explicit filter: only products present in accessible office depots.
+            if ($request->user()->isOfficeScoped() || $request->filled('office_id')) {
+                $query->whereHas('balances', fn ($balance) => $balance
+                    ->whereHas('depot', fn ($depot) => $depot
+                        ->where('kind', 'depot')
+                        ->whereIn('office_id', $officeIds)));
+            }
+            $query->with(['balances' => fn ($balance) => $balance
+                ->whereHas('depot', fn ($depot) => $depot
+                    ->where('kind', 'depot')
+                    ->whereIn('office_id', $officeIds))
+                ->with('depot:id,name,kind,office_id')]);
+        }
+
+        return $this->paginated($query->latest()->paginate($request->integer('per_page', 50)));
     }
 
     public function storeProduct(Request $request, StockInventory $inventory): JsonResponse
@@ -292,11 +307,13 @@ class KamsResourceController extends Controller
             'warehouse_ids.*' => ['integer', 'exists:kams_depots,id'],
             'assign_all_warehouses' => ['nullable', 'boolean'],
             'status' => ['nullable', 'in:active,draft,archived'],
+            'tax_exempt' => ['nullable', 'boolean'],
             'image' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'depot_ids' => ['nullable', 'array'],
             'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
             'assign_all_depots' => ['nullable', 'boolean'],
         ]);
+        $data['tax_exempt'] = $request->boolean('tax_exempt');
         $initial = (int) ($data['stock'] ?? 0);
         $warehouseId = $data['warehouse_id'] ?? null;
         $warehouseIds = $data['warehouse_ids'] ?? null;
@@ -314,7 +331,7 @@ class KamsResourceController extends Controller
             $data['manager_price']
         );
         $sale = (float) ($data['field_price'] ?? $data['price']);
-        $purchase = (float) ($data['cost'] ?? $data['company_price'] ?? 0);
+        $purchase = (float) ($data['company_price'] ?? $data['cost'] ?? 0);
         abort_unless(
             $sale >= $purchase,
             422,
@@ -379,6 +396,7 @@ class KamsResourceController extends Controller
             'seller_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'manager_share_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', 'in:active,draft,archived'],
+            'tax_exempt' => ['nullable', 'boolean'],
             'image' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'remove_image' => ['nullable', 'boolean'],
             'warehouse_ids' => ['nullable', 'array'],
@@ -388,6 +406,10 @@ class KamsResourceController extends Controller
             'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
             'assign_all_depots' => ['nullable', 'boolean'],
         ]);
+
+        if ($request->has('tax_exempt')) {
+            $data['tax_exempt'] = $request->boolean('tax_exempt');
+        }
 
         $warehouseIds = array_key_exists('warehouse_ids', $data) ? $data['warehouse_ids'] : null;
         $assignAllWarehouses = array_key_exists('assign_all_warehouses', $data) ? (bool) $data['assign_all_warehouses'] : null;
@@ -417,6 +439,11 @@ class KamsResourceController extends Controller
             $data['company_price'] = $purchase;
             $data['cost'] = $purchase;
             $data['manager_price'] = $purchase;
+            // Refresh WAC only when there is no on-hand stock (no inventory history to protect).
+            $onHand = (int) $product->balances()->sum('quantity');
+            if ($onHand <= 0 || (float) $product->avg_cost <= 0) {
+                $data['avg_cost'] = $purchase;
+            }
         }
 
         if ($path = $this->storeProductImage($request)) {
@@ -536,29 +563,45 @@ class KamsResourceController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'exists:kams_products,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
-            'items.*.unit_price' => ['required', 'numeric', 'min:0'],
+            'items.*.unit_price' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $this->assertCompany($request, (int) $data['company_id']);
 
-        if (! SettingsCatalog::bool('kams', 'allow_backorders')) {
-            foreach ($data['items'] as $item) {
-                $product = KamsProduct::query()->find($item['product_id']);
-                $available = (int) ($product?->stock ?? 0);
+        $normalizedItems = [];
+        foreach ($data['items'] as $item) {
+            $product = KamsProduct::query()->findOrFail($item['product_id']);
+            abort_unless((int) $product->company_id === (int) $data['company_id'], 422, __('Product does not belong to this company.'));
+            $unitPrice = array_key_exists('unit_price', $item) && $item['unit_price'] !== null
+                ? (float) $item['unit_price']
+                : $product->salePrice();
+            $purchase = $product->inventoryUnitCost();
+            abort_unless(
+                $unitPrice >= $purchase,
+                422,
+                __('Sale price must be greater than or equal to purchase price.'),
+            );
+            if (! SettingsCatalog::bool('kams', 'allow_backorders')) {
+                $available = (int) ($product->stock ?? 0);
                 if ($available < (int) $item['quantity']) {
                     return response()->json([
                         'success' => false,
                         'message' => __('Insufficient stock for :product (available: :available).', [
-                            'product' => $product?->name ?? '#'.$item['product_id'],
+                            'product' => $product->name,
                             'available' => $available,
                         ]),
                     ], 422);
                 }
             }
+            $normalizedItems[] = [
+                'product_id' => (int) $product->id,
+                'quantity' => (int) $item['quantity'],
+                'unit_price' => $unitPrice,
+            ];
         }
 
         $company = Company::query()->with('country')->find($data['company_id']);
-        $subtotalItems = collect($data['items'])->sum(fn ($item) => $item['quantity'] * $item['unit_price']);
+        $subtotalItems = collect($normalizedItems)->sum(fn ($item) => $item['quantity'] * $item['unit_price']);
         $taxed = TaxSettings::apply((float) $subtotalItems, $company?->country);
         $terms = (int) SettingsCatalog::number('kams', 'default_payment_terms_days');
         $notes = $data['notes'] ?? null;
@@ -571,7 +614,7 @@ class KamsResourceController extends Controller
         $order = KamsOrder::query()->create([
             'company_id' => $data['company_id'],
             'client_id' => $data['client_id'],
-            'reference' => $this->orderReference(),
+            'reference' => KamsDocumentRefs::order(),
             'status' => $data['status'] ?? 'confirmed',
             'subtotal' => $taxed['subtotal'],
             'tax' => $taxed['tax'],
@@ -580,7 +623,7 @@ class KamsResourceController extends Controller
             'notes' => $notes,
         ]);
 
-        foreach ($data['items'] as $item) {
+        foreach ($normalizedItems as $item) {
             KamsOrderItem::query()->create([
                 'order_id' => $order->id,
                 'product_id' => $item['product_id'],
@@ -617,15 +660,18 @@ class KamsResourceController extends Controller
         }
 
         $table = $query->getModel()->getTable();
-
-        if ($table === 'kams_clients' && $request->user()->isOfficeScoped()) {
-            $query->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
-        }
+        $companyId = $request->filled('company_id')
+            ? (int) $request->company_id
+            : $this->kamsCompanyId($request);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
 
         if ($table === 'kams_clients') {
             $kind = $request->filled('kind') ? $request->string('kind')->toString() : 'client';
             abort_unless(in_array($kind, ['client', 'supplier'], true), 422);
             $query->where('kind', $kind);
+            if ($kind === 'client') {
+                $this->applyOfficeIds($query, $officeState);
+            }
         }
 
         if ($table === 'kams_depots') {
@@ -634,11 +680,9 @@ class KamsResourceController extends Controller
             } else {
                 $query->where('kind', '!=', 'seller');
             }
-            if ($request->user()->isOfficeScoped()) {
-                $query->where(function ($q) use ($request) {
-                    $q->where('kind', 'warehouse')
-                        ->orWhereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
-                });
+            // Office depots follow access; regional warehouses stay visible unless office-scoped.
+            if ($request->user()->isOfficeScoped() || $request->filled('office_id')) {
+                $this->applyOfficeIds($query, $officeState);
             }
         }
 
@@ -666,20 +710,6 @@ class KamsResourceController extends Controller
         }
 
         return $query;
-    }
-
-    private function orderReference(): string
-    {
-        $prefix = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', SettingsCatalog::string('kams', 'order_prefix')));
-
-        return ($prefix !== '' ? $prefix : 'KA').'-'.now()->format('ymd').'-'.strtoupper(Str::random(4));
-    }
-
-    private function invoiceReference(): string
-    {
-        $prefix = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', SettingsCatalog::string('kams', 'invoice_prefix')));
-
-        return ($prefix !== '' ? $prefix : 'KAF').'-'.now()->format('ymd').'-'.strtoupper(Str::random(4));
     }
 
     private function store(string $class, array $data, Request $request): JsonResponse

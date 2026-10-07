@@ -68,6 +68,32 @@ class GroupDashboardBuilder
             ? [$companyId]
             : ($accessibleCompanyIds ?: [0]);
 
+        $companies = Company::query()
+            ->whereIn('id', $accessibleCompanyIds ?: [0])
+            ->with(['module:id,slug,name,name_fr', 'country:id,name,name_fr'])
+            ->withCount(['offices' => fn ($q) => $q->where('is_active', true)])
+            ->orderBy('name')
+            ->get();
+
+        $filterOffices = $companyId !== null
+            ? Office::query()
+                ->where('company_id', $companyId)
+                ->where('is_active', true)
+                ->when($scopedOfficeIds !== [], fn ($q) => $q->whereIn('id', $scopedOfficeIds))
+                ->orderBy('name')
+                ->get(['id', 'name', 'code'])
+                ->map(fn (Office $office) => [
+                    'id' => $office->id,
+                    'name' => $office->name,
+                    'code' => $office->code,
+                ])->values()->all()
+            : [];
+
+        // Single accessible office: lock scope and hide the office selector on the client.
+        if ($officeId === null && count($filterOffices) === 1) {
+            $officeId = (int) $filterOffices[0]['id'];
+        }
+
         $officeIds = $officeId !== null
             ? [$officeId]
             : $scopedOfficeIds;
@@ -79,13 +105,6 @@ class GroupDashboardBuilder
             || $user->hasPermission('kams.recruitment.reports.view')
             || $user->hasPermission('kams.dashboard.recruitment.view')
             || $user->hasPermission('administration.view');
-
-        $companies = Company::query()
-            ->whereIn('id', $accessibleCompanyIds ?: [0])
-            ->with(['module:id,slug,name,name_fr', 'country:id,name,name_fr'])
-            ->withCount(['offices' => fn ($q) => $q->where('is_active', true)])
-            ->orderBy('name')
-            ->get();
 
         $kamsCompanies = $companies->filter(fn (Company $company) => $company->module?->slug === 'kams');
         $scopedKams = $kamsCompanies->whereIn('id', $companyIds);
@@ -161,20 +180,6 @@ class GroupDashboardBuilder
         }
 
         $alerts = $this->alerts($user, $scopedKams, $finances, $operations, $compensation, $officeIds);
-
-        $filterOffices = $companyId !== null
-            ? Office::query()
-                ->where('company_id', $companyId)
-                ->where('is_active', true)
-                ->when($scopedOfficeIds !== [], fn ($q) => $q->whereIn('id', $scopedOfficeIds))
-                ->orderBy('name')
-                ->get(['id', 'name', 'code'])
-                ->map(fn (Office $office) => [
-                    'id' => $office->id,
-                    'name' => $office->name,
-                    'code' => $office->code,
-                ])->values()->all()
-            : [];
 
         return [
             'welcome' => [
@@ -343,7 +348,7 @@ class GroupDashboardBuilder
                 ->where('condition', 'available')
                 ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($d) => $d->whereIn('office_id', $officeIds)))
                 ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
+                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
                 ->value('value');
             $payable = (float) KamsSellerCommission::query()
                 ->where('company_id', $company->id)

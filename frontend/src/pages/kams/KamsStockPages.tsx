@@ -15,6 +15,7 @@ import {
 import { Card, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
@@ -62,6 +63,7 @@ type StockData = {
   recommendations: Array<{ key: string; product?: string; from?: string; to?: string; quantity?: number; agent?: string }>
   low_stock: Array<{ product?: string; sku?: string; location?: string; kind?: string; quantity: number }>
   can_filter_offices?: boolean
+  office_id?: number | null
   filter_offices?: Array<{ id: number; name: string; code?: string }>
 }
 
@@ -135,7 +137,12 @@ export function KamsStockStats() {
         from: period === 'custom' ? from : undefined,
         to: period === 'custom' ? to : undefined,
       },
-    }).then((res) => { if (active) setData(res.data.data) })
+    }).then((res) => {
+      if (!active) return
+      const payload = res.data.data
+      setData(payload)
+      syncOfficeIdFromPayload(setOfficeId, payload)
+    })
     return () => { active = false }
   }, [period, from, to, officeId])
 

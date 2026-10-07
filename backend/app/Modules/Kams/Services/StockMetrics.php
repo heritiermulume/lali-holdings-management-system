@@ -118,7 +118,7 @@ class StockMetrics
             ->when($companyId, fn ($q) => $q->where('kams_stock_balances.company_id', $companyId))
             ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
             ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-            ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
+            ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
             ->value('value');
         $periodSales = KamsStockSale::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
@@ -259,7 +259,7 @@ class StockMetrics
                 })->pluck('id'))
                 ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
                 ->where('kams_stock_balances.condition', 'available')
-                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), kams_products.cost)), 0) as value')
+                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
                 ->value('value');
 
             $guys = KamsMember::query()
@@ -440,7 +440,7 @@ class StockMetrics
                 ->whereIn('depot_id', $depotIds)
                 ->where('condition', 'available')
                 ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
+                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
                 ->value('value');
 
         $comp = $compensation ?? [
@@ -561,7 +561,8 @@ class StockMetrics
                 if (($balance->condition ?? 'available') !== 'available' || $balance->quantity > $threshold) {
                     continue;
                 }
-                $needed = max($threshold + 5 - $balance->quantity, 5);
+                $target = max($threshold * 2, $threshold);
+                $needed = max($target - (int) $balance->quantity, max(1, $threshold));
                 foreach ($warehouses as $warehouse) {
                     $available = (int) $warehouse->balances->firstWhere('product_id', $balance->product_id)?->quantity;
                     if ($available >= $needed) {

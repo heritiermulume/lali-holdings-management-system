@@ -3,7 +3,18 @@ import { useTranslation } from 'react-i18next'
 import api from '../lib/api'
 import { Button, Field, Modal } from './ui'
 
-export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ChangePasswordModal({
+  open,
+  onClose,
+  required = false,
+  onChanged,
+}: {
+  open: boolean
+  onClose: () => void
+  /** When true, the modal cannot be dismissed until the password is updated. */
+  required?: boolean
+  onChanged?: () => void | Promise<void>
+}) {
   const { t } = useTranslation()
   const [form, setForm] = useState({
     current_password: '',
@@ -33,6 +44,8 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
       await api.put('/auth/password', form)
       setSaved(true)
       setForm({ current_password: '', password: '', password_confirmation: '' })
+      await onChanged?.()
+      if (!required) onClose()
     } catch (err) {
       const response = (err as {
         response?: { data?: { message?: string; errors?: Record<string, string[]> } }
@@ -45,8 +58,9 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
   }
 
   return (
-    <Modal open={open} title={t('auth.changePassword')} onClose={onClose}>
+    <Modal open={open} title={t('auth.changePassword')} onClose={onClose} dismissible={!required}>
       <div className="space-y-3">
+        {required ? <p className="text-sm text-muted">{t('auth.passwordExpiredHint')}</p> : null}
         <Field
           label={t('auth.currentPassword')}
           type="password"
@@ -73,9 +87,11 @@ export function ChangePasswordModal({ open, onClose }: { open: boolean; onClose:
         />
         <div className="flex flex-row gap-2 pt-2">
           <Button disabled={saving} onClick={() => void save()}>
-            {saving ? t('common.loading') : t('common.save')}
+            {saving ? t('common.loading') : t('common.validate')}
           </Button>
-          <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
+          {!required ? (
+            <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
+          ) : null}
         </div>
         {error ? <p className="text-sm text-danger">{error}</p> : null}
         {saved ? <p className="text-sm text-lime">{t('auth.passwordUpdated')}</p> : null}

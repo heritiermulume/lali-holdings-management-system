@@ -1,6 +1,6 @@
 {
-    "Insufficient stock for :product at :location.": "Stock insuffisant pour :product à :location.",
-    "Insufficient stock for :product at :location. Available: :available, requested: :requested.": "Stock insuffisant pour :product à :location. Disponible : :available, demandé : :requested.",
+    "Insufficient stock for :product at :location.": "Stock insuffisant pour :product au :location.",
+    "Insufficient stock for :product at :location. Available: :available, requested: :requested.": "Stock insuffisant pour :product au :location. Disponible : :available, demandé : :requested.",
     "The agent must belong to an office.": "L'agent doit appartenir à un bureau.",
     "Receptions are recorded at a warehouse or office depot.": "Les réceptions s'enregistrent dans un entrepôt ou un dépôt de bureau.",
     "Add at least one product.": "Ajoutez au moins un produit.",
@@ -16,6 +16,8 @@
     "This transfer is not in transit.": "Ce transfert n'est pas en transit.",
     "Only active agents can receive stock.": "Seuls les agents actifs peuvent recevoir du stock.",
     "This assignment is already settled.": "Cette affectation est déjà clôturée.",
+    "This agent already has an open assignment.": "Cet agent a déjà une affectation en cours.",
+    "Return to depot for assignment :ref": "Restitution au dépôt pour l'affectation :ref",
     "Collected amount must be zero or greater.": "Le montant collecté doit être supérieur ou égal à zéro.",
     "The assignment has no agent.": "L'affectation n'a pas d'agent.",
     "Top-up for assignment :ref": "Rajout pour l'affectation :ref",
@@ -38,5 +40,10 @@
     "Adjustments apply only to warehouses and office depots.": "Les ajustements s'appliquent uniquement aux entrepôts et dépôts de bureau.",
     "Quantities must be zero or greater.": "Les quantités doivent être supérieures ou égales à zéro.",
     "Returned and lost quantities exceed assigned stock.": "Les quantités restituées et perdues dépassent le stock affecté.",
-    "Surplus :amount deposited to agent account (:ref).": "Surplus :amount déposé sur le compte de l'agent (:ref)."
+    "Surplus :amount deposited to agent account (:ref).": "Surplus :amount déposé sur le compte de l'agent (:ref).",
+    "A super administrator cannot be deleted.": "Un super administrateur ne peut pas être supprimé.",
+    "You cannot delete your own account.": "Vous ne pouvez pas supprimer votre propre compte.",
+    "Use the HH:MM-HH:MM format for :field.": "Utilisez le format HH:MM-HH:MM pour :field.",
+    "interview hours": "les heures d'entretien",
+    "observation hours": "les heures d'observation"
 }

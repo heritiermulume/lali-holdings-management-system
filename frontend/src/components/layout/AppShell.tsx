@@ -13,6 +13,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { ChangePasswordModal } from '../ChangePasswordModal'
 import { ProfileModal } from '../ProfileModal'
 import { NotificationsModal } from '../NotificationsModal'
 import { UserAvatar } from '../UserAvatar'
@@ -21,8 +22,27 @@ import { useSystemModules } from '../../context/ModulesContext'
 import { canAccessModule, ADMIN_PERMS } from '../../lib/access'
 import { businessModuleIcon, dashboardBusinessSlug, moduleFromPath, moduleRegistry, navItemLabel } from '../../modules/registry'
 import { cn } from '../../lib/cn'
-import { roleLabel } from '../../lib/format'
+import { roleLabel, reportingCurrency, setActiveCurrency } from '../../lib/format'
 import api from '../../lib/api'
+import type { User } from '../../types'
+
+function workspaceCurrencyCode(pathname: string, user: User | null): string | null {
+  const moduleSlug = pathname.startsWith('/modules/') ? (pathname.split('/')[2] || '') : ''
+  const byModule = moduleSlug
+    ? user?.accessible_companies?.find((company) => company.module_slug === moduleSlug && company.currency_code)
+    : null
+  if (byModule?.currency_code) return byModule.currency_code
+
+  const primaryId = user?.primary_company?.id
+  const primary = primaryId
+    ? user?.accessible_companies?.find((company) => company.id === primaryId)
+    : null
+  if (primary?.currency_code) return primary.currency_code
+  if (user?.primary_company?.currency_code) return user.primary_company.currency_code
+
+  const first = user?.accessible_companies?.find((company) => company.currency_code)
+  return first?.currency_code || user?.preferences?.reporting_currency || reportingCurrency() || null
+}
 
 const links = [
   { to: '/', key: 'home', icon: House },
@@ -39,12 +59,13 @@ function navClass(isActive: boolean) {
 
 export function AppShell() {
   const { t, i18n } = useTranslation()
-  const { user, logout, hasPermission, hasAnyPermission, setLocale } = useAuth()
+  const { user, logout, refresh, hasPermission, hasAnyPermission, setLocale } = useAuth()
   const [open, setOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const mustChangePassword = Boolean(user?.must_change_password)
   const [unread, setUnread] = useState(0)
   const sidebarUserRef = useRef<HTMLDivElement>(null)
   const headerUserRef = useRef<HTMLDivElement>(null)
@@ -61,6 +82,10 @@ export function AppShell() {
     setMoreOpen(false)
     setUserMenuOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    setActiveCurrency(workspaceCurrencyCode(location.pathname, user))
+  }, [location.pathname, user])
 
   useEffect(() => {
     if (!userMenuOpen) return
@@ -405,6 +430,12 @@ export function AppShell() {
       ) : null}
 
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <ChangePasswordModal
+        open={mustChangePassword}
+        required
+        onClose={() => undefined}
+        onChanged={() => refresh()}
+      />
       <NotificationsModal
         open={notificationsOpen}
         onClose={() => setNotificationsOpen(false)}

@@ -1,3 +1,4 @@
+import type { LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '../lib/cn'
 
@@ -5,6 +6,20 @@ export type SearchComboboxItem = {
   id: string
   label: string
   hint?: string
+  imageUrl?: string | null
+  icon?: LucideIcon
+}
+
+function ItemThumb({ imageUrl, icon: Icon }: { imageUrl?: string | null; icon?: LucideIcon }) {
+  return (
+    <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-lhms-soft text-lhms">
+      {imageUrl ? (
+        <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+      ) : Icon ? (
+        <Icon size={18} strokeWidth={2} />
+      ) : null}
+    </span>
+  )
 }
 
 export function SearchCombobox({
@@ -60,27 +75,32 @@ export function SearchCombobox({
         onChange={() => undefined}
         aria-hidden
       />
-      <input
-        aria-label={label}
+      <div
         className={cn(
-          'min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4',
+          'flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-2.5 ring-lhms/20 focus-within:border-lhms focus-within:ring-4',
           disabled && 'bg-surface text-muted',
         )}
-        placeholder={placeholder}
-        disabled={disabled}
-        value={open ? query : (value?.label ?? query)}
-        onChange={(e) => {
-          setQuery(e.target.value)
-          setOpen(true)
-          if (!e.target.value) onSelect(null)
-        }}
-        onFocus={() => {
-          if (disabled) return
-          setQuery('')
-          setOpen(true)
-        }}
-        autoComplete="off"
-      />
+      >
+        {value ? <ItemThumb imageUrl={value.imageUrl} icon={value.icon} /> : null}
+        <input
+          aria-label={label}
+          className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none"
+          placeholder={placeholder}
+          disabled={disabled}
+          value={open ? query : (value?.label ?? query)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setOpen(true)
+            if (!e.target.value) onSelect(null)
+          }}
+          onFocus={() => {
+            if (disabled) return
+            setQuery('')
+            setOpen(true)
+          }}
+          autoComplete="off"
+        />
+      </div>
       {open && !disabled ? (
         <div className="absolute z-[80] mt-1 max-h-56 w-full overflow-auto rounded-xl border border-line bg-white py-1 shadow-xl">
           {options.length === 0 ? (
@@ -90,7 +110,7 @@ export function SearchCombobox({
               key={item.id}
               type="button"
               className={cn(
-                'flex w-full flex-col px-3 py-2 text-left text-sm hover:bg-surface',
+                'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-surface',
                 value?.id === item.id && 'bg-lhms-soft',
               )}
               onClick={() => {
@@ -99,8 +119,11 @@ export function SearchCombobox({
                 setOpen(false)
               }}
             >
-              <span className="font-semibold">{item.label}</span>
-              {item.hint ? <span className="text-xs text-muted">{item.hint}</span> : null}
+              <ItemThumb imageUrl={item.imageUrl} icon={item.icon} />
+              <span className="min-w-0 flex-1">
+                <span className="block font-semibold">{item.label}</span>
+                {item.hint ? <span className="block text-xs text-muted">{item.hint}</span> : null}
+              </span>
             </button>
           ))}
         </div>

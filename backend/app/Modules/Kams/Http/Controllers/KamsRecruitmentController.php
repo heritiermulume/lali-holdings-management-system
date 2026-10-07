@@ -2,6 +2,7 @@
 
 namespace App\Modules\Kams\Http\Controllers;
 
+use App\Core\Support\InterviewHours;
 use App\Core\Support\ObservationHours;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
@@ -59,18 +60,8 @@ class KamsRecruitmentController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'code']);
 
-        $offices = Office::query()
-            ->where('is_active', true)
-            ->whereHas('company.module', fn ($q) => $q->where('slug', 'kams'))
-            ->when(! $request->user()->isGroupAdmin(), function ($q) use ($request, $companyIds) {
-                $officeIds = $request->user()->accessibleOfficeIds();
-                $q->whereIn('company_id', $companyIds ?: [0]);
-                if ($request->user()->isOfficeScoped()) {
-                    $q->whereIn('id', $officeIds ?: [0]);
-                }
-            })
-            ->orderBy('name')
-            ->get(['id', 'company_id', 'name', 'code']);
+        $officeState = $this->resolveOfficeFilterState($request, null);
+        $offices = $officeState['offices'];
 
         $members = $this->scopedMembers($request)
             ->whereIn('status', ['active', 'verified', 'pending_verification'])
@@ -101,12 +92,16 @@ class KamsRecruitmentController extends Controller
 
         $options = DomainOptions::all();
         $settings = [
-            'interview_hours' => SettingsCatalog::string('kams', 'interview_hours'),
-            'observation_hours' => SettingsCatalog::string('kams', 'observation_hours'),
+            'interview_hours' => InterviewHours::label(),
+            'observation_hours' => ObservationHours::label(),
             'default_member_rank' => SettingsCatalog::string('kams', 'default_member_rank'),
         ];
 
-        return $this->ok(compact('companies', 'offices', 'members', 'users', 'roles', 'options', 'settings'));
+        return $this->ok(array_merge(
+            compact('companies', 'offices', 'members', 'users', 'roles', 'options', 'settings'),
+            $this->officeFilterPayload($officeState),
+            ['can_choose_office' => $officeState['can_filter']],
+        ));
     }
 
     public function dashboard(Request $request): JsonResponse
@@ -119,22 +114,8 @@ class KamsRecruitmentController extends Controller
             ? (int) $request->company_id
             : ($request->user()->isGroupAdmin() ? null : $request->user()->primary_company_id);
 
-        $user = $request->user();
-        $offices = $this->kamsOffices($request)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code']);
-        $accessibleIds = $offices->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $canFilter = count($accessibleIds) > 1;
-        $officeIds = $user->isGroupAdmin() || ! $user->isOfficeScoped() ? [] : $accessibleIds;
-        if (! $canFilter) {
-            $officeIds = $accessibleIds;
-        } elseif ($request->filled('office_id')) {
-            $selected = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $selected);
-            $officeIds = [$selected];
-        }
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $officeIds = $officeState['office_ids'];
 
         $groupBy = $request->string('group_by')->toString() ?: 'week';
         $payload = $this->metrics->recap(
@@ -144,12 +125,7 @@ class KamsRecruitmentController extends Controller
             $groupBy === 'custom' ? $request->string('from')->toString() : null,
             $groupBy === 'custom' ? $request->string('to')->toString() : null,
         );
-        $payload['can_filter_offices'] = $canFilter;
-        $payload['filter_offices'] = $canFilter ? $offices->map(fn ($office) => [
-            'id' => $office->id,
-            'name' => $office->name,
-            'code' => $office->code,
-        ])->values()->all() : [];
+        $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
         return $this->ok($payload);
     }
@@ -899,34 +875,11 @@ class KamsRecruitmentController extends Controller
 
     private function applyOfficeScope(Builder $query, Request $request): void
     {
-        if ($request->filled('office_id')) {
-            abort_unless($request->user()?->canAccessOffice((int) $request->office_id) ?? true, 403);
-            $query->where('office_id', $request->integer('office_id'));
-
-            return;
-        }
-
-        if ($request->user()->isGroupAdmin()) {
-            return;
-        }
-
-        $officeIds = $request->user()->accessibleOfficeIds();
-
-        if ($request->user()->isOfficeScoped()) {
-            $query->whereIn('office_id', $officeIds ?: [0]);
-
-            return;
-        }
-
-        $scoped = $request->user()->scopes
-            ->where('scope_type', 'office')
-            ->pluck('scope_id')
-            ->filter()
-            ->all();
-
-        if ($scoped) {
-            $query->whereIn('office_id', $scoped);
-        }
+        $companyId = $request->filled('company_id')
+            ? (int) $request->company_id
+            : $this->kamsCompanyId($request);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $this->applyOfficeIds($query, $officeState);
     }
 
     private function assertCompany(Request $request, int $companyId): void

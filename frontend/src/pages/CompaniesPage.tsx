@@ -6,11 +6,13 @@ import { SearchCombobox, type SearchComboboxItem } from '../components/SearchCom
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
+import { useSystemModules } from '../context/ModulesContext'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
 import { businessModuleIcon } from '../modules/registry'
+import type { SystemModule } from '../types'
 
-type Geo = { id: number; name: string; name_fr?: string }
+type Geo = { id: number; name: string; name_fr?: string; province_id?: number | null; country_id?: number | null }
 
 type PersonRef = { id: number; name: string }
 type Office = {
@@ -43,7 +45,10 @@ type Company = {
   code: string
   email?: string | null
   is_active: boolean
+  country_id?: number | null
+  system_module_id?: number | null
   offices_count?: number
+  country?: Geo | null
   module?: { id: number; slug: string; name: string; name_fr: string; status: string; sort_order?: number } | null
   offices?: Office[]
 }
@@ -92,11 +97,27 @@ function officeChildren(offices: Office[], parentId: number) {
   return offices.filter((office) => office.parent_office_id === parentId)
 }
 
+const emptyCompanyForm = {
+  name: '',
+  legal_name: '',
+  code: '',
+  country_id: '',
+  email: '',
+  phone: '',
+  address: '',
+}
+
+function defaultCompanyCode(slug: string) {
+  return slug.replace(/[^a-z0-9]+/gi, '').slice(0, 8).toUpperCase() || 'CO'
+}
+
 export function CompaniesPage() {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const { hasPermission } = useAuth()
+  const { modules } = useSystemModules()
   const canSettings = hasPermission('settings.manage')
+  const canCreateCompany = hasPermission('companies.create')
   const canCreate = hasPermission('organization.create')
   const canUpdate = hasPermission('organization.update')
   const canDelete = hasPermission('organization.delete')
@@ -108,6 +129,10 @@ export function CompaniesPage() {
   const [communes, setCommunes] = useState<Geo[]>([])
   const [neighborhoods, setNeighborhoods] = useState<Geo[]>([])
   const [open, setOpen] = useState(false)
+  const [companyOpen, setCompanyOpen] = useState(false)
+  const [creatingModule, setCreatingModule] = useState<SystemModule | null>(null)
+  const [companyForm, setCompanyForm] = useState(emptyCompanyForm)
+  const [companyError, setCompanyError] = useState('')
   const [company, setCompany] = useState<Company | null>(null)
   const [editing, setEditing] = useState<Office | null>(null)
   const [deleting, setDeleting] = useState<{ company: Company; office: Office } | null>(null)
@@ -117,7 +142,6 @@ export function CompaniesPage() {
   const [loading, setLoading] = useState(true)
   const [people, setPeople] = useState<SearchComboboxItem[]>([])
   const [parentOptions, setParentOptions] = useState<Array<{ id: number; name: string; code: string }>>([])
-  const [officeTypes, setOfficeTypes] = useState<string[]>(['headquarters', 'office', 'agency', 'branch'])
 
   const load = () => {
     setLoading(true)
@@ -129,44 +153,127 @@ export function CompaniesPage() {
   useEffect(() => { load() }, [])
 
   useEffect(() => {
-    api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data ?? []))
+    api.get('/countries', { params: { per_page: 100 }, skipBusy: true })
+      .then((res) => setCountries(res.data.data ?? []))
   }, [])
 
   useEffect(() => {
-    if (!form.country_id) {
+    if (!open || !form.country_id) {
       setProvinces([])
       return
     }
-    api.get('/provinces', { params: { country_id: form.country_id, per_page: 50 } })
-      .then((res) => setProvinces(res.data.data ?? []))
-  }, [form.country_id])
+    let cancelled = false
+    api.get('/provinces', { params: { country_id: form.country_id, per_page: 100 }, skipBusy: true })
+      .then((res) => {
+        if (cancelled) return
+        const next = (res.data.data ?? []) as Geo[]
+        setProvinces(next)
+        if (next.length === 1) {
+          setForm((current) => (
+            current.country_id === form.country_id && !current.province_id
+              ? { ...current, province_id: String(next[0].id), city_id: '', commune_id: '', neighborhood_id: '' }
+              : current
+          ))
+        }
+      })
+      .catch(() => { if (!cancelled) setProvinces([]) })
+    return () => { cancelled = true }
+  }, [open, form.country_id])
 
   useEffect(() => {
-    if (!form.country_id) {
+    if (!open || !form.province_id) {
       setCities([])
       return
     }
-    api.get('/cities', { params: { country_id: form.country_id, province_id: form.province_id || undefined, per_page: 50 } })
-      .then((res) => setCities(res.data.data ?? []))
-  }, [form.country_id, form.province_id])
+    let cancelled = false
+    api.get('/cities', {
+      params: {
+        country_id: form.country_id || undefined,
+        province_id: form.province_id,
+        per_page: 100,
+      },
+      skipBusy: true,
+    })
+      .then((res) => {
+        if (cancelled) return
+        const next = ((res.data.data ?? []) as Geo[]).filter(
+          (city) => String(city.province_id ?? '') === form.province_id,
+        )
+        setCities(next)
+        if (next.length === 1) {
+          setForm((current) => (
+            current.province_id === form.province_id && !current.city_id
+              ? { ...current, city_id: String(next[0].id), commune_id: '', neighborhood_id: '' }
+              : current
+          ))
+        }
+      })
+      .catch(() => { if (!cancelled) setCities([]) })
+    return () => { cancelled = true }
+  }, [open, form.country_id, form.province_id])
 
   useEffect(() => {
-    if (!form.city_id) {
+    if (!open || !form.city_id) {
       setCommunes([])
       return
     }
-    api.get('/communes', { params: { city_id: form.city_id, per_page: 50 } })
-      .then((res) => setCommunes(res.data.data ?? []))
-  }, [form.city_id])
+    let cancelled = false
+    api.get('/communes', { params: { city_id: form.city_id, per_page: 100 }, skipBusy: true })
+      .then((res) => {
+        if (cancelled) return
+        const next = (res.data.data ?? []) as Geo[]
+        setCommunes(next)
+        if (next.length === 1) {
+          setForm((current) => (
+            current.city_id === form.city_id && !current.commune_id
+              ? { ...current, commune_id: String(next[0].id), neighborhood_id: '' }
+              : current
+          ))
+        }
+      })
+      .catch(() => { if (!cancelled) setCommunes([]) })
+    return () => { cancelled = true }
+  }, [open, form.city_id])
 
   useEffect(() => {
-    if (!form.commune_id) {
+    if (!open || !form.commune_id) {
       setNeighborhoods([])
       return
     }
-    api.get('/neighborhoods', { params: { commune_id: form.commune_id, per_page: 50 } })
-      .then((res) => setNeighborhoods(res.data.data ?? []))
-  }, [form.commune_id])
+    let cancelled = false
+    api.get('/neighborhoods', { params: { commune_id: form.commune_id, per_page: 100 }, skipBusy: true })
+      .then((res) => {
+        if (cancelled) return
+        const next = (res.data.data ?? []) as Geo[]
+        setNeighborhoods(next)
+        if (next.length === 1) {
+          setForm((current) => (
+            current.commune_id === form.commune_id && !current.neighborhood_id
+              ? { ...current, neighborhood_id: String(next[0].id) }
+              : current
+          ))
+        }
+      })
+      .catch(() => { if (!cancelled) setNeighborhoods([]) })
+    return () => { cancelled = true }
+  }, [open, form.commune_id])
+
+  const provinceItems = useMemo<SearchComboboxItem[]>(
+    () => provinces.map((item) => ({ id: String(item.id), label: geoName(item, locale) })),
+    [provinces, locale],
+  )
+  const cityItems = useMemo<SearchComboboxItem[]>(
+    () => cities.map((item) => ({ id: String(item.id), label: geoName(item, locale) })),
+    [cities, locale],
+  )
+  const communeItems = useMemo<SearchComboboxItem[]>(
+    () => communes.map((item) => ({ id: String(item.id), label: geoName(item, locale) })),
+    [communes, locale],
+  )
+  const neighborhoodItems = useMemo<SearchComboboxItem[]>(
+    () => neighborhoods.map((item) => ({ id: String(item.id), label: geoName(item, locale) })),
+    [neighborhoods, locale],
+  )
 
   const loadLookups = (companyId: number) => {
     api.get('/offices/lookups', { params: { company_id: companyId } }).then((res) => {
@@ -177,16 +284,14 @@ export function CompaniesPage() {
         hint: user.email || undefined,
       })))
       setParentOptions(res.data.data?.offices ?? [])
-      if (Array.isArray(res.data.data?.office_types) && res.data.data.office_types.length) {
-        setOfficeTypes(res.data.data.office_types)
-      }
     })
   }
 
   const openCreate = (row: Company) => {
     setCompany(row)
     setEditing(null)
-    setForm(emptyOfficeForm)
+    const countryId = row.country_id ? String(row.country_id) : geoId(row.country)
+    setForm({ ...emptyOfficeForm, country_id: countryId })
     loadLookups(row.id)
     setOpen(true)
   }
@@ -216,7 +321,7 @@ export function CompaniesPage() {
   const officePayload = () => ({
     name: form.name,
     code: form.code,
-    type: form.type,
+    type: form.type || 'office',
     address: form.address || null,
     phone: form.phone || null,
     country_id: idOrNull(form.country_id),
@@ -269,20 +374,130 @@ export function CompaniesPage() {
     }
   }
 
-  const ordered = useMemo(
-    () => [...rows].sort((a, b) => (a.module?.sort_order ?? 99) - (b.module?.sort_order ?? 99)),
-    [rows],
-  )
+  const openCreateCompany = (module: SystemModule) => {
+    const moduleName = locale.startsWith('fr') ? module.name_fr || module.name : module.name
+    setCreatingModule(module)
+    setCompanyError('')
+    setCompanyForm({
+      ...emptyCompanyForm,
+      name: moduleName,
+      legal_name: moduleName,
+      code: defaultCompanyCode(module.slug),
+      country_id: countries[0] ? String(countries[0].id) : '',
+    })
+    setCompanyOpen(true)
+  }
+
+  const saveCompany = async () => {
+    if (!creatingModule) return
+    if (!companyForm.country_id) {
+      setCompanyError(t('org.noCountryForCompany'))
+      return
+    }
+    if (!companyForm.name.trim() || !companyForm.code.trim()) {
+      setCompanyError(t('org.saveError'))
+      return
+    }
+    setSaving(true)
+    setCompanyError('')
+    try {
+      await api.post('/companies', {
+        system_module_id: creatingModule.id,
+        name: companyForm.name.trim(),
+        legal_name: companyForm.legal_name.trim() || companyForm.name.trim(),
+        code: companyForm.code.trim().toUpperCase(),
+        country_id: Number(companyForm.country_id),
+        email: companyForm.email.trim() || null,
+        phone: companyForm.phone.trim() || null,
+        address: companyForm.address.trim() || null,
+        is_active: true,
+      })
+      setCompanyOpen(false)
+      setCreatingModule(null)
+      load()
+    } catch (err: unknown) {
+      const response = (err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } })?.response?.data
+      const firstFieldError = response?.errors
+        ? Object.values(response.errors).flat().find(Boolean)
+        : null
+      setCompanyError(firstFieldError || response?.message || t('org.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const moduleCards = useMemo(() => {
+    const byModuleId = new Map<number, Company>()
+    for (const row of rows) {
+      const moduleId = Number(row.module?.id ?? row.system_module_id ?? 0)
+      if (moduleId > 0) byModuleId.set(moduleId, row)
+    }
+    const orderedModules = [...modules].sort((a, b) => a.sort_order - b.sort_order)
+    if (orderedModules.length > 0) {
+      return orderedModules.map((module) => ({
+        module,
+        company: byModuleId.get(Number(module.id)) ?? null,
+      }))
+    }
+    return rows
+      .slice()
+      .sort((a, b) => (a.module?.sort_order ?? 99) - (b.module?.sort_order ?? 99))
+      .map((row) => ({
+        module: row.module
+          ? {
+              id: row.module.id,
+              slug: row.module.slug,
+              name: row.module.name,
+              name_fr: row.module.name_fr,
+              status: row.module.status as SystemModule['status'],
+              sort_order: row.module.sort_order ?? 99,
+              version: '1.0.0',
+            }
+          : null,
+        company: row,
+      }))
+  }, [modules, rows])
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted">{t('org.companiesIntro')}</p>
       {loading ? <LoadingScreen /> : (
         <>
-      {ordered.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
-      {ordered.map((row) => {
-        const Icon = businessModuleIcon(row.module?.slug ?? row.code.toLowerCase())
-        const moduleName = locale.startsWith('fr') ? (row.module?.name_fr || row.name) : (row.module?.name || row.name)
+      {moduleCards.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
+      {moduleCards.map(({ module, company: row }) => {
+        const slug = module?.slug ?? row?.code.toLowerCase() ?? 'module'
+        const Icon = businessModuleIcon(slug)
+        const moduleName = module
+          ? (locale.startsWith('fr') ? (module.name_fr || module.name) : module.name)
+          : (row?.name ?? '')
+        if (!row) {
+          return (
+            <Card key={module?.id ?? slug} className="p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-lhms text-white">
+                    <Icon size={20} />
+                  </span>
+                  <div>
+                    <h2 className="text-xl font-bold">{moduleName}</h2>
+                    <p className="mt-1 text-sm text-muted">{t('org.createCompanyHint')}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {module ? <Badge tone="slate">{t(`modules.${module.status}`)}</Badge> : null}
+                  {canCreateCompany && module ? (
+                    <Button onClick={() => openCreateCompany(module)} disabled={countries.length === 0}>
+                      <Plus size={16} /> {t('org.createCompany')}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              {countries.length === 0 && canCreateCompany ? (
+                <p className="mt-4 text-sm text-danger">{t('org.noCountryForCompany')}</p>
+              ) : null}
+            </Card>
+          )
+        }
         return (
           <Card key={row.id} className="p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -396,19 +611,49 @@ export function CompaniesPage() {
       )}
 
       <Modal
+        open={companyOpen}
+        title={`${t('org.createCompany')}${creatingModule ? ` — ${locale.startsWith('fr') ? (creatingModule.name_fr || creatingModule.name) : creatingModule.name}` : ''}`}
+        onClose={() => { setCompanyOpen(false); setCreatingModule(null); setCompanyError('') }}
+      >
+        <div className="space-y-3">
+          <Field label={t('org.name')} value={companyForm.name} onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })} />
+          <Field label={t('org.legalName')} value={companyForm.legal_name} onChange={(e) => setCompanyForm({ ...companyForm, legal_name: e.target.value })} />
+          <Field label={t('org.code')} value={companyForm.code} onChange={(e) => setCompanyForm({ ...companyForm, code: e.target.value.toUpperCase() })} />
+          <Select
+            label={t('org.countries')}
+            value={companyForm.country_id}
+            onChange={(e) => setCompanyForm({ ...companyForm, country_id: e.target.value })}
+          >
+            <option value="">—</option>
+            {countries.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
+          </Select>
+          <Field label={t('users.email')} value={companyForm.email} onChange={(e) => setCompanyForm({ ...companyForm, email: e.target.value })} />
+          <Field label={t('users.phone')} value={companyForm.phone} onChange={(e) => setCompanyForm({ ...companyForm, phone: e.target.value })} />
+          <Field label={t('org.address')} value={companyForm.address} onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })} />
+          {companyError ? <p className="text-sm text-danger">{companyError}</p> : null}
+          <Button
+            className="w-full"
+            disabled={saving || !companyForm.name || !companyForm.code || !companyForm.country_id}
+            onClick={() => void saveCompany()}
+          >
+            {saving ? t('common.loading') : t('common.save')}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
         open={open}
         title={`${editing ? t('org.editOffice') : t('org.addOffice')} — ${company?.name ?? ''}`}
         onClose={() => setOpen(false)}
       >
         <div className="space-y-3">
-          <Field label={t('org.name')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={t('org.code')} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-            <Select label={t('org.officeType')} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-              {officeTypes.map((type) => (
-                <option key={type} value={type}>{t(`org.officeTypes.${type}`)}</option>
-              ))}
-            </Select>
+          <div className="flex items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <Field label={t('org.name')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </div>
+            <div className="w-24 shrink-0 sm:w-28">
+              <Field label={t('org.code')} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+            </div>
           </div>
           <Select label={t('org.countries')} value={form.country_id} onChange={(e) => setForm({
             ...form,
@@ -421,40 +666,60 @@ export function CompaniesPage() {
             <option value="">—</option>
             {countries.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
           </Select>
-          <Select label={t('org.provinces')} value={form.province_id} disabled={!form.country_id} onChange={(e) => setForm({
-            ...form,
-            province_id: e.target.value,
-            city_id: '',
-            commune_id: '',
-            neighborhood_id: '',
-          })}>
-            <option value="">—</option>
-            {provinces.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
-          </Select>
-          <Select label={t('org.cities')} value={form.city_id} disabled={!form.country_id} onChange={(e) => setForm({
-            ...form,
-            city_id: e.target.value,
-            commune_id: '',
-            neighborhood_id: '',
-          })}>
-            <option value="">—</option>
-            {cities.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
-          </Select>
-          <Select label={t('org.communes')} value={form.commune_id} disabled={!form.city_id} onChange={(e) => setForm({
-            ...form,
-            commune_id: e.target.value,
-            neighborhood_id: '',
-          })}>
-            <option value="">—</option>
-            {communes.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
-          </Select>
-          <Select label={t('org.neighborhoods')} value={form.neighborhood_id} disabled={!form.commune_id} onChange={(e) => setForm({
-            ...form,
-            neighborhood_id: e.target.value,
-          })}>
-            <option value="">—</option>
-            {neighborhoods.map((item) => <option key={item.id} value={item.id}>{geoName(item, locale)}</option>)}
-          </Select>
+          <SearchCombobox
+            label={t('org.provinces')}
+            value={provinceItems.find((item) => item.id === form.province_id) || null}
+            items={provinceItems}
+            disabled={!form.country_id}
+            placeholder={form.country_id ? t('common.search') : t('org.pickCountryFirst')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({
+              ...form,
+              province_id: item?.id || '',
+              city_id: '',
+              commune_id: '',
+              neighborhood_id: '',
+            })}
+          />
+          <SearchCombobox
+            label={t('org.cities')}
+            value={cityItems.find((item) => item.id === form.city_id) || null}
+            items={cityItems}
+            disabled={!form.province_id}
+            placeholder={form.province_id ? t('common.search') : t('org.pickProvinceFirst')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({
+              ...form,
+              city_id: item?.id || '',
+              commune_id: '',
+              neighborhood_id: '',
+            })}
+          />
+          <SearchCombobox
+            label={t('org.communes')}
+            value={communeItems.find((item) => item.id === form.commune_id) || null}
+            items={communeItems}
+            disabled={!form.city_id}
+            placeholder={form.city_id ? t('common.search') : t('org.pickCityFirst')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({
+              ...form,
+              commune_id: item?.id || '',
+              neighborhood_id: '',
+            })}
+          />
+          <SearchCombobox
+            label={t('org.neighborhoods')}
+            value={neighborhoodItems.find((item) => item.id === form.neighborhood_id) || null}
+            items={neighborhoodItems}
+            disabled={!form.commune_id}
+            placeholder={form.commune_id ? t('common.search') : t('org.pickCommuneFirst')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => setForm({
+              ...form,
+              neighborhood_id: item?.id || '',
+            })}
+          />
           <Field label={t('org.address')} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <Select label={t('org.parentOffice')} value={form.parent_office_id} onChange={(e) => setForm({ ...form, parent_office_id: e.target.value })}>
@@ -479,7 +744,7 @@ export function CompaniesPage() {
             emptyLabel={t('common.empty')}
             onSelect={(item) => setForm({ ...form, manager_user_id: item?.id || '' })}
           />
-          <Button className="w-full" disabled={saving || !form.name || !form.code || (company?.module?.slug === 'kams' && !editing && (!form.creator_user_id || !form.manager_user_id))} onClick={() => void saveOffice()}>
+          <Button className="w-full" disabled={saving || !form.name || !form.code} onClick={() => void saveOffice()}>
             {saving ? t('common.loading') : t('common.save')}
           </Button>
         </div>

@@ -5,6 +5,8 @@ namespace App\Modules\Kams\Http\Controllers;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Models\Company;
+use App\Models\Currency;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsSavingsEntry;
@@ -31,28 +33,12 @@ class KamsFinanceController extends Controller
         TreasuryLedger $treasury,
     ): JsonResponse {
         $companyId = $this->kamsCompanyId($request);
-        $user = $request->user();
-        $restricted = ! $user->isGroupAdmin() && $user->isOfficeScoped();
-        $scopedIds = $restricted ? $this->ownOfficeIds($request) : [];
-
-        $filterOffices = $this->kamsOffices($request)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('is_active', true)
-            ->when($restricted, fn ($q) => $q->whereIn('id', $scopedIds ?: [0]))
-            ->orderBy('name')
-            ->get(['id', 'name', 'code']);
-
-        $officeIds = $restricted
-            ? $filterOffices->pluck('id')->map(fn ($id) => (int) $id)->all() ?: [0]
-            : [];
-        $canFilter = $this->canFilterOffices($request) && $filterOffices->count() > 1;
-        $selectedOfficeId = null;
-
-        if ($canFilter && $request->filled('office_id')) {
-            $selectedOfficeId = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $selectedOfficeId);
-            $officeIds = [$selectedOfficeId];
-        }
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $officeIds = $officeState['office_ids'];
+        $canFilter = $officeState['can_filter'];
+        $selectedOfficeId = $officeState['selected_office_id'];
+        $filterOffices = $officeState['offices'];
+        $restricted = ! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped();
 
         $groupBy = in_array($request->string('group_by')->toString(), ['day', 'week', 'month', 'custom'], true)
             ? $request->string('group_by')->toString()
@@ -102,13 +88,10 @@ class KamsFinanceController extends Controller
             'accounts' => $treasuryAccounts,
         ];
         $payload['savings'] = $savings;
-        $payload['can_filter_offices'] = $canFilter;
-        $payload['office_id'] = $selectedOfficeId;
-        $payload['filter_offices'] = $canFilter ? $filterOffices->map(fn ($office) => [
-            'id' => $office->id,
-            'name' => $office->name,
-            'code' => $office->code,
-        ])->values()->all() : [];
+        $payload['currency'] = $companyId
+            ? strtoupper((string) (Company::query()->whereKey($companyId)->value('currency_code') ?: Currency::defaultCode()))
+            : Currency::defaultCode();
+        $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
         return $this->ok($payload);
     }
@@ -195,43 +178,25 @@ class KamsFinanceController extends Controller
     public function memberAccounts(Request $request, SavingsLedger $ledger): JsonResponse
     {
         $companyId = $this->kamsCompanyId($request);
-        $user = $request->user();
-        $restricted = ! $user->isGroupAdmin() && $user->isOfficeScoped();
-        $scopedIds = $restricted ? $this->ownOfficeIds($request) : [];
-
-        $filterOffices = $this->kamsOffices($request)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('is_active', true)
-            ->when($restricted, fn ($q) => $q->whereIn('id', $scopedIds ?: [0]))
-            ->orderBy('name')
-            ->get(['id', 'name', 'code']);
-
-        $officeIds = $restricted
-            ? $filterOffices->pluck('id')->map(fn ($id) => (int) $id)->all() ?: [0]
-            : [];
-        $canFilter = $this->canFilterOffices($request) && $filterOffices->count() > 1;
-
-        if ($canFilter && $request->filled('office_id')) {
-            $officeId = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $officeId);
-            $officeIds = [$officeId];
-        }
-
-        $payload = $ledger->memberAccounts($companyId, $officeIds);
-        $payload['can_filter_offices'] = $canFilter;
-        $payload['office_id'] = $canFilter && $request->filled('office_id') ? (int) $request->integer('office_id') : null;
-        $payload['filter_offices'] = $canFilter ? $filterOffices->map(fn ($office) => [
-            'id' => $office->id,
-            'name' => $office->name,
-            'code' => $office->code,
-        ])->values()->all() : [];
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $payload = $ledger->memberAccounts($companyId, $officeState['office_ids']);
+        $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
         return $this->ok($payload);
     }
 
     public function account(Request $request, SavingsLedger $ledger, KamsAccountProvisioner $accounts): JsonResponse
     {
-        $member = $this->memberFor($request, $accounts);
+        if ($request->filled('member_id')) {
+            $member = $this->memberFor($request, $accounts);
+
+            return $this->ok($this->accountPayload($request, $member, $ledger, $accounts));
+        }
+
+        $member = $accounts->tryForUser($request->user(), $this->kamsCompanyId($request));
+        if (! $member) {
+            return $this->ok(null);
+        }
 
         return $this->ok($this->accountPayload($request, $member, $ledger, $accounts));
     }
@@ -318,7 +283,9 @@ class KamsFinanceController extends Controller
     {
         abort_unless($this->canViewCompanyAccounts($request), 403);
         $companyId = $this->kamsCompanyId($request);
-        abort_unless($companyId, 422, __('No KAMS company is available to open an account.'));
+        if (! $companyId) {
+            return $this->ok([]);
+        }
         $officeScoped = ! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped();
         $officeIds = $officeScoped ? $request->user()->accessibleOfficeIds() : [];
 

@@ -71,9 +71,16 @@ return new class extends Migration
 
         $existingTo = DB::table('permissions')->where('slug', $to)->value('id');
         if ($existingTo) {
-            DB::table('permission_role')
+            $roleIds = DB::table('permission_role')
                 ->where('permission_id', $fromRow->id)
-                ->update(['permission_id' => $existingTo]);
+                ->pluck('role_id');
+            foreach ($roleIds as $roleId) {
+                DB::table('permission_role')->updateOrInsert(
+                    ['role_id' => $roleId, 'permission_id' => $existingTo],
+                    []
+                );
+            }
+            DB::table('permission_role')->where('permission_id', $fromRow->id)->delete();
             DB::table('permissions')->where('id', $fromRow->id)->delete();
 
             return;

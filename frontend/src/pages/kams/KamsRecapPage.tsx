@@ -17,6 +17,7 @@ import {
 } from 'recharts'
 import { Card, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import { cn } from '../../lib/cn'
 import api from '../../lib/api'
 
@@ -86,6 +87,7 @@ export function KamsRecruitmentDashboard() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [data, setData] = useState<(RecapData & {
     can_filter_offices?: boolean
+    office_id?: number | null
     filter_offices?: Array<{ id: number; name: string; code?: string }>
   }) | null>(null)
 
@@ -100,7 +102,10 @@ export function KamsRecruitmentDashboard() {
         to: period === 'custom' ? to : undefined,
       },
     }).then((res) => {
-      if (active) setData(res.data.data)
+      if (!active) return
+      const payload = res.data.data
+      setData(payload)
+      syncOfficeIdFromPayload(setOfficeId, payload)
     })
     return () => { active = false }
   }, [period, officeId, from, to])

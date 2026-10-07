@@ -17,7 +17,7 @@ use App\Modules\Kams\Models\KamsStockReturn;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockTransfer;
 use App\Support\MailSettings;
-use App\Support\SettingsCatalog;
+use App\Support\SecuritySettings;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -31,21 +31,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Password::defaults(function () {
-            $min = max(6, min(128, (int) SettingsCatalog::number('security', 'password_min_length')));
-            $rule = Password::min($min);
-            if (SettingsCatalog::bool('security', 'password_require_mixed')) {
-                $rule = $rule->mixedCase()->numbers()->symbols();
-            }
-
-            return $rule;
-        });
-
-        $minutes = (int) SettingsCatalog::number('security', 'session_lifetime_minutes');
-        if ($minutes > 0) {
-            config(['sanctum.expiration' => $minutes]);
-        }
-
+        Password::defaults(fn () => SecuritySettings::passwordRule());
+        SecuritySettings::apply();
         MailSettings::apply();
 
         Route::model('module', SystemModule::class);

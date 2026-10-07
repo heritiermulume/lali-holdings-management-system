@@ -21,6 +21,7 @@ use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockSaleItem;
 use App\Modules\Kams\Models\KamsStockTransfer;
 use App\Modules\Kams\Models\KamsStockTransferItem;
+use App\Modules\Kams\Support\KamsDocumentRefs;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -261,6 +262,14 @@ class StockInventory
         abort_unless($member->office_id, 422, __('The agent must belong to an office.'));
         abort_unless($member->status === 'active', 422, __('Only active agents can receive stock.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
+        abort_unless(
+            ! KamsStockAssignment::query()
+                ->where('member_id', $member->id)
+                ->where('status', 'open')
+                ->exists(),
+            422,
+            __('This agent already has an open assignment.'),
+        );
 
         $office = Office::query()->findOrFail($member->office_id);
         $depot = $this->officeDepot($office);
@@ -505,7 +514,7 @@ class StockInventory
         return DB::transaction(function () use ($member, $items, $client, $clientName, $paidAmount, $userId, $notes, $seller, $depot, $manager) {
             $sale = KamsStockSale::query()->create([
                 'company_id' => $member->company_id,
-                'reference' => 'SAL-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
+                'reference' => KamsDocumentRefs::invoice(),
                 'member_id' => $member->id,
                 'manager_member_id' => $manager?->id,
                 'depot_id' => $depot->id,
@@ -527,7 +536,8 @@ class StockInventory
                 $quantity = (int) $item['quantity'];
                 $salePrice = isset($item['unit_price']) ? (float) $item['unit_price'] : $product->salePrice();
                 abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
-                $purchasePrice = $this->unitCost($product);
+                // Prefer snapshot from assignment/settlement when provided; otherwise live DB cost.
+                $purchasePrice = isset($item['unit_cost']) ? (float) $item['unit_cost'] : $this->unitCost($product);
                 if ($purchasePrice <= 0) {
                     $purchasePrice = $product->purchasePrice();
                 }
@@ -643,14 +653,23 @@ class StockInventory
                 'condition' => $condition,
                 'created_by' => $userId,
             ]);
+            $saleItems = $sale
+                ? $sale->items()->get()->keyBy('product_id')
+                : collect();
+
             foreach ($items as $item) {
                 $product = KamsProduct::query()->findOrFail($item['product_id']);
+                $saleLine = $saleItems->get($product->id);
                 KamsStockReturnItem::query()->create([
                     'return_id' => $return->id,
                     'product_id' => $product->id,
                     'quantity' => (int) $item['quantity'],
-                    'unit_cost' => $this->unitCost($product),
-                    'unit_price' => $product->salePrice(),
+                    'unit_cost' => $saleLine
+                        ? (float) $saleLine->unit_cost
+                        : $this->unitCost($product),
+                    'unit_price' => $saleLine
+                        ? (float) ($saleLine->field_price ?: $saleLine->unit_price)
+                        : $product->salePrice(),
                 ]);
             }
 
@@ -892,7 +911,8 @@ class StockInventory
     }
 
     /**
-     * Record an agent's closing figures without posting stock or money movements.
+     * Record an agent's closing figures and immediately return unsold stock to the office depot.
+     * Sales, losses, and compensation are posted later via closeDay / settle.
      *
      * @param  list<array{id:int, quantity_returned:int, quantity_lost:int}>  $items
      */
@@ -917,6 +937,8 @@ class StockInventory
                     'due' => number_format($totals['expected'], 2, '.', ''),
                 ]),
             );
+
+            $this->returnClosedStockToDepot($assignment, $userId, $notes);
 
             $assignment->update([
                 'status' => 'closed',
@@ -978,6 +1000,53 @@ class StockInventory
 
             return $posted;
         });
+    }
+
+    /**
+     * Move returned quantities from the seller location back to the office depot at agent close.
+     */
+    private function returnClosedStockToDepot(KamsStockAssignment $assignment, ?int $userId, ?string $notes = null): void
+    {
+        $assignment->loadMissing(['items.product', 'member']);
+        $member = $assignment->member;
+        abort_unless($member, 422, __('The assignment has no agent.'));
+
+        $depot = KamsDepot::query()->findOrFail($assignment->depot_id);
+        $seller = $this->sellerLocation($member);
+        $movementNote = $notes ?: __('Return to depot for assignment :ref', ['ref' => $assignment->reference]);
+
+        foreach ($assignment->items as $line) {
+            $returned = (int) $line->quantity_returned;
+            if ($returned <= 0 || ! $line->product) {
+                continue;
+            }
+            $this->changeBalance($seller, $line->product, -$returned, 'available');
+            $this->changeBalance($depot, $line->product, $returned, 'available');
+            $this->recordMovement(
+                $line->product,
+                $returned,
+                'return',
+                $userId,
+                $seller->id,
+                $depot->id,
+                $assignment,
+                $member->id,
+                $movementNote,
+                'available',
+                $userId,
+                (float) $line->unit_cost,
+            );
+            $this->syncProductStock($line->product);
+        }
+    }
+
+    private function assignmentReturnsPosted(KamsStockAssignment $assignment): bool
+    {
+        return KamsStockMovement::query()
+            ->where('reference_type', KamsStockAssignment::class)
+            ->where('reference_id', $assignment->id)
+            ->where('type', 'return')
+            ->exists();
     }
 
     /**
@@ -1078,7 +1147,12 @@ class StockInventory
                 $profitAmount += $sold * ($unitPrice - $unitCost);
                 $lossAmount += $lost * $unitCost;
                 if ($sold > 0) {
-                    $saleLines[] = ['product_id' => $line->product_id, 'quantity' => $sold, 'unit_price' => $line->unit_price];
+                    $saleLines[] = [
+                        'product_id' => $line->product_id,
+                        'quantity' => $sold,
+                        'unit_price' => (float) $line->unit_price,
+                        'unit_cost' => (float) $line->unit_cost,
+                    ];
                 }
                 if ($returned > 0) {
                     $returnLines[] = ['product_id' => $line->product_id, 'quantity' => $returned];
@@ -1107,7 +1181,8 @@ class StockInventory
             if ($saleLines !== []) {
                 $sale = $this->sell($member, $saleLines, null, null, $salePayment, $userId, $notes);
             }
-            if ($returnLines !== []) {
+            // Returns are posted at agent close; keep this path for older closed assignments.
+            if ($returnLines !== [] && ! $this->assignmentReturnsPosted($assignment)) {
                 $depot = KamsDepot::query()->find($assignment->depot_id);
                 $ret = $this->createReturn('seller_to_depot', $returnLines, $member, null, $this->sellerLocation($member), $depot, 'available', $notes ?: 'Return to depot', $userId);
                 if ($userId) {
@@ -1194,17 +1269,7 @@ class StockInventory
 
     private function unitCost(KamsProduct $product): float
     {
-        $avg = (float) $product->avg_cost;
-        if ($avg > 0) {
-            return $avg;
-        }
-
-        $cost = (float) $product->cost;
-        if ($cost > 0) {
-            return $cost;
-        }
-
-        return $product->purchasePrice();
+        return $product->inventoryUnitCost();
     }
 
     private function changeBalance(KamsDepot $location, KamsProduct $product, int $delta, string $condition = 'available'): void

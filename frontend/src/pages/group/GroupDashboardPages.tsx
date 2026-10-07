@@ -277,7 +277,12 @@ function useGroupDashboard() {
     })
       .then((res) => {
         if (!active) return
-        setData(res.data.data)
+        const payload = res.data.data as DashboardData
+        setData(payload)
+        const offices = payload.scope?.offices || []
+        if (offices.length === 1 && officeId !== offices[0].id) {
+          setOfficeId(offices[0].id)
+        }
         setFailed(false)
       })
       .catch(() => {
@@ -358,20 +363,22 @@ function ScopeFilters({
               ))}
             </select>
           </label>
-          <label className="block text-sm">
-            <span className="mb-1.5 block font-medium text-muted">{t('groupDash.scopeOffice')}</span>
-            <select
-              className="min-h-11 w-full max-w-full rounded-xl border border-line bg-white px-3 text-sm disabled:opacity-50"
-              value={officeId}
-              disabled={!companyId || data.scope.offices.length === 0}
-              onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
-            >
-              <option value="">{t('groupDash.allOffices')}</option>
-              {data.scope.offices.map((office) => (
-                <option key={office.id} value={office.id}>{office.name}</option>
-              ))}
-            </select>
-          </label>
+          {data.scope.offices.length > 1 ? (
+            <label className="block text-sm">
+              <span className="mb-1.5 block font-medium text-muted">{t('groupDash.scopeOffice')}</span>
+              <select
+                className="min-h-11 w-full max-w-full rounded-xl border border-line bg-white px-3 text-sm disabled:opacity-50"
+                value={officeId}
+                disabled={!companyId}
+                onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
+              >
+                <option value="">{t('groupDash.allOffices')}</option>
+                {data.scope.offices.map((office) => (
+                  <option key={office.id} value={office.id}>{office.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
 
         <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-end sm:justify-between xl:w-auto xl:justify-end">

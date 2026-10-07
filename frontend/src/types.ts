@@ -32,15 +32,31 @@ export type User = {
     office_ids: number[]
     offices?: Array<{ office_id: number; role: Role }>
   }>
-  primary_company?: { id: number; name: string } | null
+  primary_company?: { id: number; name: string; currency_code?: string | null } | null
   primary_office?: { id: number; name: string } | null
+  accessible_companies?: Array<{
+    id: number
+    name: string
+    code?: string
+    currency_code?: string | null
+    module_slug?: string | null
+  }>
   last_login_at?: string | null
+  password_changed_at?: string | null
+  must_change_password?: boolean
   preferences?: {
     decimal_places?: number
     date_format?: string
     timezone?: string
     group_name?: string
     reporting_currency?: string
+    default_timezone?: string
+    tax_name?: string
+    default_tax_rate?: number
+    password_min_length?: number
+    password_require_mixed?: boolean
+    session_lifetime_minutes?: number
+    force_password_reset_days?: number
   } | null
   features?: Record<string, boolean>
   account?: {

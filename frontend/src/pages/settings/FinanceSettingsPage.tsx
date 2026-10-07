@@ -1,9 +1,9 @@
-import { Ban, Info, Star, Trash2 } from 'lucide-react'
+import { Info } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
-import { money } from '../../lib/format'
+import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { settingGroups } from './catalog'
 import { SettingsForm } from './SettingsPages'
@@ -16,21 +16,6 @@ type CountryTax = {
   currency_code: string
   tax_name: string
   tax_rate: number
-}
-
-type FxCurrency = {
-  id: number
-  code: string
-  name: string
-  name_fr: string
-  symbol: string
-  is_default: boolean
-  is_active: boolean
-  mid: number
-  buy: number
-  sell: number
-  fetched_at?: string | null
-  countries?: { id: number; name: string; name_fr: string; iso_code: string }[]
 }
 
 type CatalogItem = { code: string; name: string; name_fr: string; symbol: string; enabled: boolean }
@@ -46,37 +31,24 @@ type RevenueRule = {
   is_active: boolean
 }
 
-function countryDraftDirty(saved: CountryTax, draft: CountryTax) {
+function countryCurrencyDirty(saved: CountryTax, draft: CountryTax) {
   return saved.currency_code !== draft.currency_code
-    || (saved.tax_name ?? '') !== (draft.tax_name ?? '')
-    || Number(saved.tax_rate) !== Number(draft.tax_rate)
 }
 
-function formatRate(value: number) {
-  if (!Number.isFinite(value)) return '—'
-  if (value >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-  if (value >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 4 })
-  return value.toLocaleString(undefined, { maximumFractionDigits: 6 })
+function countryTaxDirty(saved: CountryTax, draft: CountryTax) {
+  return (saved.tax_name ?? '') !== (draft.tax_name ?? '')
+    || Number(saved.tax_rate) !== Number(draft.tax_rate)
 }
 
 export function FinanceSettingsPage() {
   const { t, i18n } = useTranslation()
+  const { refresh } = useAuth()
   const localeFr = i18n.language.startsWith('fr')
   const [countries, setCountries] = useState<CountryTax[]>([])
   const [drafts, setDrafts] = useState<Record<number, CountryTax>>({})
-  const [currencies, setCurrencies] = useState<FxCurrency[]>([])
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
-  const [defaultCode, setDefaultCode] = useState('')
-  const [amount, setAmount] = useState('')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-  const [converted, setConverted] = useState<{ mid: number; buy: number; sell: number; to: string } | null>(null)
-  const [busy, setBusy] = useState(false)
   const [savingCountry, setSavingCountry] = useState<number | null>(null)
-  const [synced, setSynced] = useState('')
   const [error, setError] = useState('')
-  const [toggling, setToggling] = useState<FxCurrency | null>(null)
-  const [deleting, setDeleting] = useState<FxCurrency | null>(null)
   const [rules, setRules] = useState<RevenueRule[]>([])
   const [ruleDrafts, setRuleDrafts] = useState<Record<number, string>>({})
   const [savingRuleId, setSavingRuleId] = useState<number | null>(null)
@@ -93,17 +65,7 @@ export function FinanceSettingsPage() {
     const countryRows = (data.countries ?? []) as CountryTax[]
     setCountries(countryRows)
     setDrafts(Object.fromEntries(countryRows.map((row) => [row.id, row])))
-    setCurrencies(data.currencies ?? [])
-    setDefaultCode(data.default ?? '')
     setCatalog(list.data.data ?? [])
-    const stamp = (data.currencies ?? []).find((item: FxCurrency) => item.fetched_at)?.fetched_at
-    if (stamp) setSynced(stamp)
-    const active = (data.currencies ?? []).filter((item: FxCurrency) => item.is_active)
-    if (active.length) {
-      const fallback = data.default || active[0]?.code || ''
-      setFrom((current) => active.some((item: FxCurrency) => item.code === current) ? current : fallback)
-      setTo((current) => active.some((item: FxCurrency) => item.code === current) ? current : (active.find((item: FxCurrency) => item.code !== fallback)?.code ?? fallback))
-    }
   }
 
   const loadKamsRevenue = async () => {
@@ -147,21 +109,6 @@ export function FinanceSettingsPage() {
     }
   }
 
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true)
-    setError('')
-    try {
-      await action()
-      await load()
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } }).response?.status
-      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
-      setError(status === 409 ? t('settings.fx.currencyInUse') : (message || t('org.actionError')))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const saveCountry = async (id: number) => {
     const draft = drafts[id]
     if (!draft) return
@@ -174,6 +121,7 @@ export function FinanceSettingsPage() {
         tax_rate: Number(draft.tax_rate),
       })
       await load()
+      await refresh()
     } catch {
       setError(t('org.saveError'))
     } finally {
@@ -181,34 +129,58 @@ export function FinanceSettingsPage() {
     }
   }
 
-  const convert = async () => {
-    setBusy(true)
-    setError('')
-    try {
-      const res = await api.get('/finance/convert', { params: { amount: Number(amount) || 0, from, to } })
-      setConverted({
-        mid: res.data.data.mid,
-        buy: res.data.data.buy,
-        sell: res.data.data.sell,
-        to,
-      })
-    } catch {
-      setError(t('org.actionError'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const label = (item: { code?: string; name: string; name_fr: string }) =>
     localeFr ? item.name_fr : item.name
-
-  const linkedCurrencies = currencies.filter((row) => (row.countries?.length ?? 0) > 0 || row.is_default)
 
   if (loading) return <LoadingScreen />
 
   return (
     <div className="space-y-6">
       <SettingsForm group="finance" fields={settingGroups.finance} />
+
+      <Card className="p-4 sm:p-6">
+        <div className="mb-4">
+          <h2 className="text-base font-bold">{t('settings.fx.title')}</h2>
+          <p className="mt-1 text-sm text-muted">{t('settings.fx.help')}</p>
+        </div>
+
+        {countries.length === 0 ? (
+          <p className="text-sm text-muted">{t('settings.tax.empty')}</p>
+        ) : (
+          <div className="space-y-3">
+            {countries.map((country) => {
+              const draft = drafts[country.id] ?? country
+              const dirty = countryCurrencyDirty(country, draft)
+              const saving = savingCountry === country.id
+              return (
+                <div key={country.id} className="rounded-2xl border border-line p-4">
+                  <div className="font-semibold">{label(country)} <span className="text-xs font-medium text-muted">{country.iso_code}</span></div>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div className="min-w-0 flex-1">
+                      <Select
+                        label={t('settings.fx.currency')}
+                        value={draft.currency_code}
+                        onChange={(e) => setDrafts((current) => ({
+                          ...current,
+                          [country.id]: { ...draft, currency_code: e.target.value },
+                        }))}
+                      >
+                        {catalog.map((item) => (
+                          <option key={item.code} value={item.code}>{item.code} — {label(item)}</option>
+                        ))}
+                      </Select>
+                    </div>
+                    <Button disabled={!dirty || saving} onClick={() => void saveCountry(country.id)}>
+                      {saving ? t('common.loading') : dirty ? t('common.save') : t('common.saved')}
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
+      </Card>
 
       <Card className="p-4 sm:p-6">
         <h2 className="text-base font-bold">{t('settings.tax.title')}</h2>
@@ -219,24 +191,12 @@ export function FinanceSettingsPage() {
           <div className="mt-4 space-y-4">
             {countries.map((country) => {
               const draft = drafts[country.id] ?? country
-              const dirty = countryDraftDirty(country, draft)
+              const dirty = countryTaxDirty(country, draft)
               const saving = savingCountry === country.id
               return (
                 <div key={country.id} className="rounded-2xl border border-line p-4">
                   <div className="font-semibold">{label(country)} <span className="text-xs font-medium text-muted">{country.iso_code}</span></div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                    <Select
-                      label={t('settings.fx.currency')}
-                      value={draft.currency_code}
-                      onChange={(e) => setDrafts((current) => ({
-                        ...current,
-                        [country.id]: { ...draft, currency_code: e.target.value },
-                      }))}
-                    >
-                      {catalog.map((item) => (
-                        <option key={item.code} value={item.code}>{item.code} — {label(item)}</option>
-                      ))}
-                    </Select>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <Field
                       label={t('settings.tax.name')}
                       value={draft.tax_name ?? ''}
@@ -263,128 +223,6 @@ export function FinanceSettingsPage() {
             })}
           </div>
         )}
-      </Card>
-
-      <Card className="p-4 sm:p-6">
-        <div className="mb-4">
-          <h2 className="text-base font-bold">{t('settings.fx.title')}</h2>
-          <p className="mt-1 text-sm text-muted">{t('settings.fx.help')}</p>
-          {synced ? (
-            <p className="mt-1 text-xs text-muted">
-              {t('settings.fx.updated')}: {new Date(synced).toLocaleString()}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full text-sm">
-            <thead className="text-left text-muted">
-              <tr>
-                <th className="px-2 py-2">{t('settings.fx.currency')}</th>
-                <th className="px-2 py-2">{t('org.countries')}</th>
-                <th className="px-2 py-2">{t('settings.fx.mid', { code: defaultCode })}</th>
-                <th className="px-2 py-2">{t('settings.fx.buy')}</th>
-                <th className="px-2 py-2">{t('settings.fx.sell')}</th>
-                <th className="px-2 py-2">{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {linkedCurrencies.map((row) => (
-                <tr key={row.id} className={`border-t border-line ${row.is_active ? '' : 'opacity-60'}`}>
-                  <td className="px-2 py-3">
-                    <div className="font-semibold">
-                      {row.code} {row.is_default ? <Badge>{t('settings.fx.default')}</Badge> : null}
-                    </div>
-                    <div className="text-xs text-muted">{label(row)} · {row.symbol}</div>
-                  </td>
-                  <td className="px-2 py-3 text-muted">
-                    {(row.countries ?? []).map((item) => label(item)).join(', ') || '—'}
-                  </td>
-                  <td className="px-2 py-3">{row.is_default ? '1' : formatRate(row.mid)}</td>
-                  <td className="px-2 py-3">{row.is_default ? '—' : formatRate(row.buy)}</td>
-                  <td className="px-2 py-3">{row.is_default ? '—' : formatRate(row.sell)}</td>
-                  <td className="px-2 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {!row.is_default ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold hover:bg-surface"
-                          onClick={() => void run(async () => { await api.put(`/finance/currencies/${row.id}`, { is_default: true }) })}
-                        >
-                          <Star size={14} /> {t('settings.fx.setDefault')}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold hover:bg-surface"
-                        onClick={() => setToggling(row)}
-                      >
-                        <Ban size={14} /> {row.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
-                      </button>
-                      {!row.is_default && !(row.countries?.length) ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-surface"
-                          onClick={() => setDeleting(row)}
-                        >
-                          <Trash2 size={14} /> {t('common.delete')}
-                        </button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="space-y-3 md:hidden">
-          {linkedCurrencies.map((row) => (
-            <div key={row.id} className={`rounded-2xl border border-line p-4 ${row.is_active ? '' : 'opacity-60'}`}>
-              <div className="font-semibold">{row.code} {row.is_default ? <Badge>{t('settings.fx.default')}</Badge> : null}</div>
-              <div className="text-sm text-muted">{label(row)}</div>
-              <div className="mt-1 text-sm text-muted">{(row.countries ?? []).map((item) => label(item)).join(', ')}</div>
-            </div>
-          ))}
-        </div>
-        {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
-      </Card>
-
-      <Card className="p-4 sm:p-6">
-        <h2 className="text-base font-bold">{t('settings.fx.convert')}</h2>
-        <p className="mt-1 text-sm text-muted">{t('settings.fx.convertHelp')}</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <Field label={t('settings.fx.amount')} type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <Select label={t('settings.fx.from')} value={from} onChange={(e) => setFrom(e.target.value)}>
-            {currencies.filter((item) => item.is_active).map((item) => (
-              <option key={item.code} value={item.code}>{item.code} — {label(item)}</option>
-            ))}
-          </Select>
-          <Select label={t('settings.fx.to')} value={to} onChange={(e) => setTo(e.target.value)}>
-            {currencies.filter((item) => item.is_active).map((item) => (
-              <option key={item.code} value={item.code}>{item.code} — {label(item)}</option>
-            ))}
-          </Select>
-        </div>
-        <Button className="mt-4" disabled={busy} onClick={() => void convert()}>
-          {busy ? t('common.loading') : t('settings.fx.convert')}
-        </Button>
-        {converted ? (
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-surface p-4">
-              <div className="text-xs text-muted">{t('settings.fx.midResult')}</div>
-              <div className="mt-1 text-lg font-bold">{money(converted.mid, converted.to)}</div>
-            </div>
-            <div className="rounded-2xl bg-surface p-4">
-              <div className="text-xs text-muted">{t('settings.fx.buy')}</div>
-              <div className="mt-1 text-lg font-bold">{money(converted.buy, converted.to)}</div>
-            </div>
-            <div className="rounded-2xl bg-surface p-4">
-              <div className="text-xs text-muted">{t('settings.fx.sell')}</div>
-              <div className="mt-1 text-lg font-bold">{money(converted.sell, converted.to)}</div>
-            </div>
-          </div>
-        ) : null}
       </Card>
 
       <Card className="p-4 sm:p-6">
@@ -461,38 +299,6 @@ export function FinanceSettingsPage() {
             </Button>
           </div>
         ) : null}
-      </Modal>
-
-      <Modal open={Boolean(toggling)} title={toggling?.is_active ? t('org.deactivateOffice') : t('org.activateOffice')} onClose={() => setToggling(null)}>
-        <p className="text-sm text-muted">
-          {t(toggling?.is_active ? 'org.deactivateConfirm' : 'org.activateConfirm', { name: toggling?.code ?? '' })}
-        </p>
-        <div className="mt-5 flex gap-2">
-          <Button variant="secondary" className="flex-1" onClick={() => setToggling(null)}>{t('common.cancel')}</Button>
-          <Button className="flex-1" disabled={busy} onClick={() => {
-            if (!toggling) return
-            void run(async () => {
-              await api.put(`/finance/currencies/${toggling.id}`, { is_active: !toggling.is_active })
-              setToggling(null)
-            })
-          }}>
-            {toggling?.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
-          </Button>
-        </div>
-      </Modal>
-
-      <Modal open={Boolean(deleting)} title={t('common.delete')} onClose={() => setDeleting(null)}>
-        <p className="text-sm text-muted">{t('org.deleteConfirm', { name: deleting?.code ?? '' })}</p>
-        <div className="mt-5 flex gap-2">
-          <Button variant="secondary" className="flex-1" onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
-          <Button variant="danger" className="flex-1" disabled={busy} onClick={() => {
-            if (!deleting) return
-            void run(async () => {
-              await api.delete(`/finance/currencies/${deleting.id}`)
-              setDeleting(null)
-            })
-          }}>{t('common.delete')}</Button>
-        </div>
       </Modal>
     </div>
   )

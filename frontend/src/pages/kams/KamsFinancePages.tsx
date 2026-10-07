@@ -12,6 +12,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import { Outlet, Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -34,7 +35,7 @@ import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { compact, money } from '../../lib/format'
+import { compact, money, setActiveCurrency } from '../../lib/format'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type Period = 'day' | 'week' | 'month' | 'custom'
@@ -141,6 +142,7 @@ type FinanceData = {
   compensation?: CompensationTotals
   series: Array<{ key: string; from: string; to: string; sales: number; cash: number; profit: number; loss: number }>
   offices: OfficeFinance[]
+  currency?: string
   can_filter_offices?: boolean
   office_id?: number | null
   filter_offices?: Array<{ id: number; name: string; code: string }>
@@ -318,7 +320,10 @@ export function KamsFinanceDashboard() {
     })
       .then((res) => {
         if (!active) return
-        setData(res.data.data)
+        const payload = res.data.data
+        setData(payload)
+        syncOfficeIdFromPayload(setOfficeId, payload)
+        if (payload?.currency) setActiveCurrency(payload.currency)
         setFailed(false)
       })
       .catch(() => {

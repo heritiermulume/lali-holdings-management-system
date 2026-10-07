@@ -34,6 +34,7 @@ use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\RevenueRuleService;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Support\PersonName;
+use App\Support\SettingsCatalog;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
@@ -42,17 +43,24 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->seedPermissionsAndRoles();
-        $geography = $this->seedGeography();
-        $modules = $this->seedModules();
-        $companies = $this->seedCompanies($geography, $modules);
-        $this->linkModuleRoleOffices();
-        $admin = $this->seedUsers($companies);
+        $this->seedModules();
         $this->seedSettings();
-        $this->seedKams($companies['king'], $companies['gomaOffice']);
-        $this->seedKamsRecruitment($companies['king']);
-        $this->seedKamsStock($companies['king']);
-        $this->seedKamsAccounts();
-        $this->seedInbox($admin, $companies['king']);
+        $this->seedSuperAdmin();
+        app(RevenueRuleService::class)->ensureAll();
+
+        // Optional demo dataset (companies, offices, KAMS sample data, extra users).
+        if (filter_var(env('SEED_DEMO', false), FILTER_VALIDATE_BOOLEAN)) {
+            $geography = $this->seedGeography();
+            $modules = $this->seedModules();
+            $companies = $this->seedCompanies($geography, $modules);
+            $this->linkModuleRoleOffices();
+            $admin = $this->seedDemoUsers($companies);
+            $this->seedKams($companies['king'], $companies['gomaOffice']);
+            $this->seedKamsRecruitment($companies['king']);
+            $this->seedKamsStock($companies['king']);
+            $this->seedKamsAccounts();
+            $this->seedInbox($admin, $companies['king']);
+        }
     }
 
     private function seedPermissionsAndRoles(): void
@@ -398,7 +406,7 @@ class DatabaseSeeder extends Seeder
         return compact('holdings', 'king', 'heavy', 'estate', 'rice', 'tv', 'hq', 'gomaOffice');
     }
 
-    private function seedUsers(array $companies): User
+    private function seedSuperAdmin(): User
     {
         $admin = User::query()->updateOrCreate(['email' => 'heritiermulume@gmail.com'], [
             'first_name' => 'Héritier',
@@ -407,14 +415,26 @@ class DatabaseSeeder extends Seeder
             'locale' => 'fr',
             'timezone' => 'Africa/Kinshasa',
             'is_active' => true,
-            'primary_company_id' => $companies['holdings']->id,
-            'primary_office_id' => $companies['hq']->id,
+            'primary_company_id' => null,
+            'primary_office_id' => null,
             'password' => Hash::make('Password123!'),
             'email_verified_at' => now(),
         ]);
         $admin->roles()->detach();
         $admin->roles()->attach(Role::query()->where('slug', 'super_administrator')->value('id'), ['company_id' => null]);
+        $admin->scopes()->where('scope_type', '!=', 'group')->delete();
         $admin->scopes()->updateOrCreate(['scope_type' => 'group'], ['scope_id' => null]);
+
+        return $admin;
+    }
+
+    private function seedDemoUsers(array $companies): User
+    {
+        $admin = $this->seedSuperAdmin();
+        $admin->forceFill([
+            'primary_company_id' => $companies['holdings']->id,
+            'primary_office_id' => $companies['hq']->id,
+        ])->save();
 
         $companyAdmin = User::query()->updateOrCreate(['email' => 'kevin.m@example.com'], [
             'first_name' => 'Amina',
@@ -465,7 +485,6 @@ class DatabaseSeeder extends Seeder
             ['group' => 'finance', 'key' => 'reporting_currency', 'value' => 'USD'],
             ['group' => 'finance', 'key' => 'decimal_places', 'value' => '2', 'type' => 'number'],
             ['group' => 'finance', 'key' => 'fiscal_year_start_month', 'value' => '1', 'type' => 'number'],
-            ['group' => 'finance', 'key' => 'tax_inclusive_prices', 'value' => '0', 'type' => 'boolean'],
             ['group' => 'finance', 'key' => 'fx_spread_percent', 'value' => '1.5', 'type' => 'number'],
             ['group' => 'finance', 'key' => 'multi_currency', 'value' => '1', 'type' => 'boolean'],
             ['group' => 'finance', 'key' => 'tax_name', 'value' => 'TVA'],
@@ -504,6 +523,8 @@ class DatabaseSeeder extends Seeder
                 ['value' => $setting['value'], 'type' => $setting['type'] ?? 'string']
             );
         }
+
+        SettingsCatalog::ensure();
     }
 
     private function seedKams(Company $company, Office $office): void

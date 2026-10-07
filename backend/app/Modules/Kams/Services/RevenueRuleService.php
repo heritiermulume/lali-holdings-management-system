@@ -2,6 +2,7 @@
 
 namespace App\Modules\Kams\Services;
 
+use App\Models\Company;
 use App\Modules\Kams\Models\KamsRevenueRule;
 use App\Modules\Kams\Models\KamsRevenueRuleHistory;
 use App\Modules\Kams\Support\RevenueRuleCatalog;
@@ -29,7 +30,7 @@ class RevenueRuleService
     }
 
     /**
-     * Seed helper — call from seeders only, never invent percents at runtime.
+     * Ensure catalog rules exist for a company (idempotent; never overwrites percents).
      */
     public function seedDefaults(int $companyId): void
     {
@@ -42,10 +43,23 @@ class RevenueRuleService
     }
 
     /**
+     * Ensure defaults for every KAMS company (same permanence as roles/settings).
+     */
+    public function ensureAll(): void
+    {
+        Company::query()
+            ->whereHas('module', fn ($q) => $q->where('slug', 'kams'))
+            ->pluck('id')
+            ->each(fn ($id) => $this->seedDefaults((int) $id));
+    }
+
+    /**
      * @return list<KamsRevenueRule>
      */
     public function listFor(int $companyId): array
     {
+        $this->seedDefaults($companyId);
+
         return KamsRevenueRule::query()
             ->where('company_id', $companyId)
             ->orderBy('sort_order')

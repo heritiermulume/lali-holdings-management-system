@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Models\Company;
 use App\Models\Currency;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Support\SecuritySettings;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -46,12 +48,13 @@ class AuthController extends Controller
         }
 
         $user->forceFill(['last_login_at' => now()])->save();
+        SecuritySettings::apply();
         $token = $user->createToken('lhms-web')->plainTextToken;
 
         return $this->ok([
             'token' => $token,
             'token_type' => 'Bearer',
-            'user' => $this->presentUser($user),
+            'user' => $this->presentUser($user->fresh()),
         ], __('Signed in successfully.'));
     }
 
@@ -279,6 +282,8 @@ class AuthController extends Controller
             'accessible_office_ids' => $user->accessibleOfficeIds(),
             'accessible_module_slugs' => $user->accessibleModuleSlugs(),
             'last_login_at' => $user->last_login_at,
+            'password_changed_at' => $user->password_changed_at,
+            'must_change_password' => SecuritySettings::mustChangePassword($user),
             'features' => (object) [],
             'preferences' => [
                 'decimal_places' => max(0, min(6, (int) SettingsCatalog::number('finance', 'decimal_places'))),
@@ -288,7 +293,28 @@ class AuthController extends Controller
                 'legal_name' => SettingsCatalog::string('general', 'legal_name'),
                 'support_email' => SettingsCatalog::string('general', 'support_email'),
                 'reporting_currency' => Currency::defaultCode(),
+                'default_timezone' => SettingsCatalog::string('general', 'default_timezone'),
+                'tax_name' => SettingsCatalog::string('finance', 'tax_name'),
+                'default_tax_rate' => SettingsCatalog::number('finance', 'default_tax_rate'),
+                'password_min_length' => (int) SettingsCatalog::number('security', 'password_min_length'),
+                'password_require_mixed' => SettingsCatalog::bool('security', 'password_require_mixed'),
+                'session_lifetime_minutes' => (int) SettingsCatalog::number('security', 'session_lifetime_minutes'),
+                'force_password_reset_days' => SecuritySettings::forcePasswordResetDays(),
             ],
+            'accessible_companies' => Company::query()
+                ->whereIn('id', $user->accessibleCompanyIds() ?: [0])
+                ->with('module:id,slug')
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'currency_code', 'system_module_id'])
+                ->map(fn (Company $company) => [
+                    'id' => $company->id,
+                    'name' => $company->name,
+                    'code' => $company->code,
+                    'currency_code' => $company->currency_code ? strtoupper((string) $company->currency_code) : null,
+                    'module_slug' => $company->module?->slug,
+                ])
+                ->values()
+                ->all(),
         ];
     }
 }

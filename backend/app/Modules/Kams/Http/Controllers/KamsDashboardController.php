@@ -33,21 +33,11 @@ class KamsDashboardController extends Controller
             : $this->range($groupBy);
 
         $user = $request->user();
-        $offices = $this->kamsOffices($request)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code']);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $offices = $officeState['offices'];
         $accessibleIds = $offices->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $canFilter = count($accessibleIds) > 1;
-        $officeIds = $user->isGroupAdmin() || ! $user->isOfficeScoped() ? [] : $accessibleIds;
-        if (! $canFilter) {
-            $officeIds = $accessibleIds;
-        } elseif ($request->filled('office_id')) {
-            $selected = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $selected);
-            $officeIds = [$selected];
-        }
+        $canFilter = $officeState['can_filter'];
+        $officeIds = $officeState['office_ids'];
         $canProducts = $user->hasPermission('kams.dashboard.products.view');
         $canOrders = $user->hasPermission('kams.dashboard.orders.view');
         $canFinance = $user->hasPermission('kams.dashboard.finance.view');
@@ -88,13 +78,7 @@ class KamsDashboardController extends Controller
         return $this->ok([
             'group_by' => $groupBy,
             'range' => ['from' => $from, 'to' => $to],
-            'can_filter_offices' => $canFilter,
-            'office_id' => count($officeIds) === 1 ? $officeIds[0] : null,
-            'filter_offices' => $canFilter ? $offices->map(fn ($office) => [
-                'id' => $office->id,
-                'name' => $office->name,
-                'code' => $office->code,
-            ])->values()->all() : [],
+            ...$this->officeFilterPayload($officeState),
             'stats' => $stats,
             'finance' => $canFinance ? $module->financialSummary($companyId, $from, $to, $officeIds) : null,
             'trend' => $canFinance ? $finance->trend($companyId, $from, $to, $officeIds) : [],

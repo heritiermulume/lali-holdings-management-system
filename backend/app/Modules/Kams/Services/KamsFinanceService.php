@@ -4,6 +4,7 @@ namespace App\Modules\Kams\Services;
 
 use App\Models\Office;
 use App\Modules\Kams\Models\KamsAsset;
+use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSavingsAccount;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockBalance;
@@ -340,7 +341,7 @@ class KamsFinanceService
             ->where('kams_stock_balances.condition', 'available')
             ->when($officeIds !== [], fn ($query) => $query->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
             ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-            ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * COALESCE(NULLIF(kams_products.company_price, 0), NULLIF(kams_products.avg_cost, 0), kams_products.cost)), 0) as value')
+            ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
             ->value('value'), 2);
     }
 

@@ -5,6 +5,7 @@ import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { PaginationButtons } from '../../components/PaginationButtons'
 import { useAuth } from '../../context/AuthContext'
+import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { money, roleLabel } from '../../lib/format'
@@ -46,7 +47,12 @@ export function KamsMemberAccountsPage() {
     let active = true
     api.get('/modules/kams/finance/member-accounts', {
       params: { office_id: officeId || undefined },
-    }).then((res) => { if (active) setData(res.data.data) })
+    }).then((res) => {
+      if (!active) return
+      const payload = res.data.data
+      setData(payload)
+      syncOfficeIdFromPayload(setOfficeId, payload)
+    })
     return () => { active = false }
   }, [officeId])
 

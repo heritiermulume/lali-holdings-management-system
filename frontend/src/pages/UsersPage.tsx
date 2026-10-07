@@ -132,6 +132,10 @@ function PersonPhoto({
   )
 }
 
+function isSuperAdminUser(row: UserRow) {
+  return row.roles.some((role) => role.slug === 'super_administrator')
+}
+
 export function UsersPage() {
   const { t, i18n } = useTranslation()
   const { user, hasPermission } = useAuth()
@@ -809,7 +813,7 @@ export function UsersPage() {
                   <Pencil size={16} />
                 </button>
               ) : null}
-              {canDelete ? (
+              {canDelete && !isSuperAdminUser(row) ? (
                 <button type="button" aria-label={t('common.delete')} className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white" onClick={() => setDeleting(row)}>
                   <Trash2 size={16} />
                 </button>

@@ -29,7 +29,10 @@ class KamsRevenueController extends Controller
 
     public function rules(Request $request): JsonResponse
     {
-        $companyId = $this->requireCompany($request);
+        $companyId = $this->kamsCompanyId($request);
+        if (! $companyId) {
+            return $this->ok([]);
+        }
 
         return $this->ok($this->rules->listFor($companyId));
     }
@@ -51,7 +54,10 @@ class KamsRevenueController extends Controller
 
     public function summary(Request $request): JsonResponse
     {
-        $member = $this->memberFor($request);
+        $member = $this->optionalMemberFor($request);
+        if (! $member) {
+            return $this->ok(null);
+        }
 
         return $this->ok($this->shares->summaryForMember($member));
     }
@@ -65,7 +71,10 @@ class KamsRevenueController extends Controller
 
     public function offices(Request $request): JsonResponse
     {
-        $companyId = $this->requireCompany($request);
+        $companyId = $this->kamsCompanyId($request);
+        if (! $companyId) {
+            return $this->ok([]);
+        }
         $offices = Office::query()
             ->with([
                 'parent:id,name,code',
@@ -107,15 +116,7 @@ class KamsRevenueController extends Controller
         return $this->ok($this->shares->postSalary($member, $data['period'], $request->user()->id, $data['notes'] ?? null));
     }
 
-    private function requireCompany(Request $request): int
-    {
-        $companyId = $this->kamsCompanyId($request);
-        abort_unless($companyId, 422, __('No company is available for this account.'));
-
-        return $companyId;
-    }
-
-    private function memberFor(Request $request): KamsMember
+    private function optionalMemberFor(Request $request): ?KamsMember
     {
         if ($request->filled('member_id') && $request->user()->hasAnyPermission('kams.finance.dashboard.view', 'kams.finance.company.view')) {
             $member = KamsMember::query()->with(['role', 'office'])->findOrFail((int) $request->integer('member_id'));
@@ -124,6 +125,6 @@ class KamsRevenueController extends Controller
             return $member;
         }
 
-        return $this->accounts->forUser($request->user(), $this->kamsCompanyId($request));
+        return $this->accounts->tryForUser($request->user(), $this->kamsCompanyId($request));
     }
 }

@@ -29,6 +29,7 @@ use Laravel\Sanctum\HasApiTokens;
     'primary_company_id',
     'primary_office_id',
     'password',
+    'password_changed_at',
     'last_login_at',
 ])]
 #[Hidden(['password', 'login_password', 'remember_token'])]
@@ -42,6 +43,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'last_login_at' => 'datetime',
+            'password_changed_at' => 'datetime',
             'is_active' => 'boolean',
             'password' => 'hashed',
             'login_password' => 'encrypted',
@@ -52,6 +54,15 @@ class User extends Authenticatable
     {
         static::saving(function (User $user): void {
             $user->name = trim($user->first_name.' '.$user->last_name);
+            if ($user->isDirty('password')) {
+                $user->password_changed_at = now();
+            }
+        });
+
+        static::creating(function (User $user): void {
+            if (! $user->password_changed_at) {
+                $user->password_changed_at = now();
+            }
         });
     }
 

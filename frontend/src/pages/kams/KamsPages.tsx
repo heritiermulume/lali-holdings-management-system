@@ -7,6 +7,7 @@ import { cn } from '../../lib/cn'
 import { showAlert } from '../../lib/alert'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import { compact, money } from '../../lib/format'
 import { moduleRegistry } from '../../modules/registry'
 import api from '../../lib/api'
@@ -61,6 +62,7 @@ export function KamsDashboard() {
   const [data, setData] = useState<{
     range: { from: string; to: string }
     can_filter_offices?: boolean
+    office_id?: number | null
     filter_offices?: Array<{ id: number; name: string; code?: string }>
     stats: Record<string, number>
     finance: Record<string, number> | null
@@ -81,7 +83,12 @@ export function KamsDashboard() {
         from: period === 'custom' ? from : undefined,
         to: period === 'custom' ? to : undefined,
       },
-    }).then((res) => { if (active) setData(res.data.data) })
+    }).then((res) => {
+      if (!active) return
+      const payload = res.data.data
+      setData(payload)
+      syncOfficeIdFromPayload(setOfficeId, payload)
+    })
     return () => { active = false }
   }, [period, officeId, from, to])
 

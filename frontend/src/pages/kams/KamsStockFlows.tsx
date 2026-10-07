@@ -1,18 +1,103 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Info, Package, Search } from 'lucide-react'
+import { Info, Package, Search, Trash2, User } from 'lucide-react'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useOfficeScope } from '../../hooks/useOfficeScope'
 import { money } from '../../lib/format'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type Line = { product_id: string; quantity: string }
-type Product = { id: number; name: string; sku?: string | null; price: number; cost: number; stock: number; image_url?: string | null }
-type Agent = { id: number; full_name: string; member_code: string; office_id?: number | null }
+type Product = {
+  id: number
+  name: string
+  sku?: string | null
+  price: number
+  cost: number
+  stock: number
+  sale_price?: number
+  field_price?: number
+  image_url?: string | null
+  /** Available qty at each office depot, keyed by office_id. */
+  office_stock?: Record<string, number>
+}
+type Agent = {
+  id: number
+  full_name: string
+  member_code: string
+  office_id?: number | null
+  photo_url?: string | null
+}
+
+function productSalePrice(product: Product): number {
+  if (product.sale_price != null) return Number(product.sale_price)
+  const field = Number(product.field_price || 0)
+  return field > 0 ? field : Number(product.price || 0)
+}
+
+/** Stock available for assignment = office depot only (not warehouses). */
+function productOfficeStock(product: Product, officeId?: number | null): number {
+  if (!officeId) return 0
+  return Number(product.office_stock?.[String(officeId)] ?? 0)
+}
+
+function agentComboboxItem(agent: Agent): SearchComboboxItem {
+  return {
+    id: String(agent.id),
+    label: agent.full_name,
+    hint: agent.member_code,
+    imageUrl: agent.photo_url,
+    icon: User,
+  }
+}
+
+function productComboboxItem(
+  product: Product,
+  stockLabel: string,
+  salePriceLabel: string,
+  officeId?: number | null,
+): SearchComboboxItem {
+  const stock = productOfficeStock(product, officeId)
+  return {
+    id: String(product.id),
+    label: product.name,
+    hint: `${stockLabel}: ${stock} · ${salePriceLabel}: ${money(productSalePrice(product))}`,
+    imageUrl: product.image_url,
+    icon: Package,
+  }
+}
+
+/**
+ * Products for a line: only those in the agent's office depot (stock > 0),
+ * excluding ones already chosen on other lines. Current line selection is kept.
+ */
+function productsForLine(
+  catalog: Product[],
+  lines: Line[],
+  lineIndex: number,
+  officeId?: number | null,
+  extraTakenIds: Iterable<string | number> = [],
+): Product[] {
+  const taken = new Set(
+    [...extraTakenIds].map(String).concat(
+      lines.flatMap((line, index) => (
+        index !== lineIndex && line.product_id ? [line.product_id] : []
+      )),
+    ),
+  )
+  const currentId = lines[lineIndex]?.product_id || ''
+  return catalog.filter((product) => {
+    const id = String(product.id)
+    if (taken.has(id)) return false
+    if (currentId && id === currentId) return true
+    if (!officeId) return false
+    return productOfficeStock(product, officeId) > 0
+  })
+}
 type Location = { id: number; name: string; kind: string; office_id?: number | null }
 type Actor = { id: number; name: string }
 type Transfer = {
@@ -44,14 +129,15 @@ type Assignment = {
   id: number
   reference: string
   status: string
+  member_id?: number | null
   assigned_at?: string | null
   settled_at?: string | null
   expected_amount: number
   collected_amount: number
   profit_amount: number
   loss_amount: number
-  member?: { full_name: string; member_code: string; phone?: string | null } | null
-  office?: { name: string } | null
+  member?: { id?: number; full_name: string; member_code: string; phone?: string | null; photo_url?: string | null; office_id?: number | null } | null
+  office?: { id?: number; name: string } | null
   items?: AssignmentItem[]
 }
 
@@ -291,7 +377,7 @@ export function KamsTransfers() {
   )
 }
 
-export type OperationsOfficeFilter = { officeId: string }
+export type OperationsOfficeFilter = { officeId: string; showOfficeOnCards: boolean }
 
 export function KamsAssignmentsWorkspace() {
   const { t } = useTranslation()
@@ -299,19 +385,21 @@ export function KamsAssignmentsWorkspace() {
   const canView = hasPermission('kams.stock.assignments.view')
   const canReports = hasPermission('kams.stock.reports.view')
   const canJournal = hasPermission('kams.stock.journal.view')
-  const [officeId, setOfficeId] = useState('')
   const [offices, setOffices] = useState<Array<{ id: number; name: string; code?: string | null }>>([])
+  const { officeId, setOfficeId, showOfficeFilter } = useOfficeScope(offices)
 
   useEffect(() => {
     api.get('/modules/kams/stock/lookups').then((res) => {
-      const list = (res.data.data.offices || []) as Array<{ id: number; name: string; code?: string | null }>
-      setOffices(list)
+      setOffices(res.data.data.offices || [])
     })
   }, [])
 
+  // Hide office on cards when only one office exists, or when filtering to a single office.
+  const showOfficeOnCards = showOfficeFilter && !officeId
+
   return (
     <div>
-      {offices.length > 1 ? (
+      {showOfficeFilter ? (
         <div className="mb-4 sm:max-w-xs">
           <Select
             className="w-full min-w-0"
@@ -333,7 +421,7 @@ export function KamsAssignmentsWorkspace() {
           { to: '/modules/kams/stock/assignments/journal', end: true, label: t('kams.stockJournal'), show: canJournal },
         ]}
       />
-      <Outlet context={{ officeId } satisfies OperationsOfficeFilter} />
+      <Outlet context={{ officeId, showOfficeOnCards } satisfies OperationsOfficeFilter} />
     </div>
   )
 }
@@ -425,7 +513,7 @@ function AssignmentDetails({ assignment }: { assignment: Assignment }) {
 export function KamsAssignments() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
-  const { officeId } = useOutletContext<OperationsOfficeFilter>()
+  const { officeId, showOfficeOnCards } = useOutletContext<OperationsOfficeFilter>()
   const [rows, setRows] = useState<Assignment[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -473,12 +561,30 @@ export function KamsAssignments() {
     void load(query)
   }, [query, officeId])
 
-  useEffect(() => {
-    api.get('/modules/kams/stock/lookups').then((res) => {
+  const reloadLookups = () =>
+    api.get('/modules/kams/stock/lookups', {
+      params: officeId ? { office_id: officeId } : undefined,
+    }).then((res) => {
       setAgents(res.data.data.agents || [])
       setProducts(res.data.data.products || [])
     })
-  }, [])
+
+  useEffect(() => {
+    void reloadLookups()
+  }, [officeId])
+
+  // Hide agents who already have an open (not yet closed) assignment.
+  const busyAgentIds = new Set(
+    rows
+      .filter((row) => row.status === 'open')
+      .map((row) => Number(row.member_id ?? row.member?.id ?? 0))
+      .filter((id) => id > 0),
+  )
+  const scopedAgents = agents.filter((agent) => {
+    if (busyAgentIds.has(agent.id)) return false
+    if (officeId && String(agent.office_id) !== officeId) return false
+    return true
+  })
 
   const settleTotals = (() => {
     if (!settling) return { amountDue: 0, collectedAmount: 0, prepaidAmount: 0, surplus: 0, shortfall: 0 }
@@ -502,17 +608,68 @@ export function KamsAssignments() {
     }
   })()
 
+  const selectedAgent = agents.find((item) => String(item.id) === memberId) || null
+  const assignmentOfficeId = selectedAgent?.office_id
+    ?? adding?.member?.office_id
+    ?? adding?.office?.id
+    ?? null
+
+  const stockForProduct = (productId: string, officeId: number | null | undefined = assignmentOfficeId) => {
+    if (!productId) return 0
+    const product = products.find((item) => String(item.id) === productId)
+    return product ? productOfficeStock(product, officeId) : 0
+  }
+
+  const remainingStockForLine = (
+    productId: string,
+    lineIndex: number,
+    sourceLines: Line[] = lines,
+    officeId: number | null | undefined = assignmentOfficeId,
+  ) => {
+    if (!productId) return 0
+    const available = stockForProduct(productId, officeId)
+    const usedElsewhere = sourceLines.reduce((sum, line, index) => {
+      if (index === lineIndex || line.product_id !== productId) return sum
+      return sum + Number(line.quantity || 0)
+    }, 0)
+    return Math.max(0, available - usedElsewhere)
+  }
+
+  const linesStockOverflow = (sourceLines: Line[], officeId: number | null | undefined = assignmentOfficeId) => {
+    const requested: Record<string, number> = {}
+    for (const line of sourceLines) {
+      if (!line.product_id) continue
+      requested[line.product_id] = (requested[line.product_id] || 0) + Number(line.quantity || 0)
+    }
+    return Object.entries(requested).some(([productId, qty]) => qty > stockForProduct(productId, officeId))
+  }
+
+  const canAssign = Boolean(memberId)
+    && lines.some((line) => line.product_id && Number(line.quantity || 0) >= 1)
+    && lines.every((line) => !line.product_id || Number(line.quantity || 0) >= 1)
+    && !linesStockOverflow(lines)
+
+  const addOfficeId = adding?.member?.office_id ?? adding?.office?.id ?? null
+  const canAddToAssignment = Boolean(adding)
+    && addLines.some((line) => line.product_id && Number(line.quantity || 0) >= 1)
+    && addLines.every((line) => !line.product_id || Number(line.quantity || 0) >= 1)
+    && !linesStockOverflow(addLines, addOfficeId)
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (!canAssign) return
     setError('')
     try {
       await api.post('/modules/kams/stock/assignments', {
         member_id: Number(memberId),
-        items: lines.filter((line) => line.product_id).map((line) => ({ product_id: Number(line.product_id), quantity: Number(line.quantity) })),
+        items: lines
+          .filter((line) => line.product_id && Number(line.quantity || 0) >= 1)
+          .map((line) => ({ product_id: Number(line.product_id), quantity: Number(line.quantity) })),
       })
       setOpen(false)
+      setMemberId('')
       setLines([emptyLine()])
-      void load()
+      await Promise.all([load(), reloadLookups()])
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -521,12 +678,14 @@ export function KamsAssignments() {
 
   const submitAdd = async (event: FormEvent) => {
     event.preventDefault()
-    if (!adding) return
+    if (!adding || !canAddToAssignment) return
     setError('')
-    const items = addLines.filter((line) => line.product_id).map((line) => ({
-      product_id: Number(line.product_id),
-      quantity: Number(line.quantity),
-    }))
+    const items = addLines
+      .filter((line) => line.product_id && Number(line.quantity || 0) >= 1)
+      .map((line) => ({
+        product_id: Number(line.product_id),
+        quantity: Number(line.quantity),
+      }))
     if (items.length === 0) {
       setError(t('kams.addAtLeastOneProduct'))
       return
@@ -540,7 +699,7 @@ export function KamsAssignments() {
       setAdding(null)
       setAddLines([emptyLine()])
       setPrepaid('')
-      void load()
+      await Promise.all([load(), reloadLookups()])
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -567,7 +726,7 @@ export function KamsAssignments() {
       setSettling(null)
       setCollected('')
       setReturns({})
-      void load()
+      await Promise.all([load(), reloadLookups()])
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -637,7 +796,7 @@ export function KamsAssignments() {
       await api.put(`/modules/kams/stock/assignments/${editing.id}`, { items })
       setEditing(null)
       setEditLines([])
-      void load()
+      await Promise.all([load(), reloadLookups()])
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -656,7 +815,7 @@ export function KamsAssignments() {
         ...(officeId ? { office_id: Number(officeId) } : {}),
       })
       setCloseDayOpen(false)
-      void load()
+      await Promise.all([load(), reloadLookups()])
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -688,7 +847,7 @@ export function KamsAssignments() {
         </div>
         {hasPermission('kams.stock.update') ? (
           <>
-            <Button className="shrink-0" onClick={() => { setError(''); setOpen(true) }}>{t('kams.newAssignment')}</Button>
+            <Button className="shrink-0" onClick={() => { setError(''); setMemberId(''); setLines([emptyLine()]); setOpen(true) }}>{t('kams.newAssignment')}</Button>
             <span className="h-8 w-px shrink-0 bg-line" aria-hidden />
             <Button
               variant="secondary"
@@ -710,20 +869,29 @@ export function KamsAssignments() {
           return (
             <Card key={row.id} className={cn('flex h-48 flex-col overflow-hidden', row.status === 'closed' && 'border-emerald-200 bg-emerald-50')}>
               <div className="flex min-h-0 flex-1 items-start justify-between gap-2 px-4 pb-2 pt-3">
-                <div className="min-w-0">
-                  <div className="truncate text-base font-semibold">
-                    {row.member?.full_name || row.reference}
-                  </div>
-                  <div className="truncate text-xs text-muted">
-                    {[row.member?.phone, row.office?.name].filter(Boolean).join(' · ') || '—'}
-                  </div>
-                  <div className="mt-1 space-y-0 text-xs leading-4 text-muted">
-                    <div className="truncate">{t('kams.products')}: {itemCount}</div>
-                    <div className="truncate">{t('kams.totalQuantity')}: {quantityTotal}</div>
-                    <div className="truncate">{t('kams.assignmentValue')}: {money(valueTotal)}</div>
-                    {row.status === 'open' && row.collected_amount > 0 ? (
-                      <div className="truncate">{t('kams.prepaidCash')}: {money(row.collected_amount)}</div>
-                    ) : null}
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-lhms-soft text-lhms">
+                    {row.member?.photo_url ? (
+                      <img src={row.member.photo_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <User size={22} strokeWidth={2} />
+                    )}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold">
+                      {row.member?.full_name || row.reference}
+                    </div>
+                    <div className="truncate text-xs text-muted">
+                      {[row.member?.phone, showOfficeOnCards ? row.office?.name : null].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                    <div className="mt-1 space-y-0 text-xs leading-4 text-muted">
+                      <div className="truncate">{t('kams.products')}: {itemCount}</div>
+                      <div className="truncate">{t('kams.totalQuantity')}: {quantityTotal}</div>
+                      <div className="truncate">{t('kams.assignmentValue')}: {money(valueTotal)}</div>
+                      {row.status === 'open' && row.collected_amount > 0 ? (
+                        <div className="truncate">{t('kams.prepaidCash')}: {money(row.collected_amount)}</div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -756,21 +924,87 @@ export function KamsAssignments() {
       <Modal open={open} title={t('kams.newAssignment')} onClose={() => setOpen(false)}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
-          <Select label={t('kams.agents')} value={memberId} onChange={(e) => setMemberId(e.target.value)} required>
-            <option value="">—</option>
-            {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name} ({agent.member_code})</option>)}
-          </Select>
-          {lines.map((line, index) => (
-            <div key={index} className="grid gap-2 sm:grid-cols-[1fr_120px]">
-              <Select label={t('kams.products')} value={line.product_id} onChange={(e) => setLines(lines.map((item, i) => i === index ? { ...item, product_id: e.target.value } : item))}>
-                <option value="">—</option>
-                {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-              </Select>
-              <Field label={t('kams.quantity')} type="number" min="1" value={line.quantity} onChange={(e) => setLines(lines.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
-            </div>
-          ))}
-          <Button type="button" variant="ghost" onClick={() => setLines([...lines, emptyLine()])}>{t('kams.addLine')}</Button>
-          <Button type="submit" className="w-full">{t('common.save')}</Button>
+          <SearchCombobox
+            label={t('kams.agents')}
+            required
+            value={(() => {
+              const agent = scopedAgents.find((item) => String(item.id) === memberId)
+              return agent ? agentComboboxItem(agent) : null
+            })()}
+            items={scopedAgents.map(agentComboboxItem)}
+            placeholder={t('kams.searchAgents')}
+            emptyLabel={t('common.empty')}
+            onSelect={(item) => {
+              const nextId = item?.id || ''
+              setMemberId(nextId)
+              setLines([emptyLine()])
+            }}
+          />
+          {!memberId ? (
+            <p className="rounded-xl border border-dashed border-line bg-surface px-3 py-3 text-sm text-muted">
+              {t('kams.selectAgentBeforeProducts')}
+            </p>
+          ) : (
+            <>
+              {lines.map((line, index) => {
+                const remaining = remainingStockForLine(line.product_id, index)
+                const qty = Number(line.quantity || 0)
+                const over = Boolean(line.product_id) && Boolean(assignmentOfficeId) && qty > remaining
+                const lineProducts = productsForLine(products, lines, index, assignmentOfficeId)
+                return (
+                  <div key={index} className="space-y-1">
+                    <div className="grid grid-cols-[1fr_100px_auto] items-end gap-2">
+                      <SearchCombobox
+                        label={t('kams.products')}
+                        value={
+                          line.product_id
+                            ? (() => {
+                                const product = products.find((item) => String(item.id) === line.product_id)
+                                return product ? productComboboxItem(product, t('kams.stock'), t('kams.salePrice'), assignmentOfficeId) : null
+                              })()
+                            : null
+                        }
+                        items={lineProducts.map((product) => productComboboxItem(product, t('kams.stock'), t('kams.salePrice'), assignmentOfficeId))}
+                        placeholder={t('kams.searchProducts')}
+                        emptyLabel={t('common.empty')}
+                        onSelect={(item) => {
+                          setLines(lines.map((row, i) => (
+                            i === index ? { ...row, product_id: item?.id || '' } : row
+                          )))
+                        }}
+                      />
+                      <Field
+                        label={t('kams.quantity')}
+                        type="number"
+                        min="1"
+                        value={line.quantity}
+                        onChange={(e) => setLines(lines.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="!h-11 !min-h-11 w-11 shrink-0 !p-0 text-danger hover:bg-red-50"
+                        aria-label={t('common.delete')}
+                        disabled={lines.length <= 1}
+                        onClick={() => setLines(lines.length <= 1 ? [emptyLine()] : lines.filter((_, i) => i !== index))}
+                      >
+                        <Trash2 size={18} />
+                      </Button>
+                    </div>
+                    {over ? (
+                      <p className="text-xs text-red-600">
+                        {remaining <= 0 ? t('kams.stockEmpty') : t('kams.transferExceedsStock')}
+                      </p>
+                    ) : null}
+                  </div>
+                )
+              })}
+              <Button type="button" variant="secondary" onClick={() => setLines([...lines, emptyLine()])}>
+                {t('kams.addLine')}
+              </Button>
+            </>
+          )}
+          <Button type="submit" className="w-full" disabled={!canAssign}>{t('kams.assignAction')}</Button>
         </form>
       </Modal>
 
@@ -779,42 +1013,55 @@ export function KamsAssignments() {
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <p className="text-sm text-muted">{adding?.member?.full_name} · {adding?.reference}</p>
           <p className="text-sm text-muted">{t('kams.addToAssignmentHint')}</p>
-          {addLines.map((line, index) => (
-            <div key={index} className="grid gap-2 sm:grid-cols-[1fr_120px]">
-              <SearchCombobox
-                label={t('kams.products')}
-                value={
-                  line.product_id
-                    ? (() => {
-                        const product = products.find((item) => String(item.id) === line.product_id)
-                        return product
-                          ? { id: String(product.id), label: product.name, hint: product.sku || undefined }
-                          : null
-                      })()
-                    : null
-                }
-                items={products.map((product): SearchComboboxItem => ({
-                  id: String(product.id),
-                  label: product.name,
-                  hint: product.sku || undefined,
-                }))}
-                placeholder={t('kams.searchProducts')}
-                emptyLabel={t('common.empty')}
-                onSelect={(item) => {
-                  setAddLines(addLines.map((row, i) => (
-                    i === index ? { ...row, product_id: item?.id || '' } : row
-                  )))
-                }}
-              />
-              <Field label={t('kams.quantity')} type="number" min="1" value={line.quantity} onChange={(e) => setAddLines(addLines.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="ghost"
-            className="bg-lhms/15 text-lhms hover:bg-lhms/25"
-            onClick={() => setAddLines([...addLines, emptyLine()])}
-          >
+          {addLines.map((line, index) => {
+            const takenOnAssignment = (adding?.items || []).map((item) => item.product?.id).filter(Boolean) as number[]
+            const lineProducts = productsForLine(products, addLines, index, addOfficeId, takenOnAssignment)
+            const remaining = remainingStockForLine(line.product_id, index, addLines, addOfficeId)
+            const qty = Number(line.quantity || 0)
+            const over = Boolean(line.product_id) && Boolean(addOfficeId) && qty > remaining
+            return (
+              <div key={index} className="space-y-1">
+                <div className="grid grid-cols-[1fr_100px_auto] items-end gap-2">
+                  <SearchCombobox
+                    label={t('kams.products')}
+                    value={
+                      line.product_id
+                        ? (() => {
+                            const product = products.find((item) => String(item.id) === line.product_id)
+                            return product ? productComboboxItem(product, t('kams.stock'), t('kams.salePrice'), addOfficeId) : null
+                          })()
+                        : null
+                    }
+                    items={lineProducts.map((product) => productComboboxItem(product, t('kams.stock'), t('kams.salePrice'), addOfficeId))}
+                    placeholder={t('kams.searchProducts')}
+                    emptyLabel={t('common.empty')}
+                    onSelect={(item) => {
+                      setAddLines(addLines.map((row, i) => (
+                        i === index ? { ...row, product_id: item?.id || '' } : row
+                      )))
+                    }}
+                  />
+                  <Field label={t('kams.quantity')} type="number" min="1" value={line.quantity} onChange={(e) => setAddLines(addLines.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="!h-11 !min-h-11 w-11 shrink-0 !p-0 text-danger hover:bg-red-50"
+                    aria-label={t('common.delete')}
+                    disabled={addLines.length <= 1}
+                    onClick={() => setAddLines(addLines.length <= 1 ? [emptyLine()] : addLines.filter((_, i) => i !== index))}
+                  >
+                    <Trash2 size={18} />
+                  </Button>
+                </div>
+                {over ? (
+                  <p className="text-xs text-red-600">
+                    {remaining <= 0 ? t('kams.stockEmpty') : t('kams.transferExceedsStock')}
+                  </p>
+                ) : null}
+              </div>
+            )
+          })}
+          <Button type="button" variant="secondary" onClick={() => setAddLines([...addLines, emptyLine()])}>
             {t('kams.addLine')}
           </Button>
           {(adding?.collected_amount || 0) > 0 ? (
@@ -829,7 +1076,7 @@ export function KamsAssignments() {
             onChange={(e) => setPrepaid(e.target.value)}
           />
           <p className="text-xs text-muted">{t('kams.receivePrepaidCashHint')}</p>
-          <Button type="submit" className="w-full" disabled={saving}>{t('common.save')}</Button>
+          <Button type="submit" className="w-full" disabled={saving || !canAddToAssignment}>{t('common.save')}</Button>
         </form>
       </Modal>
 

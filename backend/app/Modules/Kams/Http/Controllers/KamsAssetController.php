@@ -53,21 +53,18 @@ class KamsAssetController extends Controller
             ->latest();
 
         $companyIds = $request->user()->accessibleCompanyIds();
+        $companyId = null;
         if ($request->filled('company_id')) {
-            $this->assertCompany($request, (int) $request->company_id);
-            $query->where('company_id', $request->company_id);
+            $companyId = (int) $request->company_id;
+            $this->assertCompany($request, $companyId);
+            $query->where('company_id', $companyId);
         } elseif (! $request->user()->isGroupAdmin()) {
             $query->whereIn('company_id', $companyIds ?: [0]);
         }
 
-        if ($request->user()->isOfficeScoped()) {
-            $query->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
-        }
-
-        if ($request->filled('office_id')) {
-            $officeId = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $officeId);
-            $query->where('office_id', $officeId);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        if ($officeState['office_ids'] !== []) {
+            $query->whereIn('office_id', $officeState['office_ids']);
         }
 
         $totalValue = (float) (clone $query)

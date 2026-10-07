@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Core\Support\CurrencySync;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Support\SettingsCatalog;
 use App\Models\Activity;
 use App\Models\City;
 use App\Models\Commune;
@@ -13,15 +14,18 @@ use App\Models\Country;
 use App\Models\Neighborhood;
 use App\Models\Office;
 use App\Models\Province;
+use App\Models\SystemModule;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Services\OfficeHierarchy;
+use App\Modules\Kams\Services\RevenueRuleService;
 use App\Models\Currency;
 use App\Support\CurrencyCatalog;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class OrganizationController extends Controller
 {
@@ -61,10 +65,15 @@ class OrganizationController extends Controller
             $data['currency_symbol'] = Currency::findByCode((string) $data['currency_code'])?->symbol
                 ?? CurrencyCatalog::find((string) $data['currency_code'])['symbol'];
         }
-        $data['tax_name'] = $data['tax_name'] ?? null;
-        $data['tax_rate'] = $data['tax_rate'] ?? null;
+        $data['tax_name'] = filled($data['tax_name'] ?? null)
+            ? (string) $data['tax_name']
+            : SettingsCatalog::string('finance', 'tax_name');
+        $data['tax_rate'] = array_key_exists('tax_rate', $data) && $data['tax_rate'] !== null
+            ? $data['tax_rate']
+            : SettingsCatalog::number('finance', 'default_tax_rate');
         $response = $this->storeModel(Country::class, $data);
         CurrencySync::ensureFromCountries();
+        CurrencySync::propagateToCompanies();
 
         return $response;
     }
@@ -90,6 +99,7 @@ class OrganizationController extends Controller
         }
         $response = $this->updateModel($country, $data);
         CurrencySync::ensureFromCountries();
+        CurrencySync::propagateToCompanies((int) $country->id);
 
         return $response;
     }
@@ -143,24 +153,40 @@ class OrganizationController extends Controller
 
     public function storeCity(Request $request): JsonResponse
     {
-        return $this->storeModel(City::class, $request->validate([
+        $data = $request->validate([
             'country_id' => ['required', 'exists:countries,id'],
-            'province_id' => ['nullable', 'exists:provinces,id'],
+            'province_id' => ['required', 'exists:provinces,id'],
             'name' => ['required', 'string'],
             'name_fr' => ['required', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
             'is_active' => ['boolean'],
-        ]));
+        ]);
+
+        $provinceCountry = Province::query()->whereKey($data['province_id'])->value('country_id');
+        abort_unless((int) $provinceCountry === (int) $data['country_id'], 422, __('The province must belong to the selected country.'));
+
+        return $this->storeModel(City::class, $data);
     }
 
     public function updateCity(Request $request, City $city): JsonResponse
     {
-        return $this->updateModel($city, $request->validate([
+        $data = $request->validate([
             'country_id' => ['sometimes', 'exists:countries,id'],
-            'province_id' => ['nullable', 'exists:provinces,id'],
+            'province_id' => ['sometimes', 'exists:provinces,id'],
             'name' => ['sometimes', 'string'],
             'name_fr' => ['sometimes', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
             'is_active' => ['boolean'],
-        ]));
+        ]);
+
+        $countryId = (int) ($data['country_id'] ?? $city->country_id);
+        $provinceId = (int) ($data['province_id'] ?? $city->province_id);
+        if ($provinceId) {
+            $provinceCountry = Province::query()->whereKey($provinceId)->value('country_id');
+            abort_unless((int) $provinceCountry === $countryId, 422, __('The province must belong to the selected country.'));
+        }
+
+        return $this->updateModel($city, $data);
     }
 
     public function destroyCity(City $city): JsonResponse
@@ -180,6 +206,7 @@ class OrganizationController extends Controller
             'city_id' => ['required', 'exists:cities,id'],
             'name' => ['required', 'string'],
             'name_fr' => ['required', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
             'is_active' => ['boolean'],
         ]));
     }
@@ -190,6 +217,7 @@ class OrganizationController extends Controller
             'city_id' => ['sometimes', 'exists:cities,id'],
             'name' => ['sometimes', 'string'],
             'name_fr' => ['sometimes', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
             'is_active' => ['boolean'],
         ]));
     }
@@ -211,6 +239,7 @@ class OrganizationController extends Controller
             'commune_id' => ['required', 'exists:communes,id'],
             'name' => ['required', 'string'],
             'name_fr' => ['required', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
             'is_active' => ['boolean'],
         ]));
     }
@@ -221,6 +250,7 @@ class OrganizationController extends Controller
             'commune_id' => ['sometimes', 'exists:communes,id'],
             'name' => ['sometimes', 'string'],
             'name_fr' => ['sometimes', 'string'],
+            'code' => ['nullable', 'string', 'max:32'],
             'is_active' => ['boolean'],
         ]));
     }
@@ -250,13 +280,30 @@ class OrganizationController extends Controller
 
     public function storeCompany(Request $request): JsonResponse
     {
-        return $this->storeModel(Company::class, $request->validate([
+        $moduleId = $request->filled('system_module_id') ? (int) $request->integer('system_module_id') : null;
+        $existingForModule = $moduleId
+            ? Company::withTrashed()->where('system_module_id', $moduleId)->first()
+            : null;
+
+        $data = $request->validate([
             'country_id' => ['required', 'exists:countries,id'],
             'city_id' => ['nullable', 'exists:cities,id'],
-            'system_module_id' => ['nullable', 'exists:system_modules,id', 'unique:companies,system_module_id'],
+            'system_module_id' => [
+                'nullable',
+                'exists:system_modules,id',
+                Rule::unique('companies', 'system_module_id')
+                    ->whereNull('deleted_at')
+                    ->ignore($existingForModule?->id),
+            ],
             'name' => ['required', 'string'],
             'legal_name' => ['nullable', 'string'],
-            'code' => ['required', 'string', 'unique:companies,code'],
+            'code' => [
+                'required',
+                'string',
+                Rule::unique('companies', 'code')
+                    ->whereNull('deleted_at')
+                    ->ignore($existingForModule?->id),
+            ],
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
             'address' => ['nullable', 'string'],
@@ -264,7 +311,39 @@ class OrganizationController extends Controller
             'currency_code' => ['nullable', 'string'],
             'description' => ['nullable', 'string'],
             'is_active' => ['boolean'],
-        ]));
+        ]);
+
+        // Company currency always follows the country — never a separate reporting currency.
+        $countryCode = Country::query()->whereKey($data['country_id'])->value('currency_code');
+        $data['currency_code'] = strtoupper((string) ($countryCode ?: Currency::defaultCode()));
+
+        // One company per module: update/restore when it already exists (soft-deleted or active).
+        $company = $existingForModule;
+        if (! $company) {
+            $company = Company::onlyTrashed()->where('code', $data['code'])->first();
+        }
+
+        if ($company) {
+            if ($company->trashed()) {
+                $company->restore();
+            }
+            $company->fill($data)->save();
+        } else {
+            $company = Company::query()->create($data);
+        }
+
+        if (! empty($data['system_module_id'])) {
+            $company->modules()->syncWithoutDetaching([
+                (int) $data['system_module_id'] => ['is_enabled' => true],
+            ]);
+        }
+
+        $this->ensureKamsRevenueRules($company);
+
+        return $this->created(
+            $company->fresh([...$this->companyRelations()])->loadCount('offices'),
+            __('Created')
+        );
     }
 
     public function showCompany(Company $company): JsonResponse
@@ -274,13 +353,21 @@ class OrganizationController extends Controller
 
     public function updateCompany(Request $request, Company $company): JsonResponse
     {
-        return $this->updateModel($company, $request->validate([
+        $data = $request->validate([
             'country_id' => ['sometimes', 'exists:countries,id'],
             'city_id' => ['nullable', 'exists:cities,id'],
-            'system_module_id' => ['nullable', 'exists:system_modules,id', 'unique:companies,system_module_id,'.$company->id],
+            'system_module_id' => [
+                'nullable',
+                'exists:system_modules,id',
+                Rule::unique('companies', 'system_module_id')->whereNull('deleted_at')->ignore($company->id),
+            ],
             'name' => ['sometimes', 'string'],
             'legal_name' => ['nullable', 'string'],
-            'code' => ['sometimes', 'string', 'unique:companies,code,'.$company->id],
+            'code' => [
+                'sometimes',
+                'string',
+                Rule::unique('companies', 'code')->whereNull('deleted_at')->ignore($company->id),
+            ],
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
             'address' => ['nullable', 'string'],
@@ -288,7 +375,23 @@ class OrganizationController extends Controller
             'currency_code' => ['nullable', 'string'],
             'description' => ['nullable', 'string'],
             'is_active' => ['boolean'],
-        ]));
+        ]);
+
+        $countryId = (int) ($data['country_id'] ?? $company->country_id);
+        $countryCode = Country::query()->whereKey($countryId)->value('currency_code');
+        if ($countryCode) {
+            $data['currency_code'] = strtoupper((string) $countryCode);
+        }
+
+        $company->fill($data)->save();
+        if (! empty($data['system_module_id'])) {
+            $company->modules()->syncWithoutDetaching([
+                (int) $data['system_module_id'] => ['is_enabled' => true],
+            ]);
+        }
+        $this->ensureKamsRevenueRules($company);
+
+        return $this->ok($company->fresh([...$this->companyRelations()])->loadCount('offices'));
     }
 
     public function destroyCompany(Company $company): JsonResponse
@@ -467,6 +570,20 @@ class OrganizationController extends Controller
     /**
      * @return array<int, string>
      */
+    private function ensureKamsRevenueRules(Company $company): void
+    {
+        $isKams = $company->module?->slug === 'kams'
+            || ($company->system_module_id
+                && SystemModule::query()
+                    ->whereKey($company->system_module_id)
+                    ->where('slug', 'kams')
+                    ->exists());
+
+        if ($isKams) {
+            app(RevenueRuleService::class)->seedDefaults((int) $company->id);
+        }
+    }
+
     private function companyRelations(): array
     {
         return [
@@ -487,10 +604,6 @@ class OrganizationController extends Controller
     private function validatedOffice(Request $request, ?Office $office = null): array
     {
         $companyId = $office?->company_id ?? $request->input('company_id');
-        $isKams = $companyId && Company::query()
-            ->whereKey($companyId)
-            ->whereHas('module', fn ($q) => $q->where('slug', 'kams'))
-            ->exists();
 
         $data = $request->validate([
             'company_id' => [$office ? 'sometimes' : 'required', 'exists:companies,id'],
@@ -503,8 +616,8 @@ class OrganizationController extends Controller
             'code' => [$office ? 'sometimes' : 'required', 'string'],
             'type' => [$office ? 'sometimes' : 'required', 'in:headquarters,office,agency,branch'],
             'parent_office_id' => ['nullable', 'exists:offices,id'],
-            'creator_user_id' => [$isKams && ! $office ? 'required' : 'nullable', 'exists:users,id'],
-            'manager_user_id' => [$isKams && ! $office ? 'required' : 'nullable', 'exists:users,id'],
+            'creator_user_id' => ['nullable', 'exists:users,id'],
+            'manager_user_id' => ['nullable', 'exists:users,id'],
             'address' => ['nullable', 'string'],
             'phone' => ['nullable', 'string'],
             'is_active' => ['boolean'],

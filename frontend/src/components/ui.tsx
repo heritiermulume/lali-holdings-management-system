@@ -181,33 +181,42 @@ export function Modal({
   children,
   onClose,
   size = 'default',
+  dismissible = true,
 }: {
   open: boolean
   title: string
   children: ReactNode
   onClose: () => void
   size?: 'default' | 'lg'
+  /** When false, backdrop / close control do not dismiss the modal. */
+  dismissible?: boolean
 }) {
   const { t } = useTranslation()
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-6">
-      <button className="absolute inset-0" aria-label={t('common.close')} onClick={onClose} />
+      {dismissible ? (
+        <button className="absolute inset-0" aria-label={t('common.close')} onClick={onClose} />
+      ) : (
+        <div className="absolute inset-0" />
+      )}
       <div className={cn(
         'relative flex max-h-[90vh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl',
         size === 'lg' ? 'max-w-3xl' : 'max-w-lg',
       )}>
         <div className="flex shrink-0 items-center justify-between gap-3 bg-lhms px-5 py-4 text-white sm:px-6">
           <h2 className="min-w-0 text-lg font-bold text-white">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 text-sm text-white/80 hover:text-white"
-            aria-label={t('common.close')}
-          >
-            ✕
-          </button>
+          {dismissible ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 text-sm text-white/80 hover:text-white"
+              aria-label={t('common.close')}
+            >
+              ✕
+            </button>
+          ) : <span />}
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
           {children}

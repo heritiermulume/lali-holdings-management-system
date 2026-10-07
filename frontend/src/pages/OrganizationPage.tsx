@@ -17,6 +17,7 @@ type Row = Record<string, unknown> & {
   is_active?: boolean
   iso_code?: string
   country_id?: number
+  province_id?: number
   city_id?: number
   commune_id?: number
   latitude?: number | null
@@ -45,6 +46,7 @@ export function OrganizationPage() {
   const [form, setForm] = useState<Record<string, string>>({})
   const [pickedCountry, setPickedCountry] = useState<WorldCountry | null>(null)
   const [countries, setCountries] = useState<Row[]>([])
+  const [provinces, setProvinces] = useState<Row[]>([])
   const [cities, setCities] = useState<Row[]>([])
   const [communes, setCommunes] = useState<Row[]>([])
   const [currencyMap, setCurrencyMap] = useState<Record<string, string>>({})
@@ -65,6 +67,7 @@ export function OrganizationPage() {
     Promise.all([
       api.get(`/${tab}`, { params: { per_page: 50 } }).then((res) => setRows(res.data.data)),
       api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data)),
+      api.get('/provinces', { params: { per_page: 100 }, skipBusy: true }).then((res) => setProvinces(res.data.data)),
       api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data)),
       api.get('/communes', { params: { per_page: 50 } }).then((res) => setCommunes(res.data.data)),
       api.get('/finance').then((res) => {
@@ -82,7 +85,7 @@ export function OrganizationPage() {
   }, [tab])
 
   const needsNameFr = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'
-  const needsCode = tab === 'provinces'
+  const needsCode = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'
 
   const closeForm = () => {
     setOpen(false)
@@ -110,6 +113,7 @@ export function OrganizationPage() {
       name_fr: row.name_fr || row.name || '',
       code: rowValue(row, 'code'),
       country_id: rowValue(row, 'country_id'),
+      province_id: rowValue(row, 'province_id'),
       city_id: rowValue(row, 'city_id'),
       commune_id: rowValue(row, 'commune_id'),
     })
@@ -144,6 +148,13 @@ export function OrganizationPage() {
         payload.name_fr = form.name_fr || form.name
         if (needsCode) payload.code = form.code || null
         if (form.country_id) payload.country_id = Number(form.country_id)
+        if (tab === 'cities') {
+          if (!form.province_id) {
+            setError(t('org.pickProvinceFirst'))
+            return
+          }
+          payload.province_id = Number(form.province_id)
+        }
         if (form.city_id) payload.city_id = Number(form.city_id)
         if (form.commune_id) payload.commune_id = Number(form.commune_id)
         if (!editing) payload.is_active = true
@@ -156,8 +167,12 @@ export function OrganizationPage() {
       }
       closeForm()
       load()
-    } catch {
-      setError(t('org.saveError'))
+    } catch (err: unknown) {
+      const response = (err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } })?.response?.data
+      const firstFieldError = response?.errors
+        ? Object.values(response.errors).flat().find(Boolean)
+        : null
+      setError(firstFieldError || response?.message || t('org.saveError'))
     } finally {
       setSaving(false)
     }
@@ -341,9 +356,29 @@ export function OrganizationPage() {
           {tab === 'provinces' || tab === 'cities' ? (
             <label className="block text-sm font-medium">
               {t('org.countries')}
-              <select className="mt-1 min-h-11 w-full rounded-xl border border-line px-3" value={form.country_id || ''} onChange={(e) => setForm({ ...form, country_id: e.target.value })}>
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-line px-3"
+                value={form.country_id || ''}
+                onChange={(e) => setForm({ ...form, country_id: e.target.value, province_id: '' })}
+              >
                 <option value="">—</option>
                 {countries.map((country) => <option key={country.id} value={country.id}>{country.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {tab === 'cities' ? (
+            <label className="block text-sm font-medium">
+              {t('org.provinces')}
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-line px-3 disabled:bg-surface"
+                value={form.province_id || ''}
+                disabled={!form.country_id}
+                onChange={(e) => setForm({ ...form, province_id: e.target.value })}
+              >
+                <option value="">{form.country_id ? '—' : t('org.pickCountryFirst')}</option>
+                {provinces
+                  .filter((province) => !form.country_id || String(province.country_id) === form.country_id)
+                  .map((province) => <option key={province.id} value={province.id}>{province.name}</option>)}
               </select>
             </label>
           ) : null}

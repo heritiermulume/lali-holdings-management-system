@@ -108,6 +108,5 @@ Route::prefix('v1')->group(function () {
         Route::put('finance/currencies/{currency}', [FinanceController::class, 'updateCurrency'])->middleware(EnsurePermission::class.':settings.manage');
         Route::delete('finance/currencies/{currency}', [FinanceController::class, 'destroyCurrency'])->middleware(EnsurePermission::class.':settings.manage');
         Route::post('finance/sync-rates', [FinanceController::class, 'syncRates'])->middleware(EnsurePermission::class.':settings.manage');
-        Route::get('finance/convert', [FinanceController::class, 'convert'])->middleware(EnsurePermission::class.':settings.manage');
     });
 });

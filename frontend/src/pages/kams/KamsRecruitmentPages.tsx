@@ -12,6 +12,7 @@ import { cn } from '../../lib/cn'
 import { initials, roleLabel } from '../../lib/format'
 import { buildBrandedTableHtml, buildServiceCardHtml, printHtml } from '../../lib/printDocument'
 import { useAuth } from '../../context/AuthContext'
+import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
@@ -472,8 +473,8 @@ export function KamsRecruitmentWorkspace() {
   const [period, setPeriod] = useState<ListPeriod>('week')
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
-  const [officeId, setOfficeId] = useState('')
   const [offices, setOffices] = useState<LookupOffice[]>([])
+  const { officeId, setOfficeId, showOfficeFilter } = useOfficeScope(offices)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
   const range = period === 'custom' ? { from, to } : presetRange(period)
@@ -502,7 +503,7 @@ export function KamsRecruitmentWorkspace() {
         </div>
         {filtersOpen ? (
           <div className="flex w-full flex-col gap-3 sm:items-end">
-            {offices.length > 1 ? (
+            {showOfficeFilter ? (
               <Select
                 className="w-full min-w-0 sm:w-72"
                 label={t('kams.filterOffice')}
@@ -587,7 +588,7 @@ export function KamsAgents() {
   const [memberOrigins, setMemberOrigins] = useState<string[]>([])
   const [importSources, setImportSources] = useState<string[]>([])
   const [origin, setOrigin] = useState('')
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, showOfficeFilter } = useOfficeScope(offices)
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -711,7 +712,12 @@ export function KamsAgents() {
 
   const openCreate = () => {
     resetForm()
-    setForm({ company_id: resolveKamsCompanyId() })
+    const companyId = resolveKamsCompanyId()
+    const defaultOffice = offices.length === 1 ? String(offices[0].id) : officeId
+    setForm({
+      company_id: companyId,
+      ...(defaultOffice ? { office_id: defaultOffice } : {}),
+    })
     setFormOpen(true)
   }
 
@@ -1008,7 +1014,10 @@ export function KamsAgents() {
     }))
   const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
   const companySelected = Boolean(form.company_id)
-  const companyPeople = people.filter((person) => !form.company_id || String(person.company_id) === form.company_id)
+  const companyPeople = people.filter((person) => (
+    (!form.company_id || String(person.company_id) === form.company_id)
+    && (!form.office_id || !person.office_id || String(person.office_id) === form.office_id)
+  ))
   const distributorRoleIds = new Set(
     roles.filter((role) => role.slug === 'distributor').map((role) => role.id),
   )
@@ -1088,7 +1097,7 @@ export function KamsAgents() {
             ) : null}
           </div>
         </div>
-        {offices.length > 1 ? (
+        {showOfficeFilter ? (
           <div className="order-1 w-36 shrink-0 md:w-52 lg:w-64">
           <Select
             className="w-full min-w-0"
@@ -1331,15 +1340,17 @@ export function KamsAgents() {
             <p className="text-center text-xs text-muted">{t('kams.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
-          <SearchCombobox
-            label={t('kams.office')}
-            value={selectedOffice}
-            items={officeOptions}
-            disabled={!companySelected}
-            placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
-            emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
-          />
+          {showOfficeFilter ? (
+            <SearchCombobox
+              label={t('kams.office')}
+              value={selectedOffice}
+              items={officeOptions}
+              disabled={!companySelected}
+              placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
+              emptyLabel={t('common.empty')}
+              onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
+            />
+          ) : null}
           <Select label={t('users.role')} value={form.role_id || ''} onChange={(e) => setForm({ ...form, role_id: e.target.value })}>
             <option value="">—</option>
             {roles.map((role) => (
@@ -1533,6 +1544,11 @@ export function KamsCandidates() {
   const [candidateSources, setCandidateSources] = useState<string[]>([])
   const [interviewResults, setInterviewResults] = useState<string[]>([])
   const [observationResults, setObservationResults] = useState<string[]>([])
+  const [recruitmentSettings, setRecruitmentSettings] = useState<{
+    interview_hours?: string
+    observation_hours?: string
+    default_member_rank?: string
+  }>({})
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<Candidate | null>(null)
@@ -1584,6 +1600,7 @@ export function KamsCandidates() {
       setCandidateSources(res.data.data.options?.candidate_sources ?? [])
       setInterviewResults(res.data.data.options?.interview_results ?? [])
       setObservationResults(res.data.data.options?.observation_results ?? [])
+      setRecruitmentSettings(res.data.data.settings ?? {})
     })
   }, [])
 
@@ -1625,7 +1642,11 @@ export function KamsCandidates() {
 
   const openCreate = () => {
     resetCandidateForm()
-    setForm({ company_id: resolveKamsCompanyId() })
+    const defaultOffice = offices.length === 1 ? String(offices[0].id) : officeId
+    setForm({
+      company_id: resolveKamsCompanyId(),
+      ...(defaultOffice ? { office_id: defaultOffice } : {}),
+    })
     setOpen(true)
   }
 
@@ -2080,15 +2101,17 @@ export function KamsCandidates() {
             <p className="text-center text-xs text-muted">{t('kams.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
-          <SearchCombobox
-            label={t('kams.office')}
-            value={selectedOffice}
-            items={officeOptions}
-            disabled={!companySelected}
-            placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
-            emptyLabel={t('common.empty')}
-            onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
-          />
+          {offices.length > 1 ? (
+            <SearchCombobox
+              label={t('kams.office')}
+              value={selectedOffice}
+              items={officeOptions}
+              disabled={!companySelected}
+              placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
+              emptyLabel={t('common.empty')}
+              onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
+            />
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={t('users.firstName')} value={form.first_name || ''} onChange={(e) => setForm({ ...form, first_name: e.target.value })} required />
             <Field label={t('users.lastName')} value={form.last_name || ''} onChange={(e) => setForm({ ...form, last_name: e.target.value })} required />
@@ -2135,6 +2158,11 @@ export function KamsCandidates() {
               <p className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
                 {t('kams.interviewPeriod')}: {formatDateTime(form.interview_starts_at)} → {t('kams.untilSave')}
               </p>
+              {recruitmentSettings.interview_hours ? (
+                <p className="text-sm text-muted">
+                  {t('kams.interviewHoursHint', { hours: recruitmentSettings.interview_hours })}
+                </p>
+              ) : null}
               <SearchCombobox
                 label={`${t('kams.interviewer')} *`}
                 value={selectedInterviewer}
@@ -2185,7 +2213,11 @@ export function KamsCandidates() {
           ) : null}
           {action === 'observation' ? (
             <>
-              <p className="text-sm text-muted">{t('kams.observationHours')}</p>
+              <p className="text-sm text-muted">
+                {recruitmentSettings.observation_hours
+                  ? t('kams.observationHoursHint', { hours: recruitmentSettings.observation_hours })
+                  : t('kams.observationHours')}
+              </p>
               {form.observation_starts_at && form.observation_ends_at ? (
                 <p className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
                   {t('kams.scheduledObservation')}: {form.observation_starts_at.replace('T', ' ')} → {form.observation_ends_at.replace('T', ' ')}

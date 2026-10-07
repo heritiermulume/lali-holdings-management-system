@@ -4,6 +4,8 @@ namespace App\Modules\Kams\Http\Controllers;
 
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Models\Company;
+use App\Models\Currency;
 use App\Models\Province;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsClient;
@@ -13,6 +15,7 @@ use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockAdjustment;
 use App\Modules\Kams\Models\KamsStockAssignment;
+use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockMovement;
 use App\Modules\Kams\Models\KamsStockReceipt;
 use App\Modules\Kams\Models\KamsStockReturn;
@@ -28,6 +31,7 @@ use App\Modules\Kams\Services\StockMetrics;
 use App\Modules\Kams\Support\DomainOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class KamsStockController extends Controller
@@ -44,36 +48,47 @@ class KamsStockController extends Controller
             $this->inventory->ensureOfficeDepots((int) $companyId);
         }
 
-        $offices = $this->kamsOffices($request)->with('city:id,name')->orderBy('name')->get(['id', 'company_id', 'name', 'code', 'city_id', 'province_id']);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId ? (int) $companyId : null);
+        $offices = $officeState['offices'];
+        $officeScope = $officeState['office_ids'] !== [] ? $officeState['office_ids'] : null;
         $locationQuery = KamsDepot::query()
             ->with(['office:id,name,code', 'province:id,name,name_fr'])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
 
-        if ($request->user()->isOfficeScoped()) {
-            $locationQuery->where(function ($q) use ($request) {
-                $q->where('kind', 'warehouse')
-                    ->orWhereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]);
+        // Office-scoped accounts (or explicit office filter) only see office depots/sellers.
+        // Company-wide accounts keep regional warehouses even when a single office is locked for lists.
+        if ($officeScope !== null && ($request->user()->isOfficeScoped() || $request->filled('office_id'))) {
+            $locationQuery->whereIn('office_id', $officeScope);
+        } elseif ($officeScope !== null) {
+            $locationQuery->where(function ($q) use ($officeScope) {
+                $q->whereIn('office_id', $officeScope)->orWhere('kind', 'warehouse');
             });
         }
 
         $locations = $locationQuery->orderBy('name')->get();
 
+        $company = $companyId
+            ? Company::query()->find($companyId, ['id', 'name', 'currency_code'])
+            : null;
+
         return $this->ok([
+            'currency' => $company?->currency_code
+                ? strtoupper((string) $company->currency_code)
+                : Currency::defaultCode(),
+            'company_id' => $company?->id,
             'offices' => $offices,
-            'can_choose_office' => $this->canChooseOffice($request, $offices->count()),
+            'can_choose_office' => $officeState['can_filter'],
+            'can_filter_offices' => $officeState['can_filter'],
+            'office_id' => $officeState['selected_office_id'],
             'can_manage_warehouses' => $this->canManageWarehouses($request),
             'provinces' => Province::query()->orderBy('name')->get(['id', 'name', 'name_fr', 'code']),
             'warehouses' => $locations->where('kind', 'warehouse')->values(),
             'depots' => $locations->where('kind', 'depot')->values(),
             'sellers' => $locations->where('kind', 'seller')->values(),
-            'products' => KamsProduct::query()
-                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-                ->where('status', 'active')
-                ->orderBy('name')
-                ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'stock', 'image_path']),
+            'products' => $this->lookupProductsWithOfficeStock($companyId ? (int) $companyId : null, $officeScope),
             'clients' => KamsClient::query()
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-                ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
+                ->when($officeScope !== null, fn ($q) => $q->whereIn('office_id', $officeScope))
                 ->where('kind', 'client')
                 ->orderBy('name')
                 ->get(['id', 'company_id', 'office_id', 'name']),
@@ -93,10 +108,10 @@ class KamsStockController extends Controller
                 ]),
             'agents' => KamsMember::query()
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-                ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
+                ->when($officeScope !== null, fn ($q) => $q->whereIn('office_id', $officeScope))
                 ->where('status', 'active')
                 ->orderBy('full_name')
-                ->get(['id', 'company_id', 'office_id', 'member_code', 'full_name']),
+                ->get(['id', 'company_id', 'office_id', 'member_code', 'full_name', 'photo_path']),
             'options' => DomainOptions::all(),
         ]);
     }
@@ -104,22 +119,8 @@ class KamsStockController extends Controller
     public function dashboard(Request $request, StockMetrics $metrics): JsonResponse
     {
         $companyId = $this->kamsCompanyId($request);
-        $offices = $this->kamsOffices($request)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code']);
-        $accessibleIds = $offices->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $canFilter = count($accessibleIds) > 1;
-        $user = $request->user();
-        $officeIds = $user->isGroupAdmin() || ! $user->isOfficeScoped() ? [] : $accessibleIds;
-        if (! $canFilter) {
-            $officeIds = $accessibleIds;
-        } elseif ($request->filled('office_id')) {
-            $selected = (int) $request->integer('office_id');
-            $this->assertKamsOffice($request, $selected);
-            $officeIds = [$selected];
-        }
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $officeIds = $officeState['office_ids'];
 
         $payload = $metrics->recap(
             $request->string('group_by')->toString() ?: 'week',
@@ -128,12 +129,7 @@ class KamsStockController extends Controller
             $request->string('group_by')->toString() === 'custom' ? $request->string('to')->toString() : null,
             $officeIds,
         );
-        $payload['can_filter_offices'] = $canFilter;
-        $payload['filter_offices'] = $canFilter ? $offices->map(fn ($office) => [
-            'id' => $office->id,
-            'name' => $office->name,
-            'code' => $office->code,
-        ])->values()->all() : [];
+        $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
         return $this->ok($payload);
     }
@@ -176,7 +172,7 @@ class KamsStockController extends Controller
         $items = $data['items'] ?? [[
             'product_id' => (int) $data['product_id'],
             'quantity' => (int) $data['quantity'],
-            'unit_cost' => (float) ($data['unit_cost'] ?? KamsProduct::query()->findOrFail($data['product_id'])->cost),
+            'unit_cost' => (float) ($data['unit_cost'] ?? KamsProduct::query()->findOrFail($data['product_id'])->inventoryUnitCost()),
         ]];
         $receipt = $this->inventory->createReceipt($location, $items, $data['supplier_name'] ?? null, $request->user()->id, $data['notes'] ?? null);
         StockJournal::record('create', $receipt, [], $data);
@@ -211,6 +207,7 @@ class KamsStockController extends Controller
     public function transfers(Request $request): JsonResponse
     {
         $companyId = $this->kamsCompanyId($request);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
         $query = KamsStockTransfer::query()
             ->with([
                 'fromDepot:id,name,kind',
@@ -222,8 +219,8 @@ class KamsStockController extends Controller
                 'receivedBy:id,name',
             ])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($request->user()->isOfficeScoped(), function ($q) use ($request) {
-                $q->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]));
+            ->when($officeState['office_ids'] !== [], function ($q) use ($officeState) {
+                $q->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']));
             })
             ->latest();
 
@@ -284,24 +281,16 @@ class KamsStockController extends Controller
     public function assignments(Request $request): JsonResponse
     {
         $companyId = $this->kamsCompanyId($request);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
         $search = trim($request->string('search')->toString());
         $scoped = KamsStockAssignment::query()
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
-            ->when($request->filled('office_id'), function ($q) use ($request) {
-                $officeId = (int) $request->integer('office_id');
-                abort_unless($request->user()->canAccessOffice($officeId), 403);
-                $q->where('office_id', $officeId);
-            });
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
+        $this->applyOfficeIds($scoped, $officeState);
         $query = KamsStockAssignment::query()
-            ->with(['member:id,full_name,member_code,phone,office_id', 'office:id,name,code', 'depot:id,name', 'items.product:id,name,sku,price,cost,image_path'])
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
-            ->when($request->filled('office_id'), function ($q) use ($request) {
-                $officeId = (int) $request->integer('office_id');
-                abort_unless($request->user()->canAccessOffice($officeId), 403);
-                $q->where('office_id', $officeId);
-            })
+            ->with(['member:id,full_name,member_code,phone,office_id,photo_path', 'office:id,name,code', 'depot:id,name,office_id', 'items.product:id,name,sku,price,cost,image_path'])
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
+        $this->applyOfficeIds($query, $officeState);
+        $query = $query
             ->when($request->filled('status'), function ($q) use ($request) {
                 $statuses = array_values(array_filter(array_map('trim', explode(',', $request->string('status')->toString()))));
                 $q->whereIn('status', $statuses !== [] ? $statuses : ['open']);
@@ -346,24 +335,11 @@ class KamsStockController extends Controller
         $from = \Illuminate\Support\Carbon::parse($data['from'])->startOfDay();
         $to = \Illuminate\Support\Carbon::parse($data['to'])->endOfDay();
 
-        $filterOffices = $this->kamsOffices($request)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code']);
-        $canFilterOffices = $filterOffices->count() > 1;
-
-        $selectedOfficeId = null;
-        $selectedOfficeName = null;
-        if ($canFilterOffices && ! empty($data['office_id'])) {
-            $office = $this->assertKamsOffice($request, (int) $data['office_id']);
-            $selectedOfficeId = (int) $office->id;
-            $selectedOfficeName = $office->name;
-        } elseif (! $canFilterOffices && $filterOffices->count() === 1) {
-            $office = $filterOffices->first();
-            $selectedOfficeId = (int) $office->id;
-            $selectedOfficeName = $office->name;
-        }
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $selectedOfficeId = $officeState['selected_office_id'];
+        $selectedOfficeName = $selectedOfficeId
+            ? $officeState['offices']->firstWhere('id', $selectedOfficeId)?->name
+            : null;
 
         $assignments = KamsStockAssignment::query()
             ->with([
@@ -375,8 +351,7 @@ class KamsStockController extends Controller
                 'items.product:id,name,sku,price,cost,image_path',
             ])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($request->user()->isOfficeScoped(), fn ($q) => $q->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]))
-            ->when($selectedOfficeId && $canFilterOffices, fn ($q) => $q->where('office_id', $selectedOfficeId))
+            ->when($officeState['office_ids'] !== [], fn ($q) => $q->whereIn('office_id', $officeState['office_ids']))
             ->where('status', 'settled')
             ->whereBetween('settled_at', [$from, $to])
             ->orderByDesc('settled_at')
@@ -493,23 +468,16 @@ class KamsStockController extends Controller
             return $day;
         }, $days));
 
-        return $this->ok([
+        return $this->ok(array_merge([
             'period' => $data['period'] ?? 'custom',
             'range' => [
                 'from' => $from->toDateString(),
                 'to' => $to->toDateString(),
             ],
-            'can_filter_offices' => $canFilterOffices,
-            'office_id' => $selectedOfficeId,
             'office_name' => $selectedOfficeName,
-            'filter_offices' => $canFilterOffices ? $filterOffices->map(fn ($office) => [
-                'id' => $office->id,
-                'name' => $office->name,
-                'code' => $office->code,
-            ])->values()->all() : [],
             'totals' => $normalize($totals),
             'days' => $dayRows,
-        ]);
+        ], $this->officeFilterPayload($officeState)));
     }
 
     public function storeAssignment(Request $request): JsonResponse
@@ -643,11 +611,12 @@ class KamsStockController extends Controller
     public function sales(Request $request): JsonResponse
     {
         $companyId = $this->kamsCompanyId($request);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
         $query = KamsStockSale::query()
             ->with(['member:id,full_name,member_code,office_id', 'client:id,name', 'depot:id,name', 'items.product:id,name,sku', 'commission'])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($request->user()->isOfficeScoped(), function ($q) use ($request) {
-                $q->whereHas('member', fn ($member) => $member->whereIn('office_id', $request->user()->accessibleOfficeIds() ?: [0]));
+            ->when($officeState['office_ids'] !== [], function ($q) use ($officeState) {
+                $q->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeState['office_ids']));
             })
             ->latest();
 
@@ -962,11 +931,17 @@ class KamsStockController extends Controller
     public function dailySettlement(Request $request, SavingsLedger $ledger): JsonResponse
     {
         $companyId = $this->kamsCompanyId($request);
-        abort_unless($companyId, 422, __('No company is available for this account.'));
         $date = $request->date('date')?->toDateString() ?: now()->toDateString();
         $officeId = $request->filled('office_id') ? (int) $request->integer('office_id') : null;
         if ($officeId) {
             abort_unless($request->user()->canAccessOffice($officeId), 403);
+        }
+        if (! $companyId) {
+            return $this->ok([
+                'date' => $date,
+                'office_id' => $officeId,
+                'sales' => [],
+            ]);
         }
         $recap = $ledger->recapDay($companyId, $date, $officeId);
         $recap['sales'] = KamsStockSale::query()
@@ -1013,19 +988,15 @@ class KamsStockController extends Controller
         ];
 
         $companyId = $this->kamsCompanyId($request);
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
         $query = KamsStockJournalEntry::query()
             ->with('user:id,name,email')
             ->whereIn('auditable_type', $types)
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->latest();
 
-        if ($request->filled('office_id') || $request->user()->isOfficeScoped()) {
-            $officeIds = $request->filled('office_id')
-                ? [(int) $request->integer('office_id')]
-                : ($request->user()->accessibleOfficeIds() ?: [0]);
-            foreach ($officeIds as $officeId) {
-                abort_unless($request->user()->canAccessOffice((int) $officeId), 403);
-            }
+        if ($officeState['office_ids'] !== []) {
+            $officeIds = $officeState['office_ids'];
             $assignmentIds = KamsStockAssignment::query()->whereIn('office_id', $officeIds)->pluck('id');
             $query->where(function ($inner) use ($officeIds, $assignmentIds) {
                 $inner->whereIn('office_id', $officeIds)
@@ -1668,5 +1639,62 @@ class KamsStockController extends Controller
         }
 
         return is_scalar($value) ? (string) $value : null;
+    }
+
+    /**
+     * Active products with available stock keyed by office depot (bureau).
+     * When $officeIds is set (office-scoped user), only those offices — and only
+     * products present in those office depots — are returned.
+     *
+     * @param  list<int>|null  $officeIds
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function lookupProductsWithOfficeStock(?int $companyId, ?array $officeIds = null): Collection
+    {
+        $products = KamsProduct::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('status', 'active')
+            ->when($officeIds !== null, function ($q) use ($officeIds) {
+                $q->whereHas('balances', fn ($balance) => $balance
+                    ->where('condition', 'available')
+                    ->where('quantity', '>', 0)
+                    ->whereHas('depot', fn ($depot) => $depot
+                        ->where('kind', 'depot')
+                        ->whereIn('office_id', $officeIds ?: [0])));
+            })
+            ->orderBy('name')
+            ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'stock', 'tax_exempt', 'image_path']);
+
+        $officeStock = [];
+        if ($products->isNotEmpty()) {
+            $balances = KamsStockBalance::query()
+                ->whereIn('product_id', $products->pluck('id'))
+                ->where('condition', 'available')
+                ->where('quantity', '>', 0)
+                ->whereHas('depot', fn ($q) => $q
+                    ->where('kind', 'depot')
+                    ->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))
+                    ->when($officeIds !== null, fn ($inner) => $inner->whereIn('office_id', $officeIds ?: [0])))
+                ->with('depot:id,office_id,kind')
+                ->get(['depot_id', 'product_id', 'quantity']);
+
+            foreach ($balances as $balance) {
+                $officeId = $balance->depot?->office_id;
+                if (! $officeId) {
+                    continue;
+                }
+                if ($officeIds !== null && ! in_array((int) $officeId, $officeIds, true)) {
+                    continue;
+                }
+                $officeStock[(int) $balance->product_id][(int) $officeId] = (int) $balance->quantity;
+            }
+        }
+
+        return $products->map(function (KamsProduct $product) use ($officeStock) {
+            $row = $product->toArray();
+            $row['office_stock'] = $officeStock[(int) $product->id] ?? [];
+
+            return $row;
+        })->values();
     }
 }

@@ -1,7 +1,8 @@
 import { ArrowLeft } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, Navigate, Outlet, useParams } from 'react-router-dom'
+import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { Button, Card, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { SettingsMobileTabs } from '../../components/layout/SettingsMobileTabs'
@@ -9,8 +10,11 @@ import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { roleLabel } from '../../lib/format'
 import { moduleRegistry, settingsNavItems } from '../../modules/registry'
 import { moduleSettingFields, settingGroups, type SettingField, type SettingGroupId } from './catalog'
+
+type RoleOption = { id: number; name: string; slug?: string; module_slug?: string | null }
 
 type SettingRow = { group: string; key: string; value: string | null; type?: string }
 
@@ -73,6 +77,34 @@ function SettingFieldsGrid({
   onChange: (key: string, value: string) => void
 }) {
   const { t } = useTranslation()
+  const needsKamsRoles = fields.some((field) => field.type === 'combobox' && field.source === 'kams_roles')
+  const [kamsRoles, setKamsRoles] = useState<RoleOption[]>([])
+
+  useEffect(() => {
+    if (!needsKamsRoles) return
+    let cancelled = false
+    api.get('/roles').then((res) => {
+      if (cancelled) return
+      const rows = (res.data.data ?? []) as RoleOption[]
+      setKamsRoles(
+        rows
+          .filter((role) => role.module_slug === 'kams')
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      )
+    }).catch(() => {
+      if (!cancelled) setKamsRoles([])
+    })
+    return () => { cancelled = true }
+  }, [needsKamsRoles])
+
+  const kamsRoleItems = useMemo<SearchComboboxItem[]>(
+    () => kamsRoles.map((role) => ({
+      id: role.name,
+      label: roleLabel(t, role),
+      hint: role.slug || undefined,
+    })),
+    [kamsRoles, t],
+  )
 
   if (fields.length === 0) return null
 
@@ -113,6 +145,26 @@ function SettingFieldsGrid({
                   <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
                 ))}
               </Select>
+              {helpText ? <p className="text-xs text-muted">{helpText}</p> : null}
+            </div>
+          )
+        }
+        if (field.type === 'combobox' && field.source === 'kams_roles') {
+          const current = values[field.key] ?? ''
+          const selected = kamsRoleItems.find((item) => item.id === current)
+            ?? (current
+              ? { id: current, label: t(`kams.rank.${current}`, { defaultValue: current }) }
+              : null)
+          return (
+            <div key={field.key} className="space-y-1">
+              <SearchCombobox
+                label={label}
+                value={selected}
+                items={kamsRoleItems}
+                placeholder={t('common.search')}
+                emptyLabel={t('common.empty')}
+                onSelect={(item) => onChange(field.key, item?.id ?? '')}
+              />
               {helpText ? <p className="text-xs text-muted">{helpText}</p> : null}
             </div>
           )
@@ -196,7 +248,7 @@ export function SettingsForm({
     setMailTestMessage(null)
     setMailTestError(null)
     try {
-      await api.put('/settings', {
+      const res = await api.put('/settings', {
         settings: fields.map((field) => ({
           group,
           key: field.key,
@@ -204,7 +256,13 @@ export function SettingsForm({
           type: field.type === 'boolean' ? 'boolean' : field.type === 'number' ? 'number' : 'string',
         })),
       })
-      setBaseline({ ...values })
+      const grouped = (res.data.data ?? {}) as Record<string, SettingRow[]>
+      const rows = grouped[group] ?? []
+      const next = snapshotValues(fields, {
+        ...Object.fromEntries(rows.map((row) => [row.key, row.value ?? ''])),
+      })
+      setValues(next)
+      setBaseline(next)
       await refresh()
     } finally {
       setSaving(false)

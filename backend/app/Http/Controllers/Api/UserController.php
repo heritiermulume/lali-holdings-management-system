@@ -18,6 +18,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 
 class UserController extends Controller
 {
@@ -137,10 +138,7 @@ class UserController extends Controller
     public function destroy(Request $request, User $user): JsonResponse
     {
         abort_if($request->user()?->id === $user->id, 422, __('You cannot delete your own account.'));
-
-        $this->assertCannotAffectSuperAdmin($request->user(), $user, $request, 'delete');
-
-        abort_if($user->isSuperAdmin() && User::query()->whereHas('roles', fn ($q) => $q->where('slug', 'super_administrator'))->count() <= 1, 422, __('The last super administrator cannot be deleted.'));
+        abort_if($user->isSuperAdmin(), 422, __('A super administrator cannot be deleted.'));
 
         $user->delete();
 
@@ -186,14 +184,10 @@ class UserController extends Controller
         ], __('Users imported.'));
     }
 
-    private function assertCannotAffectSuperAdmin(?User $actor, User $target, Request $request, string $action = 'update'): void
+    private function assertCannotAffectSuperAdmin(?User $actor, User $target, Request $request): void
     {
         if (! $target->isSuperAdmin() || ($actor && $actor->isSuperAdmin())) {
             return;
-        }
-
-        if ($action === 'delete') {
-            abort(403, __('Only a super administrator can delete or deactivate another super administrator.'));
         }
 
         if ($request->has('is_active') && ! $request->boolean('is_active')) {
@@ -232,7 +226,7 @@ class UserController extends Controller
             'is_active' => ['boolean'],
             'primary_company_id' => ['nullable', 'exists:companies,id'],
             'primary_office_id' => ['nullable', 'exists:offices,id'],
-            'password' => [$userId ? 'nullable' : 'nullable', 'string', 'min:8'],
+            'password' => ['nullable', 'string', Password::defaults()],
             'avatar' => ['nullable', 'image', 'max:2048'],
             'remove_avatar' => ['sometimes', 'boolean'],
             'role_ids' => ['array'],

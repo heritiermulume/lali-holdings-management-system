@@ -6,6 +6,7 @@ import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
@@ -100,7 +101,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   const [warehouses, setWarehouses] = useState<Location[]>([])
   const [segments, setSegments] = useState<string[]>([])
   const [statuses, setStatuses] = useState<string[]>([])
-  const [canChooseOffice, setCanChooseOffice] = useState(false)
+  const { officeId, setOfficeId, showOfficeFilter, canChooseOffice } = useOfficeScope(offices)
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<number[]>([])
   const [assignAllWarehouses, setAssignAllWarehouses] = useState(true)
   const [status, setStatus] = useState('')
@@ -135,7 +136,13 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   const load = (term = query) => {
     setLoading(true)
     return api.get('/modules/kams/clients', {
-      params: { per_page: 50, kind, ...(status ? { status } : {}), ...(term ? { search: term } : {}) },
+      params: {
+        per_page: 50,
+        kind,
+        ...(status ? { status } : {}),
+        ...(!isSupplier && officeId ? { office_id: officeId } : {}),
+        ...(term ? { search: term } : {}),
+      },
     }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
   }
 
@@ -165,7 +172,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
 
   useEffect(() => {
     void load()
-  }, [status, query, kind])
+  }, [status, query, kind, officeId])
 
   useEffect(() => {
     api.get('/modules/kams/clients/lookups').then((res) => {
@@ -175,7 +182,6 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
       setWarehouses(warehouseList)
       setSegments(res.data.data.options?.client_segments ?? [])
       setStatuses(res.data.data.options?.client_statuses ?? [])
-      setCanChooseOffice(Boolean(res.data.data.can_choose_office) || list.length > 1)
       setSelectedWarehouseIds(warehouseList.map((row) => row.id))
       setAssignAllWarehouses(true)
     })
@@ -289,6 +295,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
     per_page: 1000,
     kind,
     ...(status ? { status } : {}),
+    ...(!isSupplier && officeId ? { office_id: officeId } : {}),
     ...(query ? { search: query } : {}),
   })
 
@@ -369,6 +376,21 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
     <div>
       <p className="mb-4 text-sm text-muted">{labels.hint}</p>
       <div className="mb-4 flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+        {!isSupplier && showOfficeFilter ? (
+          <select
+            className="min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:w-56"
+            value={officeId}
+            aria-label={t('kams.filterOffice')}
+            onChange={(e) => setOfficeId(e.target.value)}
+          >
+            <option value="">{t('kams.allOffices')}</option>
+            {offices.map((office) => (
+              <option key={office.id} value={office.id}>
+                {office.name}{office.code ? ` · ${office.code}` : ''}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />
           <input

@@ -17,13 +17,19 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-async function groupDefaultLocale() {
+async function loadPublicBootstrap() {
   try {
     const { data } = await api.get('/public/bootstrap')
-    return data.data?.default_locale === 'en' ? 'en' : 'fr'
+    applyDisplayPrefs(data.data)
+    return data.data
   } catch {
-    return 'fr'
+    return null
   }
+}
+
+async function groupDefaultLocale() {
+  const bootstrap = await loadPublicBootstrap()
+  return bootstrap?.default_locale === 'en' ? 'en' : 'fr'
 }
 
 async function applyLocale(i18n: { changeLanguage: (lng: string) => Promise<unknown> }, locale: string) {
@@ -52,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    void loadPublicBootstrap()
     refresh().catch(() => {
       localStorage.removeItem('lhms_token')
       setUser(null)

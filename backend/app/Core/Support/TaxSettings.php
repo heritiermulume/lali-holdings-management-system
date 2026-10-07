@@ -25,11 +25,6 @@ class TaxSettings
         return max(0, SettingsCatalog::number('finance', 'default_tax_rate'));
     }
 
-    public static function inclusive(): bool
-    {
-        return SettingsCatalog::bool('finance', 'tax_inclusive_prices');
-    }
-
     /**
      * @return array{subtotal: float, tax: float, total: float, rate: float, inclusive: bool, name: string}
      */
@@ -40,25 +35,19 @@ class TaxSettings
             : ($country ? Country::query()->find($country) : null);
 
         $rate = self::rate($model);
-        $inclusive = self::inclusive();
         $factor = $rate / 100;
+        $places = max(0, min(6, (int) SettingsCatalog::number('finance', 'decimal_places')));
 
-        if ($inclusive) {
-            $total = round($amount, 2);
-            $subtotal = $factor > 0 ? round($total / (1 + $factor), 2) : $total;
-            $tax = round($total - $subtotal, 2);
-        } else {
-            $subtotal = round($amount, 2);
-            $tax = round($subtotal * $factor, 2);
-            $total = round($subtotal + $tax, 2);
-        }
+        $subtotal = round($amount, $places);
+        $tax = round($subtotal * $factor, $places);
+        $total = round($subtotal + $tax, $places);
 
         return [
             'subtotal' => $subtotal,
             'tax' => $tax,
             'total' => $total,
             'rate' => $rate,
-            'inclusive' => $inclusive,
+            'inclusive' => false,
             'name' => self::name($model),
         ];
     }

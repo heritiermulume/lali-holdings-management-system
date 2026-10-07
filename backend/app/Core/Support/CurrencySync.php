@@ -2,6 +2,7 @@
 
 namespace App\Core\Support;
 
+use App\Models\Company;
 use App\Models\Country;
 use App\Models\Currency;
 use App\Support\CurrencyCatalog;
@@ -56,6 +57,30 @@ class CurrencySync
                 $first->is_active = true;
                 $first->save();
             }
+        }
+
+        self::propagateToCompanies();
+    }
+
+    /** Keep every company on its country's currency (offices/activities inherit via company). */
+    public static function propagateToCompanies(?int $countryId = null): void
+    {
+        $countries = Country::query()
+            ->when($countryId, fn ($q) => $q->whereKey($countryId))
+            ->whereNotNull('currency_code')
+            ->get(['id', 'currency_code']);
+
+        foreach ($countries as $country) {
+            $code = strtoupper((string) $country->currency_code);
+            if ($code === '') {
+                continue;
+            }
+            Company::query()
+                ->where('country_id', $country->id)
+                ->where(function ($q) use ($code) {
+                    $q->whereNull('currency_code')->orWhere('currency_code', '!=', $code);
+                })
+                ->update(['currency_code' => $code]);
         }
     }
 }

@@ -1,9 +1,11 @@
-export type SettingFieldType = 'string' | 'number' | 'boolean' | 'select' | 'password'
+export type SettingFieldType = 'string' | 'number' | 'boolean' | 'select' | 'password' | 'combobox'
 
 export type SettingField = {
   key: string
   type: SettingFieldType
   options?: Array<{ value: string; labelKey: string }>
+  /** Dynamic searchable options (e.g. KAMS member ranks from roles). */
+  source?: 'kams_roles'
 }
 
 export type SettingGroupId = 'general' | 'finance' | 'security'
@@ -47,11 +49,6 @@ export const settingGroups: Record<SettingGroupId, SettingField[]> = {
       { value: '7', labelKey: 'settings.options.month7' },
       { value: '10', labelKey: 'settings.options.month10' },
     ] },
-    { key: 'tax_inclusive_prices', type: 'boolean' },
-    { key: 'fx_spread_percent', type: 'number' },
-    { key: 'tax_name', type: 'string' },
-    { key: 'default_tax_rate', type: 'number' },
-    { key: 'multi_currency', type: 'boolean' },
   ],
   security: [
     { key: 'password_min_length', type: 'number' },
@@ -72,7 +69,7 @@ export const moduleSettingFields: Record<string, SettingField[]> = {
     { key: 'low_stock_notify', type: 'boolean' },
     { key: 'interview_hours', type: 'string' },
     { key: 'observation_hours', type: 'string' },
-    { key: 'default_member_rank', type: 'string' },
+    { key: 'default_member_rank', type: 'combobox', source: 'kams_roles' },
   ],
   'heavy-equipment': [
     { key: 'default_rental_days', type: 'number' },

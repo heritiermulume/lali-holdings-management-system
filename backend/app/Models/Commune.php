@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['city_id', 'name', 'name_fr', 'is_active'])]
+#[Fillable(['city_id', 'name', 'name_fr', 'code', 'is_active'])]
 class Commune extends Model
 {
     protected function casts(): array

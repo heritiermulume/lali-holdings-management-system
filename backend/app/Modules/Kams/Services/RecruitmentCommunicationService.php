@@ -5,9 +5,9 @@ namespace App\Modules\Kams\Services;
 use App\Modules\Kams\Models\KamsCandidate;
 use App\Modules\Kams\Models\KamsCommunication;
 use App\Modules\Kams\Models\KamsMember;
+use App\Core\Support\InterviewHours;
 use App\Core\Support\ObservationHours;
 use App\Models\Company;
-use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Model;
 
 class RecruitmentCommunicationService
@@ -15,10 +15,11 @@ class RecruitmentCommunicationService
     public function notifyApplicationReceived(KamsCandidate $candidate, string $locale = 'fr'): void
     {
         $brand = $this->companyName($candidate->company_id);
+        $interviewHours = InterviewHours::label();
         $this->sendPair($candidate, 'application_received', 'recruitment', $locale, [
             'candidate' => [
-                'fr' => ['subject' => 'Candidature reçue', 'body' => "Bonjour {$candidate->full_name}, votre candidature {$candidate->candidate_id} a bien été reçue. Nous vous tiendrons informé(e) des prochaines étapes."],
-                'en' => ['subject' => 'Application received', 'body' => "Hello {$candidate->full_name}, your application {$candidate->candidate_id} has been received. We will keep you informed of the next steps."],
+                'fr' => ['subject' => 'Candidature reçue', 'body' => "Bonjour {$candidate->full_name}, votre candidature {$candidate->candidate_id} a bien été reçue. Les entretiens ont lieu entre {$interviewHours}. Nous vous tiendrons informé(e) des prochaines étapes."],
+                'en' => ['subject' => 'Application received', 'body' => "Hello {$candidate->full_name}, your application {$candidate->candidate_id} has been received. Interviews take place between {$interviewHours}. We will keep you informed of the next steps."],
             ],
             'guardian' => [
                 'fr' => ['subject' => 'Candidature de '.$candidate->full_name, 'body' => "La candidature de {$candidate->full_name} ({$candidate->candidate_id}) a été reçue par {$brand}."],
@@ -36,8 +37,8 @@ class RecruitmentCommunicationService
                 'en' => ['subject' => 'Interview passed', 'body' => "Congratulations {$candidate->full_name}. You are admitted to Observation Day ({$hours}). This is an unpaid full-day evaluation and not a job offer."],
             ],
             'guardian' => [
-                'fr' => ['subject' => 'Entretien réussi', 'body' => "{$candidate->full_name} a réussi l'entretien et est convoqué(e) à une journée d'observation."],
-                'en' => ['subject' => 'Interview passed', 'body' => "{$candidate->full_name} passed the interview and is invited to Observation Day."],
+                'fr' => ['subject' => 'Entretien réussi', 'body' => "{$candidate->full_name} a réussi l'entretien et est convoqué(e) à une journée d'observation ({$hours})."],
+                'en' => ['subject' => 'Interview passed', 'body' => "{$candidate->full_name} passed the interview and is invited to Observation Day ({$hours})."],
             ],
         ]);
     }

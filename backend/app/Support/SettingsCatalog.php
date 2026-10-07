@@ -31,7 +31,6 @@ class SettingsCatalog
             'finance' => [
                 'decimal_places' => ['type' => 'number', 'default' => '2'],
                 'fiscal_year_start_month' => ['type' => 'number', 'default' => '1'],
-                'tax_inclusive_prices' => ['type' => 'boolean', 'default' => '0'],
                 'fx_spread_percent' => ['type' => 'number', 'default' => '1.5'],
                 'reporting_currency' => ['type' => 'string', 'default' => 'USD'],
                 'multi_currency' => ['type' => 'boolean', 'default' => '1'],

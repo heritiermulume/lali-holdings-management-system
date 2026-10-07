@@ -2,7 +2,10 @@ type DisplayPrefs = {
   decimalPlaces: number
   dateFormat: string
   timeZone: string
+  /** Active currency used by money() when no override is passed. */
   currency: string
+  /** Group reporting currency from finance settings / default FX currency. */
+  reportingCurrency: string
   groupName: string
 }
 
@@ -11,6 +14,7 @@ const displayPrefs: DisplayPrefs = {
   dateFormat: 'DD/MM/YYYY',
   timeZone: 'UTC',
   currency: '',
+  reportingCurrency: '',
   groupName: '',
 }
 
@@ -25,12 +29,27 @@ export function applyDisplayPrefs(input?: {
   if (Number.isFinite(places)) displayPrefs.decimalPlaces = Math.max(0, Math.min(6, Math.trunc(places)))
   if (input?.date_format) displayPrefs.dateFormat = input.date_format
   if (input?.timezone) displayPrefs.timeZone = input.timezone
-  if (input?.reporting_currency) displayPrefs.currency = String(input.reporting_currency).toUpperCase()
+  if (input?.reporting_currency) {
+    const code = String(input.reporting_currency).toUpperCase()
+    const wasReporting = !displayPrefs.currency || displayPrefs.currency === displayPrefs.reportingCurrency
+    displayPrefs.reportingCurrency = code
+    if (wasReporting) displayPrefs.currency = code
+  }
   if (input?.group_name) displayPrefs.groupName = String(input.group_name)
 }
 
+/** Override money() currency for the current workspace (company module vs group reporting). */
+export function setActiveCurrency(code?: string | null) {
+  const next = (code || displayPrefs.reportingCurrency || '').toUpperCase()
+  displayPrefs.currency = next
+}
+
 export function reportingCurrency() {
-  return displayPrefs.currency
+  return displayPrefs.reportingCurrency || displayPrefs.currency
+}
+
+export function activeCurrency() {
+  return displayPrefs.currency || displayPrefs.reportingCurrency
 }
 
 export function groupName() {
@@ -53,7 +72,7 @@ function formatDay(date: Date) {
 
 export function money(value?: number | null, currency?: string, digits?: number) {
   const places = digits ?? displayPrefs.decimalPlaces
-  const code = (currency || displayPrefs.currency || '').toUpperCase()
+  const code = (currency || displayPrefs.currency || displayPrefs.reportingCurrency || '').toUpperCase()
   if (!code) {
     return (value ?? 0).toLocaleString(undefined, {
       minimumFractionDigits: places,
