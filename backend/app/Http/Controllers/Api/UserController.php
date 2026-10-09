@@ -80,16 +80,23 @@ class UserController extends Controller
         if (array_key_exists('is_active', $data)) {
             $data['is_active'] = $request->boolean('is_active');
         }
+        if (array_key_exists('is_certified', $data)) {
+            $data['is_certified'] = $request->boolean('is_certified');
+        }
         unset($data['role_ids'], $data['scopes'], $data['company_ids'], $data['office_ids'], $data['assignments'], $data['platform_role_id'], $data['avatar'], $data['remove_avatar']);
 
         $user = DB::transaction(function () use ($request, $data, $requestedPassword) {
             $user = User::query()->create($data);
             $this->syncAvatar($request, $user);
             $this->syncMemberships($user, $request);
-            $this->kamsAccounts->tryForUser($user->fresh('roles'));
-            $this->credentials->issueIfAgent($user->fresh('roles'), $requestedPassword);
+            $fresh = $user->fresh('roles');
+            if ($fresh && ! $fresh->isCertifiable() && $fresh->is_certified) {
+                $fresh->forceFill(['is_certified' => false])->save();
+            }
+            $this->kamsAccounts->tryForUser($fresh);
+            $this->credentials->issueIfAgent($fresh, $requestedPassword);
 
-            return $user->fresh();
+            return $fresh->fresh();
         });
 
         return $this->created($this->present($user), __('User created.'));
@@ -114,6 +121,9 @@ class UserController extends Controller
         if (array_key_exists('is_active', $data)) {
             $data['is_active'] = $request->boolean('is_active');
         }
+        if (array_key_exists('is_certified', $data)) {
+            $data['is_certified'] = $request->boolean('is_certified');
+        }
 
         $this->assertCannotAffectSuperAdmin($request->user(), $user, $request);
 
@@ -126,10 +136,15 @@ class UserController extends Controller
                 $this->syncMemberships($user, $request);
             }
 
-            $this->kamsAccounts->tryForUser($user->fresh('roles'));
-            $this->credentials->issueIfAgent($user->fresh('roles'), $requestedPassword);
+            $fresh = $user->fresh('roles');
+            if ($fresh && ! $fresh->isCertifiable() && $fresh->is_certified) {
+                $fresh->forceFill(['is_certified' => false])->save();
+            }
 
-            return $user->fresh();
+            $this->kamsAccounts->tryForUser($fresh);
+            $this->credentials->issueIfAgent($fresh, $requestedPassword);
+
+            return $fresh->fresh();
         });
 
         return $this->ok($this->present($user), __('User updated.'));
@@ -224,6 +239,7 @@ class UserController extends Controller
             'locale' => ['nullable', 'in:fr,en'],
             'timezone' => ['nullable', 'string', 'max:64'],
             'is_active' => ['boolean'],
+            'is_certified' => ['boolean'],
             'primary_company_id' => ['nullable', 'exists:companies,id'],
             'primary_office_id' => ['nullable', 'exists:offices,id'],
             'password' => ['nullable', 'string', Password::defaults()],
@@ -491,6 +507,8 @@ class UserController extends Controller
             'phone' => $user->phone,
             'avatar_url' => $user->avatar_path ? '/storage/'.$user->avatar_path : null,
             'is_active' => $user->is_active,
+            'is_certified' => (bool) $user->is_certified,
+            'can_be_certified' => $user->isCertifiable(),
             'last_login_at' => $user->last_login_at,
             'primary_company' => $user->primaryCompany,
             'primary_office' => $user->primaryOffice,

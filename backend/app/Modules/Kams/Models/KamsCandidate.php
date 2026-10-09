@@ -14,9 +14,9 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
-    'company_id', 'office_id', 'member_id', 'sponsor_member_id', 'guardian_member_id', 'candidate_id',
+    'company_id', 'office_id', 'member_id', 'guardian_member_id', 'candidate_id',
     'first_name', 'last_name', 'full_name',
-    'gender', 'birth_date', 'phone', 'email', 'photo_path', 'address', 'guardian_name', 'guardian_phone', 'source', 'sponsor_name',
+    'gender', 'birth_date', 'phone', 'email', 'photo_path', 'address', 'guardian_name', 'guardian_phone', 'source',
     'status', 'applied_at', 'documents', 'notes',
 ])]
 class KamsCandidate extends Model
@@ -52,11 +52,6 @@ class KamsCandidate extends Model
     public function member(): BelongsTo
     {
         return $this->belongsTo(KamsMember::class, 'member_id');
-    }
-
-    public function sponsor(): BelongsTo
-    {
-        return $this->belongsTo(KamsMember::class, 'sponsor_member_id');
     }
 
     public function guardian(): BelongsTo

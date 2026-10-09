@@ -55,11 +55,9 @@ class KamsStockController extends Controller
             ->with(['office:id,name,code', 'province:id,name,name_fr'])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
 
-        // Office-scoped accounts (or explicit office filter) only see office depots/sellers.
-        // Company-wide accounts keep regional warehouses even when a single office is locked for lists.
-        if ($officeScope !== null && ($request->user()->isOfficeScoped() || $request->filled('office_id'))) {
-            $locationQuery->whereIn('office_id', $officeScope);
-        } elseif ($officeScope !== null) {
+        // Office depots/sellers follow office access; regional warehouses stay visible
+        // for office-scoped roles that have stock.warehouses.view (e.g. managers).
+        if ($officeScope !== null) {
             $locationQuery->where(function ($q) use ($officeScope) {
                 $q->whereIn('office_id', $officeScope)->orWhere('kind', 'warehouse');
             });
@@ -110,6 +108,7 @@ class KamsStockController extends Controller
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
                 ->when($officeScope !== null, fn ($q) => $q->whereIn('office_id', $officeScope))
                 ->where('status', 'active')
+                ->assignableForStock()
                 ->orderBy('full_name')
                 ->get(['id', 'company_id', 'office_id', 'member_code', 'full_name', 'photo_path']),
             'options' => DomainOptions::all(),
@@ -475,9 +474,40 @@ class KamsStockController extends Controller
                 'to' => $to->toDateString(),
             ],
             'office_name' => $selectedOfficeName,
+            'can_delete' => $request->user()?->hasPermission('kams.stock.reports.delete') ?? false,
             'totals' => $normalize($totals),
             'days' => $dayRows,
         ], $this->officeFilterPayload($officeState)));
+    }
+
+    public function destroyAssignmentsReport(Request $request): JsonResponse
+    {
+        $companyId = $this->kamsCompanyId($request);
+        $data = $request->validate([
+            'date' => ['required', 'date'],
+            'office_id' => ['nullable', 'integer', 'exists:offices,id'],
+        ]);
+
+        $officeState = $this->resolveOfficeFilterState($request, $companyId);
+        $officeId = $officeState['selected_office_id'];
+        $scopedIds = $request->user()->isOfficeScoped()
+            ? ($request->user()->accessibleOfficeIds() ?: [0])
+            : null;
+
+        $result = $this->inventory->deleteDayReport(
+            $companyId,
+            \Illuminate\Support\Carbon::parse($data['date'])->toDateString(),
+            $officeId,
+            $scopedIds,
+        );
+
+        StockJournal::record('delete', null, array_merge($result, [
+            'company_id' => $companyId,
+            'office_id' => $officeId,
+            'reason' => 'assignment_day_report_delete',
+        ]), []);
+
+        return $this->ok($result);
     }
 
     public function storeAssignment(Request $request): JsonResponse
@@ -573,6 +603,17 @@ class KamsStockController extends Controller
         StockJournal::record('update', $closed, $before, $data);
 
         return $this->ok($closed);
+    }
+
+    public function destroyAssignment(Request $request, KamsStockAssignment $assignment): JsonResponse
+    {
+        $this->assertCompany($request, (int) $assignment->company_id);
+        abort_unless($request->user()->canAccessOffice((int) $assignment->office_id), 403);
+        $before = $this->assignmentAuditSnapshot($assignment, true, true);
+        $this->inventory->deleteAssignment($assignment, $request->user()->id);
+        StockJournal::record('delete', $assignment, $before, []);
+
+        return $this->ok(['deleted' => true, 'id' => $assignment->id]);
     }
 
     public function closeAssignmentDay(Request $request): JsonResponse
@@ -1043,6 +1084,32 @@ class KamsStockController extends Controller
         return $this->paginated($paginator);
     }
 
+    public function destroyJournal(Request $request, KamsStockJournalEntry $entry): JsonResponse
+    {
+        $companyId = $this->kamsCompanyId($request);
+        abort_unless(! $companyId || (int) $entry->company_id === (int) $companyId, 403);
+
+        if ($request->user()->isOfficeScoped()) {
+            $officeIds = $request->user()->accessibleOfficeIds() ?: [0];
+            abort_unless(
+                $entry->office_id === null || in_array((int) $entry->office_id, $officeIds, true),
+                403,
+            );
+        }
+
+        $snapshot = [
+            'id' => $entry->id,
+            'company_id' => $entry->company_id,
+            'office_id' => $entry->office_id,
+            'action' => $entry->action,
+            'auditable_type' => $entry->auditable_type,
+            'auditable_id' => $entry->auditable_id,
+        ];
+        $entry->delete();
+
+        return $this->ok(['deleted' => true, ...$snapshot]);
+    }
+
     /**
      * @param  \Illuminate\Support\Collection<int, KamsStockJournalEntry>  $logs
      * @return array{
@@ -1177,11 +1244,11 @@ class KamsStockController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function assignmentAuditSnapshot(KamsStockAssignment $assignment, bool $settlement = false): array
+    private function assignmentAuditSnapshot(KamsStockAssignment $assignment, bool $settlement = false, bool $full = false): array
     {
         $assignment->loadMissing('items');
 
-        return [
+        $snapshot = [
             'collected_amount' => $assignment->collected_amount,
             'items' => $assignment->items->map(function ($item) use ($settlement) {
                 $line = [
@@ -1197,6 +1264,20 @@ class KamsStockController extends Controller
                 return $line;
             })->values()->all(),
         ];
+
+        if ($full) {
+            $snapshot = array_merge([
+                'reference' => $assignment->reference,
+                'status' => $assignment->status,
+                'company_id' => (int) $assignment->company_id,
+                'office_id' => (int) $assignment->office_id,
+                'member_id' => (int) $assignment->member_id,
+                'depot_id' => (int) $assignment->depot_id,
+                'assigned_at' => optional($assignment->assigned_at)?->toIso8601String(),
+            ], $snapshot);
+        }
+
+        return $snapshot;
     }
 
     /**
@@ -1250,6 +1331,9 @@ class KamsStockController extends Controller
         if ($entity === 'KamsStockAssignment') {
             if ($action === 'create') {
                 return 'assignment_create';
+            }
+            if ($action === 'delete') {
+                return 'assignment_delete';
             }
             if (array_key_exists('quantity_returned', data_get($new, 'items.0', []))
                 || array_key_exists('collected_amount', $new) && array_key_exists('items', $new)
@@ -1394,18 +1478,28 @@ class KamsStockController extends Controller
         $offices = $lookups['offices'] ?? collect();
 
         if ($entity === 'KamsStockAssignment') {
-            $itemCount = count($new['items'] ?? []);
+            $source = $new !== [] ? $new : $old;
+            $itemCount = count($source['items'] ?? []);
             if ($itemCount > 0) {
                 $details[] = $itemCount.' item(s)';
             }
-            if (array_key_exists('collected_amount', $new)) {
-                $details[] = 'collected: '.$new['collected_amount'];
+            if (array_key_exists('collected_amount', $source)) {
+                $details[] = 'collected: '.$source['collected_amount'];
             }
-            if (! empty($new['member_id'])) {
-                $memberLabel = $members[(int) $new['member_id']] ?? null;
+            if (! empty($source['member_id'])) {
+                $memberLabel = $members[(int) $source['member_id']] ?? null;
                 if (is_string($memberLabel) && $memberLabel !== '') {
                     $details[] = $memberLabel;
                 }
+            }
+            if (! empty($source['office_id'])) {
+                $officeLabel = $offices[(int) $source['office_id']] ?? null;
+                if (is_string($officeLabel) && $officeLabel !== '') {
+                    $details[] = $officeLabel;
+                }
+            }
+            if (! empty($source['status'])) {
+                $details[] = (string) $source['status'];
             }
             $removed = collect($new['items'] ?? [])
                 ->filter(fn ($item) => is_array($item) && array_key_exists('quantity', $item) && (int) $item['quantity'] === 0)
@@ -1663,7 +1757,7 @@ class KamsStockController extends Controller
                         ->whereIn('office_id', $officeIds ?: [0])));
             })
             ->orderBy('name')
-            ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'stock', 'tax_exempt', 'image_path']);
+            ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'tax_exempt', 'image_path']);
 
         $officeStock = [];
         if ($products->isNotEmpty()) {

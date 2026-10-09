@@ -1,15 +1,51 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { ArrowRightLeft, ChevronLeft, ChevronRight, Info, User } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button, Empty, Field, Modal } from '../../components/ui'
+import { Button, Card, Empty, Field, Modal } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { money } from '../../lib/format'
+import { money, roleLabel } from '../../lib/format'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
 import { KamsBankCard } from './KamsBankCard'
+
+type Period = 'day' | 'week' | 'month' | 'custom'
+
+function isoDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function startOfWeekMonday(value: Date) {
+  const date = new Date(value.getFullYear(), value.getMonth(), value.getDate())
+  const weekday = date.getDay()
+  date.setDate(date.getDate() - (weekday === 0 ? 6 : weekday - 1))
+  return date
+}
+
+function presetRange(period: Exclude<Period, 'custom'>, now = new Date()) {
+  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  if (period === 'day') {
+    const day = isoDate(to)
+    return { from: day, to: day }
+  }
+  if (period === 'month') {
+    return { from: isoDate(new Date(to.getFullYear(), to.getMonth(), 1)), to: isoDate(to) }
+  }
+  const from = startOfWeekMonday(to)
+  return { from: isoDate(from), to: isoDate(to) }
+}
+
+function entryDate(entry: { occurred_on?: string | null; created_at?: string | null }) {
+  if (entry.occurred_on) return entry.occurred_on.slice(0, 10)
+  if (entry.created_at) return entry.created_at.slice(0, 10)
+  return ''
+}
 
 type Entry = {
   id: number
@@ -30,6 +66,7 @@ type Summary = {
   office?: { id: number; name: string; code: string } | null
   balance: number
   available?: number
+  pending_deposits?: number
   deposits: number
   withdrawals: number
   expenses: number
@@ -51,6 +88,7 @@ type Statement = {
   }
   balance: number
   available?: number
+  pending_deposits?: number
   deposits: number
   withdrawals: number
   expenses: number
@@ -64,6 +102,51 @@ type Statement = {
 }
 
 type Action = 'deposit' | 'withdraw' | 'expense'
+type OfficeTab = 'transactions' | 'commissions'
+
+type CommissionMember = {
+  id: number
+  full_name: string
+  member_code: string
+  photo_url?: string | null
+  rank?: string | null
+  role?: { id: number; name: string; slug: string } | null
+  office?: { id: number; name: string; code: string } | null
+}
+
+type CommissionBeneficiary = {
+  member: CommissionMember
+  amount: number
+  share_count: number
+  pending_transfer: boolean
+  can_transfer: boolean
+}
+
+type CommissionEntry = {
+  id: number
+  rule_code: string
+  amount: number
+  base_amount: number
+  percent: number
+  formula?: string | null
+  status: string
+  occurred_on?: string | null
+  sale?: { id: number; reference: string } | null
+  product?: { id: number; name: string; sku?: string | null } | null
+}
+
+type CommissionsPayload = {
+  beneficiaries: CommissionBeneficiary[]
+  total: number
+  can_transfer: boolean
+}
+
+function todayIso() {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
 
 export function KamsCompanyAccountPage() {
   const { t } = useTranslation()
@@ -71,9 +154,21 @@ export function KamsCompanyAccountPage() {
   const [rows, setRows] = useState<Summary[]>([])
   const [data, setData] = useState<Statement | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
+  const [officeTab, setOfficeTab] = useState<OfficeTab>('transactions')
+  const [commissions, setCommissions] = useState<CommissionsPayload | null>(null)
+  const [detailMember, setDetailMember] = useState<CommissionMember | null>(null)
+  const [detailEntries, setDetailEntries] = useState<CommissionEntry[]>([])
+  const [detailAmount, setDetailAmount] = useState(0)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const initialRange = useMemo(() => presetRange('week'), [])
+  const today = useMemo(() => isoDate(new Date()), [])
+  const [period, setPeriod] = useState<Period>('week')
+  const [from, setFrom] = useState(initialRange.from)
+  const [to, setTo] = useState(initialRange.to)
   const [action, setAction] = useState<Action | null>(null)
   const [memberId, setMemberId] = useState('')
   const [amount, setAmount] = useState('')
+  const [occurredOn, setOccurredOn] = useState(todayIso())
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -84,26 +179,101 @@ export function KamsCompanyAccountPage() {
   const [canScrollRight, setCanScrollRight] = useState(false)
 
   const loadList = () => {
-    api.get('/modules/kams/finance/company-accounts').then((res) => {
+    return api.get('/modules/kams/finance/company-accounts').then((res) => {
       const next = (res.data.data || []) as Summary[]
       setRows(next)
-      if (!selected && next[0]) {
-        setSelected(next[0].id)
+      const stillVisible = selected != null && next.some((row) => row.id === selected)
+      if (!stillVisible) {
+        setSelected(next[0]?.id ?? null)
       }
     }).catch(() => setRows([]))
   }
 
-  useEffect(() => { loadList() }, [])
-
-  useEffect(() => {
+  const loadSelected = () => {
     if (!selected) {
       setData(null)
+      setCommissions(null)
       return
     }
-    api.get(`/modules/kams/finance/company-accounts/${selected}`)
+    return api.get(`/modules/kams/finance/company-accounts/${selected}`)
       .then((res) => setData(res.data.data))
       .catch(() => setData(null))
+  }
+
+  useEffect(() => { void loadList() }, [])
+
+  const selectedRow = rows.find((row) => row.id === selected) || null
+  const isOfficeAccount = Boolean(selectedRow && !selectedRow.is_central)
+
+  useEffect(() => {
+    void loadSelected()
   }, [selected])
+
+  const reloadCommissions = () => {
+    if (!selected || !isOfficeAccount) return
+    return api.get(`/modules/kams/finance/company-accounts/${selected}/commissions`)
+      .then((res) => setCommissions(res.data.data))
+      .catch(() => setCommissions({ beneficiaries: [], total: 0, can_transfer: false }))
+  }
+
+  useEffect(() => {
+    if (!selected || !isOfficeAccount) {
+      setCommissions(null)
+      setOfficeTab('transactions')
+      return
+    }
+    void reloadCommissions()
+  }, [selected, isOfficeAccount])
+
+  useEffect(() => {
+    if (period === 'custom') return
+    const range = presetRange(period)
+    setFrom(range.from)
+    setTo(range.to)
+  }, [period])
+
+  useLiveData(() => {
+    void loadList()
+    void loadSelected()
+    if (selected && isOfficeAccount) void reloadCommissions()
+  })
+
+  const openCommissionDetail = (member: CommissionMember) => {
+    if (!selected) return
+    setDetailMember(member)
+    setDetailEntries([])
+    setDetailAmount(0)
+    setDetailLoading(true)
+    setError('')
+    api.get(`/modules/kams/finance/company-accounts/${selected}/commissions/${member.id}`)
+      .then((res) => {
+        setDetailEntries(res.data.data.entries || [])
+        setDetailAmount(Number(res.data.data.amount || 0))
+      })
+      .catch(() => {
+        setDetailEntries([])
+        setDetailAmount(0)
+      })
+      .finally(() => setDetailLoading(false))
+  }
+
+  const transferCommission = async (member: CommissionMember) => {
+    if (!selected) return
+    setError('')
+    setSaving(true)
+    try {
+      const res = await api.post(`/modules/kams/finance/company-accounts/${selected}/commissions/${member.id}/transfer`)
+      if (res.data.data?.statement) setData(res.data.data.statement)
+      if (res.data.data?.commissions) setCommissions(res.data.data.commissions)
+      else reloadCommissions()
+      loadList()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const cardButtons = (el: HTMLDivElement) =>
     Array.from(el.children).filter((node): node is HTMLButtonElement => node instanceof HTMLButtonElement)
@@ -151,12 +321,72 @@ export function KamsCompanyAccountPage() {
     el.scrollTo({ left: Math.max(0, cards[next].offsetLeft - pad), behavior: 'smooth' })
   }
 
+  const ledgerBalance = Math.max(0, Number(data?.balance ?? 0))
+  const pendingDeposits = Math.max(0, Number(data?.pending_deposits ?? 0))
+  // Withdraw/expense/deposit-to-principal cannot use amounts reserved by pending principal deposits.
+  const spendable = data?.account.is_central
+    ? Math.max(0, Number(data.available ?? data.balance ?? 0))
+    : Math.max(0, Math.min(
+      Number(data?.available ?? ledgerBalance),
+      ledgerBalance - pendingDeposits,
+    ))
+
+  const cashSummary = useMemo(() => {
+    const rangeFrom = from || ''
+    const rangeTo = to || ''
+    let cashIn = 0
+    let cashOut = 0
+    for (const entry of data?.entries || []) {
+      const day = entryDate(entry)
+      if (rangeFrom && day && day < rangeFrom) continue
+      if (rangeTo && day && day > rangeTo) continue
+      const amount = Number(entry.amount || 0)
+      const status = entry.status || 'posted'
+      if (status === 'rejected' || status === 'void') continue
+
+      // Posted credits / debits
+      if (status === 'posted') {
+        if (amount > 0) cashIn += amount
+        else if (amount < 0) cashOut += Math.abs(amount)
+        continue
+      }
+
+      // Pending commission transfers already reserve cash leaving the office.
+      if (status === 'pending' && (entry.type === 'commission_transfer') && amount > 0) {
+        cashOut += amount
+      }
+    }
+
+    // Unpaid office commissions (not yet transferred) count as outflows.
+    if (isOfficeAccount) {
+      cashOut += Math.max(0, Number(commissions?.total || 0))
+    }
+
+    cashIn = Math.round(cashIn * 100) / 100
+    cashOut = Math.round(cashOut * 100) / 100
+    return {
+      cashIn,
+      cashOut,
+      balance: Math.round((cashIn - cashOut) * 100) / 100,
+    }
+  }, [data?.entries, commissions?.total, from, to, isOfficeAccount])
+
+  const applyPreset = (next: Exclude<Period, 'custom'>) => {
+    const range = presetRange(next)
+    setPeriod(next)
+    setFrom(range.from)
+    setTo(range.to)
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!action || !selected || !data) return
     const member = data.members?.find((item) => String(item.id) === memberId)
-    const spendable = data.available ?? data.balance
     const cap = member ? Math.min(spendable, member.balance) : spendable
+    if (action === 'deposit' && Number(amount) > spendable + 0.001) {
+      setError(t('kams.depositExceedsOfficeBalance', { balance: money(spendable) }))
+      return
+    }
     if ((action === 'expense' || action === 'withdraw') && Number(amount) > cap + 0.001) {
       setError(member && Number(amount) > member.balance + 0.001
         ? t('kams.memberExceedsBalance', { balance: money(member.balance) })
@@ -166,15 +396,23 @@ export function KamsCompanyAccountPage() {
     setError('')
     setSaving(true)
     try {
-      const res = await api.post(`/modules/kams/finance/company-accounts/${selected}/${action}`, {
-        amount: Number(amount),
-        notes,
-        member_id: memberId || undefined,
-      })
+      const payload = action === 'deposit'
+        ? {
+            amount: Number(amount),
+            occurred_on: occurredOn,
+            notes: notes.trim() || undefined,
+          }
+        : {
+            amount: Number(amount),
+            notes,
+            member_id: memberId || undefined,
+          }
+      const res = await api.post(`/modules/kams/finance/company-accounts/${selected}/${action}`, payload)
       setData(res.data.data)
       setAction(null)
       setMemberId('')
       setAmount('')
+      setOccurredOn(todayIso())
       setNotes('')
       loadList()
     } catch (err) {
@@ -194,6 +432,7 @@ export function KamsCompanyAccountPage() {
       })
       setData(res.data.data)
       loadList()
+      if (isOfficeAccount) reloadCommissions()
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -201,16 +440,17 @@ export function KamsCompanyAccountPage() {
   }
 
   const titles: Record<Action, string> = {
-    deposit: t('kams.makeDeposit'),
+    deposit: t('kams.depositToPrincipal'),
     withdraw: t('kams.makeWithdrawal'),
     expense: t('kams.recordExpense'),
   }
   const selectedMember = data?.members?.find((item) => String(item.id) === memberId)
-  const spendable = data?.available ?? data?.balance ?? 0
-  const operationCap = selectedMember
-    ? Math.min(spendable, selectedMember.balance)
-    : spendable
-  const amountTooHigh = (action === 'expense' || action === 'withdraw') && amount !== '' && Number(amount) > operationCap + 0.001
+  const operationCap = action === 'deposit'
+    ? spendable
+    : selectedMember
+      ? Math.min(spendable, selectedMember.balance)
+      : spendable
+  const amountTooHigh = Boolean(action) && amount !== '' && Number(amount) > operationCap + 0.001
   const officeItem: SearchComboboxItem = {
     id: 'office',
     label: data?.account.is_central ? t('kams.centralPoolAccount') : t('kams.officePoolAccount'),
@@ -229,14 +469,13 @@ export function KamsCompanyAccountPage() {
     setAction(next)
     setError('')
     setAmount('')
+    setOccurredOn(todayIso())
     setNotes('')
     setMemberId('')
   }
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-muted">{t('kams.companyAccountHint')}</p>
-
       {rows.length === 0 ? <Empty>{t('common.empty')}</Empty> : (
         <div className="relative">
           <button
@@ -260,7 +499,7 @@ export function KamsCompanyAccountPage() {
                   type="button"
                   onClick={() => setSelected(row.id)}
                   className={cn(
-                    'h-56 w-[min(24rem,calc(100vw-7rem))] shrink-0 snap-start rounded-[1.4rem] text-left',
+                    'min-h-56 w-[min(24rem,calc(100vw-7rem))] shrink-0 snap-start rounded-[1.4rem] text-left',
                     active && 'ring-2 ring-lhms ring-offset-2 ring-offset-surface',
                   )}
                 >
@@ -269,6 +508,12 @@ export function KamsCompanyAccountPage() {
                     holder={row.is_central ? 'KAMS' : (row.office?.name || row.name)}
                     subtitle={row.is_central ? t('kams.centralAccount') : t('kams.officeAccount')}
                     balance={row.balance}
+                    pendingDeposits={
+                      data?.account.id === row.id
+                        ? (data.pending_deposits || row.pending_deposits || 0)
+                        : (row.pending_deposits || 0)
+                    }
+                    pendingDepositsLabel={t('kams.pendingDepositRequest')}
                   />
                 </button>
               )
@@ -288,77 +533,371 @@ export function KamsCompanyAccountPage() {
 
       {data ? (
         <>
-          <div className="flex flex-wrap items-center gap-2">
-            {data.can_deposit && hasPermission('kams.finance.company.deposit') ? (
-              <Button onClick={() => openAction('deposit')}>{t('kams.makeDeposit')}</Button>
+          <div className="space-y-3">
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted">{t('kams.cashPeriodHint')}</p>
+              <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-surface p-1 sm:w-auto sm:ml-auto">
+                {(['day', 'week', 'month'] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => applyPreset(item)}
+                    className={cn(
+                      'min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none',
+                      period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
+                    )}
+                  >
+                    {t(`kams.period.${item}`)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPeriod('custom')}
+                  className={cn(
+                    'min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none',
+                    period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
+                  )}
+                >
+                  {t('dashboard.customPeriod')}
+                </button>
+              </div>
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-80">
+                <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
+                <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
+              </div>
             ) : null}
-            {data.can_withdraw && hasPermission('kams.finance.company.withdraw') ? (
-              <Button variant="secondary" disabled={(data.balance ?? 0) <= 0.001} onClick={() => openAction('withdraw')}>{t('kams.makeWithdrawal')}</Button>
-            ) : null}
-            {data.can_expense && hasPermission('kams.finance.company.expense') ? (
-              <Button variant="accent" disabled={(data.balance ?? 0) <= 0.001} onClick={() => openAction('expense')}>{t('kams.ledger.expense')}</Button>
-            ) : null}
-            <div className="ml-auto">
-              <KamsTransactionsPrintMenu
-                canPreview={hasPermission('kams.finance.company.preview')}
-                canPrint={hasPermission('kams.finance.company.print')}
-                onPreview={() => transactionsRef.current?.preview()}
-                onPrint={() => transactionsRef.current?.print()}
-                disabled={!hasPrintableRows}
-              />
+            <div className="grid grid-cols-2 gap-2 sm:gap-3">
+              <Card className="p-3 sm:p-4">
+                <div className="text-xs text-muted sm:text-sm">{t('kams.cashIn')}</div>
+                <div className="mt-1 text-lg font-extrabold tabular-nums text-lhms sm:mt-2 sm:text-2xl">{money(cashSummary.cashIn)}</div>
+              </Card>
+              <Card className="p-3 sm:p-4">
+                <div className="text-xs text-muted sm:text-sm">{t('kams.cashOut')}</div>
+                <div className="mt-1 text-lg font-extrabold tabular-nums text-danger sm:mt-2 sm:text-2xl">{money(cashSummary.cashOut)}</div>
+              </Card>
+              <Card className="p-3 sm:p-4">
+                <div className="text-xs text-muted sm:text-sm">{t('kams.balance')}</div>
+                <div className={cn(
+                  'mt-1 text-lg font-extrabold tabular-nums sm:mt-2 sm:text-2xl',
+                  cashSummary.balance >= 0 ? 'text-lhms' : 'text-danger',
+                )}>
+                  {money(cashSummary.balance)}
+                </div>
+              </Card>
+              <Card className="p-3 sm:p-4">
+                <div className="text-xs text-muted sm:text-sm">{t('kams.principalBalance')}</div>
+                <div className={cn(
+                  'mt-1 text-lg font-extrabold tabular-nums sm:mt-2 sm:text-2xl',
+                  ledgerBalance >= 0 ? 'text-lhms' : 'text-danger',
+                )}>
+                  {money(ledgerBalance)}
+                </div>
+              </Card>
             </div>
           </div>
 
-          {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
+          {isOfficeAccount ? (
+            <nav className="flex flex-wrap gap-2">
+              {([
+                { id: 'transactions' as const, label: t('kams.transactions') },
+                { id: 'commissions' as const, label: t('kams.officeCommissions') },
+              ]).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setOfficeTab(tab.id)}
+                  className={cn(
+                    'inline-flex min-h-10 items-center rounded-full px-3 text-xs font-semibold whitespace-nowrap sm:px-4 sm:text-sm',
+                    officeTab === tab.id ? 'bg-lhms text-white' : 'bg-white text-muted',
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          ) : null}
 
-          <KamsAccountTransactions
-            ref={transactionsRef}
-            key={data.account.id}
-            title={t('kams.transactionsFor', { holder: data.account.is_central ? 'KAMS' : (data.account.office?.name || data.account.name) })}
-            subtitle={data.account.name}
-            entries={data.entries}
-            onDecide={data.can_decide && hasPermission('kams.finance.company.approve') ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
-            onRowsChange={(count) => setHasPrintableRows(count > 0)}
-          />
+          {(!isOfficeAccount || officeTab === 'transactions') ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {data.can_deposit && hasPermission('kams.finance.company.deposit') ? (
+                  <Button
+                    disabled={spendable <= 0.001}
+                    onClick={() => openAction('deposit')}
+                  >
+                    {t('kams.depositToPrincipal')}
+                  </Button>
+                ) : null}
+                {data.can_withdraw && hasPermission('kams.finance.company.withdraw') ? (
+                  <Button variant="secondary" disabled={spendable <= 0.001} onClick={() => openAction('withdraw')}>{t('kams.makeWithdrawal')}</Button>
+                ) : null}
+                {data.can_expense && hasPermission('kams.finance.company.expense') ? (
+                  <Button variant="accent" disabled={spendable <= 0.001} onClick={() => openAction('expense')}>{t('kams.ledger.expense')}</Button>
+                ) : null}
+                <div className="ml-auto">
+                  <KamsTransactionsPrintMenu
+                    canPreview={hasPermission('kams.finance.company.preview')}
+                    canPrint={hasPermission('kams.finance.company.print')}
+                    onPreview={() => transactionsRef.current?.preview()}
+                    onPrint={() => transactionsRef.current?.print()}
+                    disabled={!hasPrintableRows}
+                  />
+                </div>
+              </div>
+
+              {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
+
+              <KamsAccountTransactions
+                ref={transactionsRef}
+                key={data.account.id}
+                title={t('kams.transactionsFor', { holder: data.account.is_central ? t('kams.principalBank') : (data.account.office?.name || data.account.name) })}
+                subtitle={data.account.is_central ? t('kams.centralAccount') : data.account.name}
+                entries={data.entries}
+                dateFrom={from}
+                dateTo={to}
+                printMeta={[
+                  {
+                    label: period === 'custom'
+                      ? t('dashboard.customPeriod')
+                      : t(`kams.period.${period}`),
+                    value: t('kams.periodRange', {
+                      start: from ? new Date(`${from}T12:00:00`).toLocaleDateString() : '—',
+                      end: to ? new Date(`${to}T12:00:00`).toLocaleDateString() : '—',
+                    }),
+                  },
+                  { label: t('kams.cashIn'), value: money(cashSummary.cashIn) },
+                  { label: t('kams.cashOut'), value: money(cashSummary.cashOut) },
+                  { label: t('kams.balance'), value: money(cashSummary.balance) },
+                  { label: t('kams.principalBalance'), value: money(ledgerBalance) },
+                ]}
+                onDecide={data.can_decide && hasPermission('kams.finance.company.approve') ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
+                canDecideEntry={(entry) => {
+                  if (entry.type === 'commission_transfer') return false
+                  return entry.type !== 'transfer_deposit' || data.account.is_central
+                }}
+                onRowsChange={(count) => setHasPrintableRows(count > 0)}
+              />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-ink">{t('kams.officeCommissions')}</h3>
+                  <p className="text-sm text-muted">{t('kams.officeCommissionsHint')}</p>
+                </div>
+                <Card className="px-4 py-3 text-sm">
+                  {t('kams.officeCommissionsTotal')}: <b className="tabular-nums">{money(commissions?.total || 0)}</b>
+                </Card>
+              </div>
+
+              {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
+
+              {!commissions ? <LoadingScreen /> : (commissions.beneficiaries || []).length === 0 ? (
+                <Empty>{t('kams.commissionNoBeneficiaries')}</Empty>
+              ) : (
+                <div className="overflow-hidden rounded-2xl border border-line bg-white">
+                  <table className="w-full text-sm">
+                    <thead className="bg-emerald-50/80 text-left text-xs uppercase tracking-wide text-muted">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">{t('kams.cardHolder')}</th>
+                        <th className="px-4 py-3 font-semibold">{t('kams.commissionProfile')}</th>
+                        <th className="px-4 py-3 text-right font-semibold">{t('kams.commissionAmountDue')}</th>
+                        <th className="px-4 py-3 text-right font-semibold">{t('common.actions')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {commissions.beneficiaries.map((row) => {
+                        const profile = row.member.role
+                          ? roleLabel(t, row.member.role)
+                          : (row.member.rank || '—')
+                        return (
+                          <tr key={row.member.id} className="border-t border-line">
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-lhms-soft text-lhms">
+                                  {row.member.photo_url ? (
+                                    <img src={row.member.photo_url} alt="" className="h-full w-full object-cover" />
+                                  ) : (
+                                    <User size={18} />
+                                  )}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="truncate font-semibold text-ink">{row.member.full_name}</div>
+                                  <div className="truncate text-xs text-muted">{row.member.member_code}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-muted">{profile}</td>
+                            <td className="px-4 py-3 text-right font-semibold tabular-nums">{money(row.amount)}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end gap-1.5">
+                                <Button
+                                  variant="ghost"
+                                  className="!h-8 !min-h-0 w-8 !p-0"
+                                  aria-label={t('kams.commissionDetails')}
+                                  onClick={() => openCommissionDetail(row.member)}
+                                >
+                                  <Info size={18} />
+                                </Button>
+                                {commissions.can_transfer && hasPermission('kams.finance.company.deposit') ? (
+                                  <Button
+                                    variant="secondary"
+                                    className="!h-8 !min-h-0 gap-1.5 !px-2.5"
+                                    disabled={!row.can_transfer || saving}
+                                    title={row.pending_transfer ? t('kams.commissionTransferPending') : t('kams.commissionTransferHint')}
+                                    onClick={() => void transferCommission(row.member)}
+                                  >
+                                    <ArrowRightLeft size={16} />
+                                    <span className="hidden sm:inline">{row.pending_transfer ? t('kams.commissionTransferPending') : t('kams.commissionTransfer')}</span>
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </>
       ) : selected ? <LoadingScreen /> : null}
 
       <Modal open={Boolean(action)} title={action ? titles[action] : ''} onClose={() => setAction(null)}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
-          <SearchCombobox
-            label={t('kams.account')}
-            value={memberValue}
-            items={memberItems}
-            placeholder={t('kams.account')}
-            emptyLabel={t('common.empty')}
-            onSelect={(item) => {
-              setMemberId(!item || item.id === 'office' ? '' : item.id)
-              setError('')
-            }}
-            required
-          />
+          {action === 'deposit' ? (
+            <p className="text-sm text-muted">{t('kams.depositToPrincipalHint')}</p>
+          ) : (
+            <SearchCombobox
+              label={t('kams.account')}
+              value={memberValue}
+              items={memberItems}
+              placeholder={t('kams.account')}
+              emptyLabel={t('common.empty')}
+              onSelect={(item) => {
+                setMemberId(!item || item.id === 'office' ? '' : item.id)
+                setError('')
+              }}
+              required
+            />
+          )}
           <Field label={t('kams.amount')}
             type="number"
             min="0.01"
             step="0.01"
-            max={(action === 'expense' || action === 'withdraw') ? Math.max(0, operationCap).toFixed(2) : undefined}
+            max={Math.max(0, operationCap).toFixed(2)}
             value={amount}
             onChange={(e) => {
-              setAmount(e.target.value)
-              if ((action === 'expense' || action === 'withdraw') && Number(e.target.value) > operationCap + 0.001) {
-                setError(selectedMember && Number(e.target.value) > selectedMember.balance + 0.001
-                  ? t('kams.memberExceedsBalance', { balance: money(selectedMember.balance) })
-                  : t('kams.expenseExceedsBalance', { balance: money(spendable) }))
+              const next = e.target.value
+              setAmount(next)
+              if (next !== '' && Number(next) > operationCap + 0.001) {
+                setError(action === 'deposit'
+                  ? t('kams.depositExceedsOfficeBalance', { balance: money(spendable) })
+                  : selectedMember && Number(next) > selectedMember.balance + 0.001
+                    ? t('kams.memberExceedsBalance', { balance: money(selectedMember.balance) })
+                    : t('kams.expenseExceedsBalance', { balance: money(spendable) }))
               } else {
                 setError('')
               }
             }}
             required
           />
-          <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} required />
-          <Button type="submit" className="w-full" disabled={saving || amountTooHigh}>{saving ? t('common.loading') : t('common.save')}</Button>
+          {action ? (
+            <p className="text-xs text-muted">
+              {action === 'deposit'
+                ? t('kams.officeBalanceAvailable', { balance: money(spendable) })
+                : t('kams.spendableAvailable', { balance: money(spendable) })}
+              {pendingDeposits > 0.001 && !data?.account.is_central
+                ? ` · ${t('kams.spendableAvailableHint', { balance: money(ledgerBalance), pending: money(pendingDeposits) })}`
+                : null}
+            </p>
+          ) : null}
+          {action === 'deposit' ? (
+            <Field
+              label={t('common.date')}
+              type="date"
+              value={occurredOn}
+              onChange={(e) => setOccurredOn(e.target.value)}
+              required
+            />
+          ) : null}
+          <Field
+            label={t('kams.motif')}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            required={action !== 'deposit'}
+          />
+          <Button type="submit" className="w-full" disabled={saving || amountTooHigh || (action === 'deposit' && spendable <= 0.001)}>
+            {saving ? t('common.loading') : action === 'deposit' ? t('kams.depositAction') : t('common.save')}
+          </Button>
         </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(detailMember)}
+        title={t('kams.commissionDetails')}
+        onClose={() => setDetailMember(null)}
+      >
+        {detailMember ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-lhms-soft text-lhms">
+                {detailMember.photo_url ? (
+                  <img src={detailMember.photo_url} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <User size={20} />
+                )}
+              </span>
+              <div className="min-w-0">
+                <div className="font-semibold text-ink">{detailMember.full_name}</div>
+                <div className="text-sm text-muted">
+                  {detailMember.role ? roleLabel(t, detailMember.role) : (detailMember.rank || detailMember.member_code)}
+                </div>
+              </div>
+              <div className="ml-auto text-right">
+                <div className="text-xs text-muted">{t('kams.commissionAmountDue')}</div>
+                <div className="text-lg font-bold tabular-nums">{money(detailAmount)}</div>
+              </div>
+            </div>
+
+            {detailLoading ? <LoadingScreen /> : detailEntries.length === 0 ? (
+              <Empty>{t('common.empty')}</Empty>
+            ) : (
+              <div className="max-h-[50vh] space-y-2 overflow-y-auto">
+                {detailEntries.map((entry) => (
+                  <Card key={entry.id} className="space-y-1 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-ink">
+                          {t(`kams.rule.${entry.rule_code}`, { defaultValue: entry.rule_code })}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {[
+                            entry.occurred_on,
+                            entry.sale?.reference ? `${t('kams.commissionSale')} ${entry.sale.reference}` : null,
+                            entry.product?.name,
+                          ].filter(Boolean).join(' · ')}
+                        </div>
+                        {entry.formula ? <div className="text-xs text-muted">{entry.formula}</div> : null}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="font-semibold tabular-nums">{money(entry.amount)}</div>
+                        <div className="text-xs text-muted">
+                          {t('kams.commissionBase')}: {money(entry.base_amount)} · {entry.percent}%
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
       </Modal>
     </div>
   )

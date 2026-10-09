@@ -4,9 +4,13 @@ namespace App\Modules\Kams\Services;
 
 use App\Models\Office;
 use App\Modules\Kams\Models\KamsClient;
+use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Models\KamsRevenueShare;
+use App\Modules\Kams\Models\KamsSavingsAccount;
+use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockAssignment;
 use App\Modules\Kams\Models\KamsStockAssignmentItem;
@@ -21,7 +25,10 @@ use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockSaleItem;
 use App\Modules\Kams\Models\KamsStockTransfer;
 use App\Modules\Kams\Models\KamsStockTransferItem;
+use App\Modules\Kams\Models\KamsTreasuryAccount;
+use App\Modules\Kams\Models\KamsTreasuryEntry;
 use App\Modules\Kams\Support\KamsDocumentRefs;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -261,6 +268,7 @@ class StockInventory
     {
         abort_unless($member->office_id, 422, __('The agent must belong to an office.'));
         abort_unless($member->status === 'active', 422, __('Only active agents can receive stock.'));
+        abort_unless($member->canReceiveStockAssignment(), 422, __('Platform administrators cannot receive stock assignments.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
         abort_unless(
             ! KamsStockAssignment::query()
@@ -307,6 +315,84 @@ class StockInventory
             }
 
             return $assignment->load(['member', 'office', 'depot', 'items.product']);
+        });
+    }
+
+    /**
+     * Delete an open or closed assignment and return remaining agent stock to the office depot.
+     * Settled assignments must be removed via the day report delete flow first.
+     */
+    public function deleteAssignment(KamsStockAssignment $assignment, ?int $userId = null): void
+    {
+        abort_if(
+            $assignment->status === 'settled',
+            422,
+            __('Cette affectation est déjà comptabilisée. Supprimez d\'abord le rapport de la journée.'),
+        );
+        abort_unless(
+            in_array($assignment->status, ['open', 'closed'], true),
+            422,
+            __('Only open or closed assignments can be deleted.'),
+        );
+
+        DB::transaction(function () use ($assignment, $userId) {
+            $assignment = KamsStockAssignment::query()->whereKey($assignment->id)->lockForUpdate()->firstOrFail();
+            abort_if(
+                $assignment->status === 'settled',
+                422,
+                __('Cette affectation est déjà comptabilisée. Supprimez d\'abord le rapport de la journée.'),
+            );
+            abort_unless(
+                in_array($assignment->status, ['open', 'closed'], true),
+                422,
+                __('Only open or closed assignments can be deleted.'),
+            );
+
+            $assignment->load(['items.product', 'member']);
+            $member = $assignment->member;
+            abort_unless($member, 422, __('The assignment has no agent.'));
+
+            $depot = KamsDepot::query()->findOrFail($assignment->depot_id);
+            $seller = $this->sellerLocation($member);
+            $note = __('Deletion of assignment :ref', ['ref' => $assignment->reference]);
+
+            foreach ($assignment->items as $line) {
+                if (! $line->product) {
+                    continue;
+                }
+                // Open: full qty still with seller. Closed: returned already at depot; sold+lost remain with seller.
+                $onSeller = $assignment->status === 'open'
+                    ? (int) $line->quantity_out
+                    : max(0, (int) $line->quantity_out - (int) $line->quantity_returned);
+                if ($onSeller <= 0) {
+                    continue;
+                }
+                $this->changeBalance($seller, $line->product, -$onSeller, 'available');
+                $this->changeBalance($depot, $line->product, $onSeller, 'available');
+                $this->recordMovement(
+                    $line->product,
+                    $onSeller,
+                    'return',
+                    $userId,
+                    $seller->id,
+                    $depot->id,
+                    $assignment,
+                    $member->id,
+                    $note,
+                    'available',
+                    $userId,
+                    (float) $line->unit_cost,
+                );
+                $this->syncProductStock($line->product);
+            }
+
+            KamsStockMovement::query()
+                ->where('reference_type', KamsStockAssignment::class)
+                ->where('reference_id', $assignment->id)
+                ->delete();
+
+            KamsStockAssignmentItem::query()->where('assignment_id', $assignment->id)->delete();
+            $assignment->delete();
         });
     }
 
@@ -502,8 +588,16 @@ class StockInventory
     /**
      * @param  list<array{product_id:int, quantity:int}>  $items
      */
-    public function sell(KamsMember $member, array $items, ?int $clientId, ?string $clientName, float $paidAmount, ?int $userId, ?string $notes = null): KamsStockSale
-    {
+    public function sell(
+        KamsMember $member,
+        array $items,
+        ?int $clientId,
+        ?string $clientName,
+        float $paidAmount,
+        ?int $userId,
+        ?string $notes = null,
+        ?KamsStockAssignment $assignment = null,
+    ): KamsStockSale {
         abort_unless($items !== [], 422, __('Add at least one product.'));
         $seller = $this->sellerLocation($member);
         $office = Office::query()->findOrFail($member->office_id);
@@ -511,11 +605,12 @@ class StockInventory
         $client = $clientId ? KamsClient::query()->find($clientId) : null;
         $manager = $this->savings->resolveManager($member);
 
-        return DB::transaction(function () use ($member, $items, $client, $clientName, $paidAmount, $userId, $notes, $seller, $depot, $manager) {
+        return DB::transaction(function () use ($member, $items, $client, $clientName, $paidAmount, $userId, $notes, $seller, $depot, $manager, $assignment) {
             $sale = KamsStockSale::query()->create([
                 'company_id' => $member->company_id,
                 'reference' => KamsDocumentRefs::invoice(),
                 'member_id' => $member->id,
+                'assignment_id' => $assignment?->id,
                 'manager_member_id' => $manager?->id,
                 'depot_id' => $depot->id,
                 'client_id' => $client?->id,
@@ -1003,6 +1098,229 @@ class StockInventory
     }
 
     /**
+     * Delete a settled day report: reverse sales/compensation for that date and reopen assignments.
+     *
+     * @param  list<int>|null  $officeIds
+     * @return array{deleted_assignments: int, voided_sales: int, date: string}
+     */
+    public function deleteDayReport(?int $companyId, string $date, ?int $officeId = null, ?array $officeIds = null): array
+    {
+        return DB::transaction(function () use ($companyId, $date, $officeId, $officeIds) {
+            $assignments = KamsStockAssignment::query()
+                ->with(['items.product', 'member'])
+                ->where('status', 'settled')
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->when($officeId, fn ($q) => $q->where('office_id', $officeId))
+                ->when($officeIds !== null, fn ($q) => $q->whereIn('office_id', $officeIds))
+                ->whereDate('settled_at', $date)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            abort_if($assignments->isEmpty(), 422, __('Aucun rapport d\'affectation à supprimer pour cette date.'));
+
+            $voidedSales = 0;
+            foreach ($assignments as $assignment) {
+                $voidedSales += $this->unsettleAssignment($assignment);
+            }
+
+            KamsDailySettlement::query()
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->when($officeId, fn ($q) => $q->where('office_id', $officeId))
+                ->when($officeIds !== null, fn ($q) => $q->whereIn('office_id', $officeIds))
+                ->whereDate('settled_on', $date)
+                ->delete();
+
+            return [
+                'deleted_assignments' => $assignments->count(),
+                'voided_sales' => $voidedSales,
+                'date' => $date,
+            ];
+        });
+    }
+
+    private function unsettleAssignment(KamsStockAssignment $assignment): int
+    {
+        abort_unless($assignment->status === 'settled', 422, __('Only settled assignment reports can be deleted.'));
+
+        $sales = $this->salesForAssignment($assignment);
+        foreach ($sales as $sale) {
+            $this->voidSale($sale);
+        }
+
+        $this->deleteLedgerSources(KamsStockAssignment::class, [(int) $assignment->id]);
+
+        $member = $assignment->member;
+        if ($member) {
+            $seller = $this->sellerLocation($member);
+            foreach ($assignment->items as $line) {
+                $lost = (int) $line->quantity_lost;
+                if ($lost <= 0 || ! $line->product) {
+                    continue;
+                }
+                $this->changeBalance($seller, $line->product, -$lost, 'damaged');
+                $this->changeBalance($seller, $line->product, $lost, 'available');
+                $this->syncProductStock($line->product);
+            }
+        }
+
+        $assignment->update([
+            'status' => 'closed',
+            'settled_at' => null,
+            'day_closed_by' => null,
+        ]);
+
+        return $sales->count();
+    }
+
+    /**
+     * @return Collection<int, KamsStockSale>
+     */
+    private function salesForAssignment(KamsStockAssignment $assignment): Collection
+    {
+        $linked = KamsStockSale::query()
+            ->with(['items.product', 'member', 'commission', 'revenueShares'])
+            ->where('assignment_id', $assignment->id)
+            ->get();
+        if ($linked->isNotEmpty()) {
+            return $linked;
+        }
+
+        $expected = [];
+        foreach ($assignment->items as $line) {
+            $sold = max(0, (int) $line->quantity_out - (int) $line->quantity_returned - (int) $line->quantity_lost);
+            if ($sold <= 0) {
+                continue;
+            }
+            $expected[(int) $line->product_id] = ($expected[(int) $line->product_id] ?? 0) + $sold;
+        }
+        if ($expected === [] || ! $assignment->member_id || ! $assignment->settled_at) {
+            return collect();
+        }
+
+        ksort($expected);
+
+        return KamsStockSale::query()
+            ->with(['items.product', 'member', 'commission', 'revenueShares'])
+            ->where('member_id', $assignment->member_id)
+            ->whereDate('sold_at', $assignment->settled_at->toDateString())
+            ->where(function ($q) use ($assignment) {
+                $q->whereNull('assignment_id')->orWhere('assignment_id', $assignment->id);
+            })
+            ->orderBy('id')
+            ->get()
+            ->filter(function (KamsStockSale $sale) use ($expected) {
+                $got = [];
+                foreach ($sale->items as $item) {
+                    $got[(int) $item->product_id] = ($got[(int) $item->product_id] ?? 0) + (int) $item->quantity;
+                }
+                ksort($got);
+
+                return $got === $expected;
+            })
+            ->values();
+    }
+
+    private function voidSale(KamsStockSale $sale): void
+    {
+        abort_if(
+            KamsStockReturn::query()->where('sale_id', $sale->id)->exists(),
+            422,
+            __('Impossible de supprimer ce rapport : une vente liée a déjà un retour (:ref).', ['ref' => $sale->reference]),
+        );
+        abort_if(
+            $sale->commission && $sale->commission->status === 'paid',
+            422,
+            __('Impossible de supprimer ce rapport : une commission a déjà été payée (:ref).', ['ref' => $sale->reference]),
+        );
+
+        $shareIds = KamsRevenueShare::query()->where('sale_id', $sale->id)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->deleteLedgerSources(KamsStockSale::class, [(int) $sale->id]);
+        if ($shareIds !== []) {
+            $this->deleteLedgerSources(KamsRevenueShare::class, $shareIds);
+        }
+
+        KamsTreasuryEntry::query()
+            ->where('notes', 'like', '%'.$sale->reference.'%')
+            ->get()
+            ->each(function (KamsTreasuryEntry $entry) {
+                $accountId = (int) $entry->account_id;
+                $entry->delete();
+                $account = KamsTreasuryAccount::query()->find($accountId);
+                if ($account) {
+                    app(TreasuryLedger::class)->refreshBalance($account);
+                }
+            });
+
+        KamsRevenueShare::query()->where('sale_id', $sale->id)->delete();
+        KamsSellerCommission::query()->where('sale_id', $sale->id)->delete();
+
+        $member = $sale->member;
+        if ($member) {
+            $seller = $this->sellerLocation($member);
+            foreach ($sale->items as $item) {
+                if (! $item->product) {
+                    continue;
+                }
+                $this->changeBalance($seller, $item->product, (int) $item->quantity, 'available');
+                $this->syncProductStock($item->product);
+            }
+        }
+
+        KamsStockMovement::query()
+            ->where('reference_type', KamsStockSale::class)
+            ->where('reference_id', $sale->id)
+            ->delete();
+
+        KamsStockSaleItem::query()->where('sale_id', $sale->id)->delete();
+        $sale->delete();
+    }
+
+    /**
+     * @param  list<int>  $sourceIds
+     */
+    private function deleteLedgerSources(string $sourceType, array $sourceIds): void
+    {
+        if ($sourceIds === []) {
+            return;
+        }
+
+        $entries = KamsSavingsEntry::query()
+            ->where('source_type', $sourceType)
+            ->whereIn('source_id', $sourceIds)
+            ->get();
+        if ($entries->isEmpty()) {
+            return;
+        }
+
+        $accountIds = $entries->pluck('account_id')->unique()->filter()->all();
+        $treasury = KamsTreasuryEntry::query()
+            ->whereIn('savings_entry_id', $entries->pluck('id')->all())
+            ->get();
+        $treasuryAccountIds = $treasury->pluck('account_id')->unique()->filter()->all();
+
+        foreach ($treasury as $entry) {
+            $entry->delete();
+        }
+        foreach ($entries as $entry) {
+            $entry->delete();
+        }
+
+        foreach ($accountIds as $accountId) {
+            $account = KamsSavingsAccount::query()->find($accountId);
+            if ($account) {
+                $this->savings->refreshBalance($account);
+            }
+        }
+        foreach ($treasuryAccountIds as $accountId) {
+            $account = KamsTreasuryAccount::query()->find($accountId);
+            if ($account) {
+                app(TreasuryLedger::class)->refreshBalance($account);
+            }
+        }
+    }
+
+    /**
      * Move returned quantities from the seller location back to the office depot at agent close.
      */
     private function returnClosedStockToDepot(KamsStockAssignment $assignment, ?int $userId, ?string $notes = null): void
@@ -1179,7 +1497,7 @@ class StockInventory
 
             $sale = null;
             if ($saleLines !== []) {
-                $sale = $this->sell($member, $saleLines, null, null, $salePayment, $userId, $notes);
+                $sale = $this->sell($member, $saleLines, null, null, $salePayment, $userId, $notes, $assignment);
             }
             // Returns are posted at agent close; keep this path for older closed assignments.
             if ($returnLines !== [] && ! $this->assignmentReturnsPosted($assignment)) {

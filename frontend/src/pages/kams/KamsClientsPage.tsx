@@ -2,12 +2,15 @@ import { Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2 } from
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Outlet, Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
 import { initials } from '../../lib/format'
@@ -134,7 +137,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   }
 
   const load = (term = query) => {
-    setLoading(true)
+    const stop = trackLoadSpinner(setLoading)
     return api.get('/modules/kams/clients', {
       params: {
         per_page: 50,
@@ -143,7 +146,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
         ...(!isSupplier && officeId ? { office_id: officeId } : {}),
         ...(term ? { search: term } : {}),
       },
-    }).then((res) => setRows(res.data.data ?? [])).finally(() => setLoading(false))
+    }).then((res) => setRows(res.data.data ?? [])).finally(stop)
   }
 
   useEffect(() => {
@@ -173,6 +176,8 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   useEffect(() => {
     void load()
   }, [status, query, kind, officeId])
+
+  useLiveData(() => load(query))
 
   useEffect(() => {
     api.get('/modules/kams/clients/lookups').then((res) => {
@@ -377,19 +382,11 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
       <p className="mb-4 text-sm text-muted">{labels.hint}</p>
       <div className="mb-4 flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
         {!isSupplier && showOfficeFilter ? (
-          <select
-            className="min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:w-56"
+          <OfficeFilterSelect
             value={officeId}
-            aria-label={t('kams.filterOffice')}
+            offices={offices}
             onChange={(e) => setOfficeId(e.target.value)}
-          >
-            <option value="">{t('kams.allOffices')}</option>
-            {offices.map((office) => (
-              <option key={office.id} value={office.id}>
-                {office.name}{office.code ? ` · ${office.code}` : ''}
-              </option>
-            ))}
-          </select>
+          />
         ) : null}
         <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />

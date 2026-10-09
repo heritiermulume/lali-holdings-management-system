@@ -11,7 +11,27 @@ class EnsurePermission
     public function handle(Request $request, Closure $next, string ...$permissions): Response
     {
         $user = $request->user();
-        $allowed = $user && collect($permissions)->contains(fn (string $permission) => $user->hasPermission($permission));
+
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => __('You are not authorized to perform this action.'),
+            ], 403);
+        }
+
+        // Always re-read role permissions from the DB so role edits apply without waiting for a new login.
+        $user->refreshAccessRelations();
+
+        if (! $user->is_active) {
+            return response()->json([
+                'success' => false,
+                'message' => __('This account is inactive.'),
+            ], 403);
+        }
+
+        $allowed = collect($permissions)->contains(
+            fn (string $permission) => $user->hasPermission($permission)
+        );
 
         if (! $allowed) {
             return response()->json([

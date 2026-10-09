@@ -19,10 +19,14 @@ import {
   ScrollText,
   type LucideIcon,
 } from 'lucide-react'
-import { Badge, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { PaginationButtons } from '../../components/PaginationButtons'
+import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { withBusy } from '../../lib/busy'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { initials } from '../../lib/format'
 import type { OperationsOfficeFilter } from './KamsStockFlows'
@@ -212,6 +216,7 @@ function JournalDetail({ entry, locale }: { entry: JournalEntry; locale: string 
 
 export function KamsStockJournal() {
   const { t, i18n } = useTranslation()
+  const { hasPermission } = useAuth()
   const { officeId } = useOutletContext<OperationsOfficeFilter>()
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
   const [rows, setRows] = useState<JournalEntry[]>([])
@@ -225,6 +230,10 @@ export function KamsStockJournal() {
   const [lastPage, setLastPage] = useState(1)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [selected, setSelected] = useState<JournalEntry | null>(null)
+  const [deleting, setDeleting] = useState<JournalEntry | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+  const canDelete = hasPermission('kams.stock.journal.delete')
   const hasRows = rows.length > 0
   const formatFilterDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
   const periodLabel = from && to
@@ -243,10 +252,9 @@ export function KamsStockJournal() {
     return () => window.clearTimeout(timer)
   }, [search])
 
-  useEffect(() => {
-    let active = true
-    setLoading(true)
-    api.get('/modules/kams/stock/journal', {
+  const load = () => {
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/modules/kams/stock/journal', {
       params: {
         page,
         per_page: 20,
@@ -257,22 +265,40 @@ export function KamsStockJournal() {
         ...(officeId ? { office_id: officeId } : {}),
       },
     }).then((res) => {
-      if (!active) return
       startTransition(() => {
         setRows(res.data.data || [])
         setLastPage(res.data.meta?.last_page || 1)
       })
     }).catch(() => {
-      if (!active) return
       startTransition(() => {
         setRows([])
         setLastPage(1)
       })
-    }).finally(() => {
-      if (active) setLoading(false)
-    })
-    return () => { active = false }
-  }, [page, query, action, from, to, officeId])
+    }).finally(stop)
+  }
+
+  useEffect(() => {
+    void load()
+  }, [page, query, action, from, to, officeId, reloadKey])
+
+  useLiveData(load)
+
+  const confirmDelete = async () => {
+    if (!deleting) return
+    const entry = deleting
+    setDeleteError('')
+    try {
+      await withBusy('data', async () => {
+        await api.delete(`/modules/kams/stock/journal/${entry.id}`)
+      })
+      setDeleting(null)
+      if (selected?.id === entry.id) setSelected(null)
+      setReloadKey((value) => value + 1)
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { message?: string } } })?.response?.data?.message
+      setDeleteError(message || t('common.alertError'))
+    }
+  }
 
   const groups = useMemo(() => {
     const map = new Map<string, JournalEntry[]>()
@@ -412,7 +438,7 @@ export function KamsStockJournal() {
                             ) : null}
                           </div>
 
-                          <div className="ml-auto flex shrink-0 items-center gap-3">
+                          <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
                             <div className="hidden text-right sm:block">
                               <div className="text-sm font-semibold text-ink">{formatClock(row.created_at, locale)}</div>
                               {row.ip_address ? <div className="mt-0.5 text-[11px] text-muted">{row.ip_address}</div> : null}
@@ -426,6 +452,17 @@ export function KamsStockJournal() {
                                 <div className="text-[11px] text-muted sm:hidden">{formatClock(row.created_at, locale)}</div>
                               </div>
                             </div>
+                            {canDelete ? (
+                              <button
+                                type="button"
+                                aria-label={t('kams.deleteJournalEntry')}
+                                title={t('kams.deleteJournalEntry')}
+                                className="grid h-9 w-9 place-items-center rounded-xl text-danger hover:bg-danger/10"
+                                onClick={() => { setDeleteError(''); setDeleting(row) }}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -444,9 +481,25 @@ export function KamsStockJournal() {
         size="lg"
         onClose={() => setSelected(null)}
       >
-        {selected ? (
-          <JournalDetail entry={selected} locale={locale} />
-        ) : null}
+        {selected ? <JournalDetail entry={selected} locale={locale} /> : null}
+      </Modal>
+
+      <Modal open={Boolean(deleting)} title={t('kams.deleteJournalEntry')} onClose={() => { setDeleting(null); setDeleteError('') }}>
+        <div className="space-y-4">
+          <p className="text-sm text-muted">{t('kams.deleteJournalEntryConfirm')}</p>
+          {deleting ? (
+            <p className="text-sm font-semibold">
+              {deleting.subject && !/^#\d+$/.test(deleting.subject)
+                ? deleting.subject
+                : t(`kams.journalEvents.${deleting.event}`, { defaultValue: deleting.event })}
+            </p>
+          ) : null}
+          {deleteError ? <p className="text-sm text-danger">{deleteError}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => { setDeleting(null); setDeleteError('') }}>{t('common.cancel')}</Button>
+            <Button variant="danger" onClick={() => void confirmDelete()}>{t('common.delete')}</Button>
+          </div>
+        </div>
       </Modal>
 
       {lastPage > 1 ? (

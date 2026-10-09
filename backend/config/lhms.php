@@ -21,5 +21,9 @@ return [
         'real-estate' => App\Modules\RealEstate\RealEstateModule::class,
         'rice-mills' => App\Modules\RiceMills\RiceMillsModule::class,
         'lali-tv' => App\Modules\LaliTv\LaliTvModule::class,
+        'machinery-fleet' => App\Modules\MachineryFleet\MachineryFleetModule::class,
+        'kibiti-agribusiness' => App\Modules\KibitiAgribusiness\KibitiAgribusinessModule::class,
+        'properties-magomeni' => App\Modules\PropertiesMagomeni\PropertiesMagomeniModule::class,
+        'agribusiness-park-kisegese' => App\Modules\AgribusinessParkKisegese\AgribusinessParkKisegeseModule::class,
     ],
 ];

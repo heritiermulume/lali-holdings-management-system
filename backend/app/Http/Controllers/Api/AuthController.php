@@ -60,7 +60,11 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return $this->ok($this->presentUser($request->user()));
+        $user = $request->user();
+        // Ensure /auth/me always reflects the latest role permissions (SPA polls this).
+        $user->refreshAccessRelations();
+
+        return $this->ok($this->presentUser($user));
     }
 
     public function updateProfile(Request $request): JsonResponse
@@ -262,6 +266,7 @@ class AuthController extends Controller
             'locale' => $user->locale,
             'timezone' => $user->timezone,
             'is_active' => $user->is_active,
+            'is_certified' => (bool) $user->is_certified,
             'primary_company' => $user->primaryCompany,
             'primary_office' => $user->primaryOffice,
             'roles' => $user->roles->map(fn ($role) => [

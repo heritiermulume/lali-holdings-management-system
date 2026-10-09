@@ -50,6 +50,17 @@ trait HasLhmsPermissions
         return $this->hasFullAccess();
     }
 
+    /**
+     * Reload roles/permissions from the database so revoked grants apply on the next check.
+     */
+    public function refreshAccessRelations(): static
+    {
+        $this->unsetRelation('roles');
+        $this->load(['roles.permissions']);
+
+        return $this;
+    }
+
     public function hasPermission(string $slug): bool
     {
         if ($this->hasFullAccess()) {

@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import { Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { compact, money } from '../../lib/format'
@@ -104,18 +105,22 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
   const [to, setTo] = useState(initial.to)
   const [data, setData] = useState<Payload | null>(null)
 
-  useEffect(() => {
+  const load = () => {
     if (!from || !to) return
-    let active = true
-    api.get('/dashboard/module-performance', {
+    return api.get('/dashboard/module-performance', {
       params: { group_by: period, from, to, module: slug || undefined },
     }).then((res) => {
-      if (active) setData(res.data.data)
+      setData(res.data.data)
     }).catch(() => {
-      if (active) setData({ group_by: period, range: { from, to }, currency: '', modules: [] })
+      setData({ group_by: period, range: { from, to }, currency: '', modules: [] })
     })
-    return () => { active = false }
+  }
+
+  useEffect(() => {
+    void load()
   }, [period, from, to, slug])
+
+  useLiveData(load, { enabled: Boolean(from && to) })
 
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)

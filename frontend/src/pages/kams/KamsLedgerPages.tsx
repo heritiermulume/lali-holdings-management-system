@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { money } from '../../lib/format'
 
@@ -26,9 +27,13 @@ export function KamsHierarchy() {
     savings: { guys: number; managers: number }
   } | null>(null)
 
+  const load = () => api.get('/modules/kams/stock/hierarchy').then((res) => setData(res.data.data))
+
   useEffect(() => {
-    api.get('/modules/kams/stock/hierarchy').then((res) => setData(res.data.data))
+    void load()
   }, [])
+
+  useLiveData(load)
 
   if (!data) return <LoadingScreen />
 
@@ -92,9 +97,13 @@ export function KamsSavings() {
     entries?: Array<{ id: number; type: string; amount: number; occurred_on?: string | null; notes?: string | null }>
   }>>([])
 
+  const load = () => api.get('/modules/kams/stock/savings', { params: { kind } }).then((res) => setRows(res.data.data || []))
+
   useEffect(() => {
-    api.get('/modules/kams/stock/savings', { params: { kind } }).then((res) => setRows(res.data.data || []))
+    void load()
   }, [kind])
+
+  useLiveData(load)
 
   return (
     <div>
@@ -151,6 +160,7 @@ export function KamsDailyMaster() {
   const load = () => api.get('/modules/kams/stock/daily-settlements', { params: { date } }).then((res) => setData(res.data.data))
 
   useEffect(() => { void load() }, [date])
+  useLiveData(load)
 
   const close = async (event: FormEvent) => {
     event.preventDefault()

@@ -177,7 +177,10 @@ class KamsResourceController extends Controller
                     'office:id,name,code,city_id',
                     'office.city:id,name',
                     'province:id,name,name_fr',
-                    'balances.product:id,name,sku,price,cost,avg_cost,field_price,manager_price,company_price,image_path,stock',
+                    // company_id + tax_exempt required for sale_price (catalog + country tax config)
+                    'balances.product:id,company_id,name,sku,price,cost,avg_cost,field_price,manager_price,company_price,tax_exempt,image_path,stock',
+                    'balances.product.company:id,country_id',
+                    'balances.product.company.country:id,tax_rate,tax_name',
                 ]),
                 $request
             )->latest()->paginate($request->integer('per_page', 50))
@@ -344,6 +347,7 @@ class KamsResourceController extends Controller
         $data['manager_price'] = $purchase;
         $data['avg_cost'] = $purchase;
         $data['seller_share_percent'] = $data['seller_share_percent'] ?? 0;
+        $data['manager_share_percent'] = $data['manager_share_percent'] ?? 20;
         $data['stock'] = 0;
         $data['status'] = $data['status'] ?? 'active';
 
@@ -675,14 +679,21 @@ class KamsResourceController extends Controller
         }
 
         if ($table === 'kams_depots') {
-            if ($request->filled('kind')) {
-                $query->where('kind', $request->string('kind')->toString());
+            $kind = $request->filled('kind') ? $request->string('kind')->toString() : null;
+            if ($kind) {
+                $query->where('kind', $kind);
             } else {
                 $query->where('kind', '!=', 'seller');
             }
-            // Office depots follow access; regional warehouses stay visible unless office-scoped.
+            // Regional warehouses are company-level (office_id null). Office-scoped managers
+            // with warehouses.view must still see them; only office depots are office-filtered.
             if ($request->user()->isOfficeScoped() || $request->filled('office_id')) {
-                $this->applyOfficeIds($query, $officeState);
+                $officeIds = $officeState['office_ids'] ?? [];
+                if ($officeIds !== [] && $kind !== 'warehouse') {
+                    $query->where(function ($q) use ($officeIds) {
+                        $q->whereIn('office_id', $officeIds)->orWhere('kind', 'warehouse');
+                    });
+                }
             }
         }
 

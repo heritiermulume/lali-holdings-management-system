@@ -6,8 +6,10 @@ import { LoadingScreen } from '../components/LoadingScreen'
 import { WorldCountryCombobox } from '../components/WorldCountryCombobox'
 import { useAuth } from '../context/AuthContext'
 import type { WorldCountry } from '../data/worldCountries'
+import { useLiveData } from '../hooks/useLiveData'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
+import { trackLoadSpinner } from '../lib/dataSync'
 
 type Row = Record<string, unknown> & {
   id: number
@@ -63,8 +65,8 @@ export function OrganizationPage() {
   const canEditTab = editableTabs.has(tab)
 
   const load = () => {
-    setLoading(true)
-    Promise.all([
+    const stop = trackLoadSpinner(setLoading)
+    return Promise.all([
       api.get(`/${tab}`, { params: { per_page: 50 } }).then((res) => setRows(res.data.data)),
       api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data)),
       api.get('/provinces', { params: { per_page: 100 }, skipBusy: true }).then((res) => setProvinces(res.data.data)),
@@ -77,12 +79,14 @@ export function OrganizationPage() {
         }
         setCurrencyMap(map)
       }).catch(() => setCurrencyMap({})),
-    ]).finally(() => setLoading(false))
+    ]).finally(stop)
   }
 
   useEffect(() => {
-    load()
+    void load()
   }, [tab])
+
+  useLiveData(load)
 
   const needsNameFr = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'
   const needsCode = tab === 'provinces' || tab === 'cities' || tab === 'communes' || tab === 'neighborhoods'

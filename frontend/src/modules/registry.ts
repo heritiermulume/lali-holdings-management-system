@@ -4,17 +4,21 @@ import {
   Crown,
   Globe2,
   Gem,
+  Home,
   Landmark,
   LayoutDashboard,
   Settings,
   Shield,
   SlidersHorizontal,
+  Sprout,
+  Trees,
   Truck,
   Tv,
   UserCog,
   Users,
   Warehouse,
   Wheat,
+  Wrench,
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 
@@ -131,6 +135,10 @@ const businessIcons: Record<string, LucideIcon> = {
   'real-estate': Building2,
   'rice-mills': Wheat,
   'lali-tv': Tv,
+  'machinery-fleet': Wrench,
+  'kibiti-agribusiness': Sprout,
+  'properties-magomeni': Home,
+  'agribusiness-park-kisegese': Trees,
 }
 
 export function businessModuleIcon(slug: string): LucideIcon {

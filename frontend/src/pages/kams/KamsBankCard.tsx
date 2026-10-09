@@ -11,6 +11,7 @@ type KamsBankCardProps = {
   balance: number
   pending?: number
   pendingDeposits?: number
+  pendingDepositsLabel?: string
   kind?: CardKind
   className?: string
 }
@@ -48,19 +49,21 @@ export function KamsBankCard({
   balance,
   pending = 0,
   pendingDeposits = 0,
+  pendingDepositsLabel,
   kind = 'member',
   className,
 }: KamsBankCardProps) {
   const { t } = useTranslation()
   const look = kindStyles[kind]
+  const depositsLabel = pendingDepositsLabel || t('kams.pendingDeposits')
 
   return (
-    <div className={cn('relative box-border h-56 w-full max-w-sm overflow-hidden rounded-[1.4rem] bg-gradient-to-br p-4 text-white', look.card, className)}>
+    <div className={cn('relative box-border flex min-h-56 w-full max-w-sm flex-col overflow-hidden rounded-[1.4rem] bg-gradient-to-br p-4 text-white', look.card, className)}>
       <div className="pointer-events-none absolute -right-12 -top-16 h-44 w-44 rounded-full bg-white/10" />
       <div className={cn('pointer-events-none absolute -bottom-20 -left-10 h-40 w-40 rounded-full', look.blob)} />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,transparent_18%,rgba(255,255,255,0.14)_46%,transparent_72%)]" />
 
-      <div className="relative flex h-full min-w-0 flex-col justify-between">
+      <div className="relative flex min-h-0 flex-1 flex-col justify-between gap-2">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/15">
@@ -87,13 +90,13 @@ export function KamsBankCard({
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">{t('kams.balance')}</div>
           <div className="mt-0.5 truncate text-2xl font-extrabold tabular-nums">{money(balance)}</div>
           {pending > 0 ? (
-            <div className="mt-1 truncate text-[11px] text-amber-200">
+            <div className="mt-1 truncate text-[11px] font-medium text-amber-200">
               {t('kams.pendingWithdrawals')}: {money(pending)}
             </div>
           ) : null}
           {pendingDeposits > 0 ? (
-            <div className="mt-1 truncate text-[11px] text-amber-200">
-              {t('kams.pendingDeposits')}: {money(pendingDeposits)}
+            <div className="mt-1 truncate text-[11px] font-semibold text-amber-200">
+              {depositsLabel}: {money(pendingDeposits)}
             </div>
           ) : null}
         </div>

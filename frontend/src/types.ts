@@ -19,6 +19,7 @@ export type User = {
   locale: string
   timezone: string
   is_active: boolean
+  is_certified?: boolean
   roles: Role[]
   permissions: string[]
   is_super_admin: boolean

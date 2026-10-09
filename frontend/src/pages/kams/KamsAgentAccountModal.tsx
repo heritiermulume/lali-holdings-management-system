@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { Button, Empty, Field, Modal } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { money, roleLabel } from '../../lib/format'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
 import { KamsBankCard } from './KamsBankCard'
@@ -41,6 +43,8 @@ type Account = {
   deposits: number
   withdrawals: number
   expenses: number
+  split_accounts?: boolean
+  accounts?: Array<{ kind: string; balance: number }>
   entries: Entry[]
   can_post_deposit?: boolean
   can_post_withdraw?: boolean
@@ -75,12 +79,12 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
   const [hasPrintableRows, setHasPrintableRows] = useState(false)
 
   const load = (id?: number | '') => {
-    setLoading(true)
+    const stop = trackLoadSpinner(setLoading)
     setError('')
     const params: Record<string, number> = {}
     if (id) params.member_id = Number(id)
     if (officeId) params.office_id = officeId
-    api.get('/modules/kams/finance/account', { params })
+    return api.get('/modules/kams/finance/account', { params })
       .then((res) => {
         setMissing(!res.data.data)
         const next = (res.data.data || null) as Account | null
@@ -91,7 +95,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
         setMissing(true)
         setData(null)
       })
-      .finally(() => setLoading(false))
+      .finally(stop)
   }
 
   useEffect(() => {
@@ -104,8 +108,10 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
       setNotes('')
       return
     }
-    load(initialMemberId || '')
+    void load(initialMemberId || '')
   }, [open, initialMemberId, officeId])
+
+  useLiveData(() => load(memberId || initialMemberId || ''), { enabled: open })
 
   const available = Math.max(0, (data?.balance ?? 0) - (data?.pending_withdrawals ?? 0))
   const withdrawTooHigh = action === 'withdraw' && amount !== '' && Number(amount) > available + 0.001
@@ -216,6 +222,8 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                 subtitle={data.member.full_name}
                 entries={data.entries}
                 showMember={false}
+                showProvenance={Boolean(data.split_accounts)}
+                provenanceKinds={data.split_accounts ? ['salary', 'percentage'] : []}
                 onDecide={data.can_decide && hasPermission('kams.finance.company.approve') ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
                 onRowsChange={(count) => setHasPrintableRows(count > 0)}
               />
@@ -246,7 +254,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
           />
           <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} />
           <Button type="submit" className="w-full" disabled={saving || withdrawTooHigh}>
-            {saving ? t('common.loading') : t('common.save')}
+            {saving ? t('common.loading') : t('common.send')}
           </Button>
         </form>
       </Modal>

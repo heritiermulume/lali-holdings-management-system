@@ -274,20 +274,24 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
               'kams.assignments',
               'Assignments',
               leaves(byExact(kams, 'kams.stock.assignments.view')),
-              leaves(byExact(kams, 'kams.stock.update'), true),
+              [
+                ...leaves(byExact(kams, 'kams.stock.update'), true),
+                ...actionLeavesOnly(kams, 'kams.stock.assignments', ['delete'], true),
+              ],
             ),
             pageSection(
               'kams.stock.reports',
               'kams.assignmentReports',
               'Reports',
               leaves(byExact(kams, 'kams.stock.reports.view')),
-              actionLeavesOnly(kams, 'kams.stock.reports', ['print', 'preview'], true),
+              actionLeavesOnly(kams, 'kams.stock.reports', ['print', 'preview', 'delete'], true),
             ),
             pageSection(
               'kams.stock.journal',
               'kams.stockJournal',
               'Journal',
               leaves(byExact(kams, 'kams.stock.journal.view')),
+              actionLeavesOnly(kams, 'kams.stock.journal', ['delete'], true),
             ),
           ].filter(Boolean) as PermissionNode[],
         ),
@@ -493,8 +497,14 @@ function areaViewSlugs(permission: Permission): string[] {
   if (slug.startsWith('kams.finance.company.') && !isViewPermission(permission)) {
     return ['kams.finance.company.view']
   }
+  if (slug.startsWith('kams.stock.assignments.') && !isViewPermission(permission)) {
+    return ['kams.stock.assignments.view']
+  }
   if (slug.startsWith('kams.stock.reports.') && !isViewPermission(permission)) {
     return ['kams.stock.reports.view']
+  }
+  if (slug.startsWith('kams.stock.journal.') && !isViewPermission(permission)) {
+    return ['kams.stock.journal.view']
   }
   if (slug === 'kams.products.view') {
     return ['kams.stock.warehouses.view', 'kams.stock.depots.view']

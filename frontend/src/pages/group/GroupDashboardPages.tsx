@@ -28,15 +28,18 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Badge, Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { PresenceMap, type PresenceCountry } from '../../components/PresenceMap'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import { canAccessModule } from '../../lib/access'
 import { cn } from '../../lib/cn'
 import { compact, greetingKey, money, roleLabel } from '../../lib/format'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { KamsDashboard } from '../kams/KamsPages'
 import { ModuleOfficePerformance } from './ModuleOfficePerformance'
 import type { SystemModule } from '../../types'
@@ -61,7 +64,11 @@ type OperationsBlock = {
   products: number
   sales_count: number
   sold_units: number
+  depot_units: number
+  warehouse_units: number
   inventory_units: number
+  depot_value?: number
+  warehouse_value?: number
   inventory_value: number
   commissions_payable: number
 }
@@ -262,11 +269,10 @@ function useGroupDashboard() {
   const [failed, setFailed] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const load = () => {
     if (!from || !to) return
-    let active = true
-    setLoading(true)
-    api.get('/dashboard', {
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/dashboard', {
       params: {
         group_by: period,
         from,
@@ -276,7 +282,6 @@ function useGroupDashboard() {
       },
     })
       .then((res) => {
-        if (!active) return
         const payload = res.data.data as DashboardData
         setData(payload)
         const offices = payload.scope?.offices || []
@@ -286,14 +291,16 @@ function useGroupDashboard() {
         setFailed(false)
       })
       .catch(() => {
-        if (!active) return
         setFailed(true)
       })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => { active = false }
+      .finally(stop)
+  }
+
+  useEffect(() => {
+    void load()
   }, [period, from, to, companyId, officeId])
+
+  useLiveData(load, { enabled: Boolean(from && to) })
 
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)
@@ -364,20 +371,17 @@ function ScopeFilters({
             </select>
           </label>
           {data.scope.offices.length > 1 ? (
-            <label className="block text-sm">
-              <span className="mb-1.5 block font-medium text-muted">{t('groupDash.scopeOffice')}</span>
-              <select
-                className="min-h-11 w-full max-w-full rounded-xl border border-line bg-white px-3 text-sm disabled:opacity-50"
-                value={officeId}
+            <div className="flex items-end">
+              <OfficeFilterSelect
+                className="w-full sm:w-full"
+                label={t('groupDash.scopeOffice')}
+                allLabel={t('groupDash.allOffices')}
+                value={officeId === '' ? '' : String(officeId)}
                 disabled={!companyId}
+                offices={data.scope.offices}
                 onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
-              >
-                <option value="">{t('groupDash.allOffices')}</option>
-                {data.scope.offices.map((office) => (
-                  <option key={office.id} value={office.id}>{office.name}</option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
           ) : null}
         </div>
 
@@ -559,12 +563,15 @@ export function GroupOverviewPage() {
         <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
           <KpiCard label={t('groupDash.ops.sales')} value={String(data.operations?.sales_count ?? 0)} delta={data.operations_delta?.sales_count} />
           <KpiCard label={t('groupDash.ops.soldUnits')} value={String(data.operations?.sold_units ?? 0)} delta={data.operations_delta?.sold_units} />
+          <KpiCard label={t('groupDash.ops.officeStock')} value={String(data.operations?.depot_units ?? 0)} delta={data.operations_delta?.depot_units} />
+          {!data.scope.office_id ? (
+            <KpiCard label={t('groupDash.ops.warehouseStock')} value={String(data.operations?.warehouse_units ?? 0)} delta={data.operations_delta?.warehouse_units} />
+          ) : null}
           <KpiCard label={t('groupDash.ops.inventoryValue')} value={money(data.operations?.inventory_value, currency)} delta={data.operations_delta?.inventory_value} />
           <KpiCard label={t('groupDash.ops.commissions')} value={money(data.operations?.commissions_payable, currency)} delta={data.operations_delta?.commissions_payable} tone="accent" />
           <KpiCard label={t('groupDash.ops.agents')} value={String(data.operations?.agents ?? 0)} />
           <KpiCard label={t('groupDash.ops.clients')} value={String(data.operations?.clients ?? 0)} />
           <KpiCard label={t('groupDash.ops.products')} value={String(data.operations?.products ?? 0)} />
-          <KpiCard label={t('groupDash.ops.inventoryUnits')} value={String(data.operations?.inventory_units ?? 0)} />
         </div>
       </div>
 
@@ -924,6 +931,10 @@ const moduleKpis: Record<string, string[]> = {
   'real-estate': ['properties', 'occupancy', 'leases', 'rent'],
   'rice-mills': ['production', 'stock', 'shipments', 'yield'],
   'lali-tv': ['programs', 'audience', 'ads', 'broadcast'],
+  'machinery-fleet': ['fleet', 'service', 'utilization', 'alerts'],
+  'kibiti-agribusiness': ['plots', 'harvest', 'stock', 'yield'],
+  'properties-magomeni': ['properties', 'occupancy', 'leases', 'rent'],
+  'agribusiness-park-kisegese': ['plots', 'tenants', 'irrigation', 'yield'],
 }
 
 export function GroupModuleDashboardPage() {

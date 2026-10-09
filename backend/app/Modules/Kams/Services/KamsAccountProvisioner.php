@@ -7,6 +7,7 @@ use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Support\RevenueRuleCatalog;
 use Illuminate\Support\Facades\DB;
 
 class KamsAccountProvisioner
@@ -101,18 +102,15 @@ class KamsAccountProvisioner
     public function ensureWallet(KamsMember $member): void
     {
         $this->ledger->account($member, 'guy');
-        if ($this->isManagerial($member)) {
+        $slug = $member->role?->slug ?: Role::query()->whereKey($member->role_id)->value('slug');
+        if (RevenueRuleCatalog::usesSplitCompensationAccounts($slug)) {
+            $this->ledger->account($member, 'salary');
+            $this->ledger->account($member, 'percentage');
+        } elseif ($this->isManagerial($member)) {
             $this->ledger->account($member, 'manager');
         }
-        $slug = $member->role?->slug ?: \App\Models\Role::query()->whereKey($member->role_id)->value('slug');
         if ($slug === 'assistant_manager') {
             $this->ledger->account($member, 'assistant_manager');
-        }
-        if ($slug === 'secretary') {
-            $this->ledger->account($member, 'secretary');
-        }
-        if ($slug === 'divisionnaire') {
-            $this->ledger->account($member, 'divisionnaire');
         }
         if ($member->company_id) {
             $this->ensureCompanyBooks((int) $member->company_id);

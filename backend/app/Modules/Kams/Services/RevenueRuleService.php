@@ -54,6 +54,8 @@ class RevenueRuleService
     }
 
     /**
+     * Rules editable in finance settings (excludes product-level manager_sale).
+     *
      * @return list<KamsRevenueRule>
      */
     public function listFor(int $companyId): array
@@ -62,6 +64,7 @@ class RevenueRuleService
 
         return KamsRevenueRule::query()
             ->where('company_id', $companyId)
+            ->where('code', '!=', RevenueRuleCatalog::MANAGER_SALE)
             ->orderBy('sort_order')
             ->get()
             ->all();

@@ -70,7 +70,11 @@ class DatabaseSeeder extends Seeder
             ->concat(PermissionCatalog::forModule('heavy-equipment'))
             ->concat(PermissionCatalog::forModule('real-estate'))
             ->concat(PermissionCatalog::forModule('rice-mills'))
-            ->concat(PermissionCatalog::forModule('lali-tv'));
+            ->concat(PermissionCatalog::forModule('lali-tv'))
+            ->concat(PermissionCatalog::forModule('machinery-fleet'))
+            ->concat(PermissionCatalog::forModule('kibiti-agribusiness'))
+            ->concat(PermissionCatalog::forModule('properties-magomeni'))
+            ->concat(PermissionCatalog::forModule('agribusiness-park-kisegese'));
 
         $permissionIds = $permissions->mapWithKeys(function (array $permission) {
             $model = Permission::query()->updateOrCreate(
@@ -217,6 +221,10 @@ class DatabaseSeeder extends Seeder
             ['slug' => 'real-estate', 'name' => 'LALI Apartments / Real Estate', 'name_fr' => 'LALI Apartments / Immobilier', 'status' => 'coming_soon', 'sort_order' => 3, 'icon' => 'building'],
             ['slug' => 'rice-mills', 'name' => 'LALI Miembeni Rice Mills', 'name_fr' => 'LALI Miembeni Rice Mills', 'status' => 'coming_soon', 'sort_order' => 4, 'icon' => 'wheat'],
             ['slug' => 'lali-tv', 'name' => 'LALI TV', 'name_fr' => 'LALI TV', 'status' => 'inactive', 'sort_order' => 5, 'icon' => 'tv'],
+            ['slug' => 'machinery-fleet', 'name' => 'Lali Machinery & Fleet', 'name_fr' => 'Lali Machinery & Fleet', 'status' => 'in_development', 'sort_order' => 6, 'icon' => 'wrench'],
+            ['slug' => 'kibiti-agribusiness', 'name' => 'Kibiti Agribusiness Project', 'name_fr' => 'Kibiti Agribusiness Project', 'status' => 'in_development', 'sort_order' => 7, 'icon' => 'sprout'],
+            ['slug' => 'properties-magomeni', 'name' => 'Lali Properties / Magomeni', 'name_fr' => 'Lali Properties / Magomeni', 'status' => 'in_development', 'sort_order' => 8, 'icon' => 'home'],
+            ['slug' => 'agribusiness-park-kisegese', 'name' => 'Lali Agribusiness Park - Kisegese', 'name_fr' => 'Lali Agribusiness Park - Kisegese', 'status' => 'in_development', 'sort_order' => 9, 'icon' => 'trees'],
         ];
 
         $modules = [];
@@ -311,7 +319,59 @@ class DatabaseSeeder extends Seeder
             'description' => 'Media and broadcasting',
         ]);
 
-        $businessCompanies = [$king, $heavy, $estate, $rice, $tv];
+        $machinery = Company::query()->updateOrCreate(['code' => 'LMF'], [
+            'country_id' => $geo['drc']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'system_module_id' => $modules['machinery-fleet']->id,
+            'name' => 'Lali Machinery & Fleet',
+            'legal_name' => 'Lali Machinery & Fleet SARL',
+            'email' => 'fleet@laliholdings.com',
+            'phone' => '+243 800 000 013',
+            'address' => 'Kinshasa, RDC',
+            'currency_code' => 'USD',
+            'description' => 'Machinery pool and fleet operations',
+        ]);
+
+        $kibiti = Company::query()->updateOrCreate(['code' => 'KAP'], [
+            'country_id' => $geo['tz']->id,
+            'city_id' => $geo['zanzibarCity']->id,
+            'system_module_id' => $modules['kibiti-agribusiness']->id,
+            'name' => 'Kibiti Agribusiness Project',
+            'legal_name' => 'Kibiti Agribusiness Project Ltd',
+            'email' => 'kibiti@laliholdings.com',
+            'phone' => '+255 700 000 003',
+            'address' => 'Kibiti, Tanzania',
+            'currency_code' => 'TZS',
+            'description' => 'Agribusiness project in Kibiti',
+        ]);
+
+        $magomeni = Company::query()->updateOrCreate(['code' => 'LPM'], [
+            'country_id' => $geo['tz']->id,
+            'city_id' => $geo['zanzibarCity']->id,
+            'system_module_id' => $modules['properties-magomeni']->id,
+            'name' => 'Lali Properties / Magomeni',
+            'legal_name' => 'Lali Properties Magomeni Ltd',
+            'email' => 'magomeni@laliholdings.com',
+            'phone' => '+255 700 000 004',
+            'address' => 'Magomeni, Tanzania',
+            'currency_code' => 'TZS',
+            'description' => 'Property management in Magomeni',
+        ]);
+
+        $kisegese = Company::query()->updateOrCreate(['code' => 'LAK'], [
+            'country_id' => $geo['tz']->id,
+            'city_id' => $geo['zanzibarCity']->id,
+            'system_module_id' => $modules['agribusiness-park-kisegese']->id,
+            'name' => 'Lali Agribusiness Park - Kisegese',
+            'legal_name' => 'Lali Agribusiness Park Kisegese Ltd',
+            'email' => 'kisegese@laliholdings.com',
+            'phone' => '+255 700 000 005',
+            'address' => 'Kisegese, Tanzania',
+            'currency_code' => 'TZS',
+            'description' => 'Agribusiness park at Kisegese',
+        ]);
+
+        $businessCompanies = [$king, $heavy, $estate, $rice, $tv, $machinery, $kibiti, $magomeni, $kisegese];
         foreach ($businessCompanies as $company) {
             if ($company->system_module_id) {
                 $company->modules()->syncWithoutDetaching([
@@ -400,10 +460,58 @@ class DatabaseSeeder extends Seeder
             'address' => 'Gombe, Kinshasa',
         ]);
 
+        Office::query()->updateOrCreate(['company_id' => $machinery->id, 'code' => 'HQ'], [
+            'country_id' => $geo['drc']->id,
+            'province_id' => $geo['kinshasaProvince']->id,
+            'city_id' => $geo['kinshasa']->id,
+            'commune_id' => $geo['gombe']->id,
+            'neighborhood_id' => $geo['batetela']->id,
+            'name' => 'Machinery & Fleet HQ',
+            'type' => 'headquarters',
+            'address' => 'Gombe, Kinshasa',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $kibiti->id, 'code' => 'HQ'], [
+            'country_id' => $geo['tz']->id,
+            'province_id' => $geo['zanzibar']->id,
+            'city_id' => $geo['zanzibarCity']->id,
+            'commune_id' => $geo['miembeni']->id,
+            'neighborhood_id' => $geo['miembeniQuarter']->id,
+            'name' => 'Kibiti Project HQ',
+            'type' => 'headquarters',
+            'address' => 'Kibiti, Tanzania',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $magomeni->id, 'code' => 'HQ'], [
+            'country_id' => $geo['tz']->id,
+            'province_id' => $geo['zanzibar']->id,
+            'city_id' => $geo['zanzibarCity']->id,
+            'commune_id' => $geo['miembeni']->id,
+            'neighborhood_id' => $geo['miembeniQuarter']->id,
+            'name' => 'Magomeni Properties HQ',
+            'type' => 'headquarters',
+            'address' => 'Magomeni, Tanzania',
+        ]);
+
+        Office::query()->updateOrCreate(['company_id' => $kisegese->id, 'code' => 'HQ'], [
+            'country_id' => $geo['tz']->id,
+            'province_id' => $geo['zanzibar']->id,
+            'city_id' => $geo['zanzibarCity']->id,
+            'commune_id' => $geo['miembeni']->id,
+            'neighborhood_id' => $geo['miembeniQuarter']->id,
+            'name' => 'Kisegese Park HQ',
+            'type' => 'headquarters',
+            'address' => 'Kisegese, Tanzania',
+        ]);
+
         Activity::query()->updateOrCreate(['company_id' => $king->id, 'name' => 'Retail fashion']);
         Activity::query()->updateOrCreate(['company_id' => $rice->id, 'name' => 'Rice milling']);
+        Activity::query()->updateOrCreate(['company_id' => $machinery->id, 'name' => 'Fleet operations']);
+        Activity::query()->updateOrCreate(['company_id' => $kibiti->id, 'name' => 'Agribusiness']);
+        Activity::query()->updateOrCreate(['company_id' => $magomeni->id, 'name' => 'Property management']);
+        Activity::query()->updateOrCreate(['company_id' => $kisegese->id, 'name' => 'Agribusiness park']);
 
-        return compact('holdings', 'king', 'heavy', 'estate', 'rice', 'tv', 'hq', 'gomaOffice');
+        return compact('holdings', 'king', 'heavy', 'estate', 'rice', 'tv', 'machinery', 'kibiti', 'magomeni', 'kisegese', 'hq', 'gomaOffice');
     }
 
     private function seedSuperAdmin(): User
@@ -515,6 +623,18 @@ class DatabaseSeeder extends Seeder
             ['group' => 'lali-tv', 'key' => 'default_broadcast_tz', 'value' => 'Africa/Kinshasa'],
             ['group' => 'lali-tv', 'key' => 'max_upload_mb', 'value' => '512', 'type' => 'number'],
             ['group' => 'lali-tv', 'key' => 'content_review_required', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'machinery-fleet', 'key' => 'fleet_alert_days', 'value' => '14', 'type' => 'number'],
+            ['group' => 'machinery-fleet', 'key' => 'default_service_interval_km', 'value' => '5000', 'type' => 'number'],
+            ['group' => 'machinery-fleet', 'key' => 'require_driver_license', 'value' => '1', 'type' => 'boolean'],
+            ['group' => 'kibiti-agribusiness', 'key' => 'planting_season_start_month', 'value' => '3', 'type' => 'number'],
+            ['group' => 'kibiti-agribusiness', 'key' => 'harvest_alert_days', 'value' => '30', 'type' => 'number'],
+            ['group' => 'kibiti-agribusiness', 'key' => 'default_plot_hectares', 'value' => '1', 'type' => 'number'],
+            ['group' => 'properties-magomeni', 'key' => 'default_lease_months', 'value' => '12', 'type' => 'number'],
+            ['group' => 'properties-magomeni', 'key' => 'occupancy_alert_percent', 'value' => '80', 'type' => 'number'],
+            ['group' => 'properties-magomeni', 'key' => 'late_rent_grace_days', 'value' => '5', 'type' => 'number'],
+            ['group' => 'agribusiness-park-kisegese', 'key' => 'park_plot_count', 'value' => '20', 'type' => 'number'],
+            ['group' => 'agribusiness-park-kisegese', 'key' => 'irrigation_check_days', 'value' => '7', 'type' => 'number'],
+            ['group' => 'agribusiness-park-kisegese', 'key' => 'tenant_lease_months', 'value' => '12', 'type' => 'number'],
         ];
 
         foreach ($settings as $setting) {
@@ -551,11 +671,11 @@ class DatabaseSeeder extends Seeder
         );
 
         $products = collect([
-            ['sku' => 'KA-TEE-01', 'name' => 'King Attitude Tee', 'category' => 'Apparel', 'collection' => 'Core', 'price' => 35, 'field_price' => 35, 'manager_price' => 21, 'company_price' => 21, 'cost' => 21],
-            ['sku' => 'KA-HD-02', 'name' => 'Crown Hoodie', 'category' => 'Apparel', 'collection' => 'Essentials', 'price' => 72, 'field_price' => 72, 'manager_price' => 43, 'company_price' => 43, 'cost' => 43],
-            ['sku' => 'KA-CAP-03', 'name' => 'Signature Cap', 'category' => 'Accessories', 'collection' => 'Core', 'price' => 28, 'field_price' => 28, 'manager_price' => 17, 'company_price' => 17, 'cost' => 17],
-            ['sku' => 'KA-BAG-04', 'name' => 'Attitude Tote', 'category' => 'Accessories', 'collection' => 'Limited', 'price' => 46, 'field_price' => 46, 'manager_price' => 28, 'company_price' => 28, 'cost' => 28],
-            ['sku' => 'KA-DI-05', 'name' => 'DI', 'category' => 'Core', 'collection' => 'Daily', 'price' => 7500, 'field_price' => 7500, 'manager_price' => 4500, 'company_price' => 4500, 'cost' => 4500],
+            ['sku' => 'KA-TEE-01', 'name' => 'King Attitude Tee', 'category' => 'Apparel', 'collection' => 'Core', 'price' => 35, 'field_price' => 35, 'manager_price' => 21, 'company_price' => 21, 'cost' => 21, 'manager_share_percent' => 20],
+            ['sku' => 'KA-HD-02', 'name' => 'Crown Hoodie', 'category' => 'Apparel', 'collection' => 'Essentials', 'price' => 72, 'field_price' => 72, 'manager_price' => 43, 'company_price' => 43, 'cost' => 43, 'manager_share_percent' => 20],
+            ['sku' => 'KA-CAP-03', 'name' => 'Signature Cap', 'category' => 'Accessories', 'collection' => 'Core', 'price' => 28, 'field_price' => 28, 'manager_price' => 17, 'company_price' => 17, 'cost' => 17, 'manager_share_percent' => 20],
+            ['sku' => 'KA-BAG-04', 'name' => 'Attitude Tote', 'category' => 'Accessories', 'collection' => 'Limited', 'price' => 46, 'field_price' => 46, 'manager_price' => 28, 'company_price' => 28, 'cost' => 28, 'manager_share_percent' => 20],
+            ['sku' => 'KA-DI-05', 'name' => 'DI', 'category' => 'Core', 'collection' => 'Daily', 'price' => 7500, 'field_price' => 7500, 'manager_price' => 4500, 'company_price' => 4500, 'cost' => 4500, 'manager_share_percent' => 20],
         ])->map(fn ($product) => KamsProduct::query()->updateOrCreate(
             ['company_id' => $company->id, 'sku' => $product['sku']],
             $product + ['status' => 'active', 'stock' => 0, 'avg_cost' => $product['cost']]

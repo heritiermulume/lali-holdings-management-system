@@ -75,6 +75,26 @@ class SettingsCatalog
                 'max_upload_mb' => ['type' => 'number', 'default' => '512'],
                 'content_review_required' => ['type' => 'boolean', 'default' => '1'],
             ],
+            'machinery-fleet' => [
+                'fleet_alert_days' => ['type' => 'number', 'default' => '14'],
+                'default_service_interval_km' => ['type' => 'number', 'default' => '5000'],
+                'require_driver_license' => ['type' => 'boolean', 'default' => '1'],
+            ],
+            'kibiti-agribusiness' => [
+                'planting_season_start_month' => ['type' => 'number', 'default' => '3'],
+                'harvest_alert_days' => ['type' => 'number', 'default' => '30'],
+                'default_plot_hectares' => ['type' => 'number', 'default' => '1'],
+            ],
+            'properties-magomeni' => [
+                'default_lease_months' => ['type' => 'number', 'default' => '12'],
+                'occupancy_alert_percent' => ['type' => 'number', 'default' => '80'],
+                'late_rent_grace_days' => ['type' => 'number', 'default' => '5'],
+            ],
+            'agribusiness-park-kisegese' => [
+                'park_plot_count' => ['type' => 'number', 'default' => '20'],
+                'irrigation_check_days' => ['type' => 'number', 'default' => '7'],
+                'tenant_lease_months' => ['type' => 'number', 'default' => '12'],
+            ],
         ];
     }
 

@@ -1,11 +1,14 @@
 import { Bell, CheckCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { Badge, Button, Empty, Modal } from './ui'
 import { LoadingScreen } from './LoadingScreen'
 import { PaginationButtons } from './PaginationButtons'
+import { useLiveData } from '../hooks/useLiveData'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
+import { trackLoadSpinner } from '../lib/dataSync'
 
 type Notification = {
   id: number
@@ -14,6 +17,13 @@ type Notification = {
   type: string
   read_at?: string | null
   created_at: string
+  data?: {
+    path?: string | null
+    member_id?: number | null
+    office_id?: number | null
+    entry_id?: number | null
+    type?: string | null
+  } | null
 }
 
 type Meta = {
@@ -41,6 +51,7 @@ export function NotificationsModal({
   onUnreadChange?: (count: number) => void
 }) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [rows, setRows] = useState<Notification[]>([])
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
@@ -73,12 +84,12 @@ export function NotificationsModal({
   }, [onUnreadChange])
 
   const load = useCallback(async (nextPage = page, nextPerPage = perPage) => {
-    setLoading(true)
+    const stop = trackLoadSpinner(setLoading)
     try {
       const res = await api.get('/notifications', { params: { page: nextPage, per_page: nextPerPage } })
       applyResponse(res, nextPage, nextPerPage)
     } finally {
-      setLoading(false)
+      stop()
     }
   }, [applyResponse, page, perPage])
 
@@ -86,6 +97,8 @@ export function NotificationsModal({
     if (!open) return
     void load(page, perPage)
   }, [open, page, perPage, load])
+
+  useLiveData(() => load(page, perPage), { enabled: open })
 
   const markRead = async (id: number) => {
     await api.post(`/notifications/${id}/read`)
@@ -100,6 +113,22 @@ export function NotificationsModal({
   const remove = async (id: number) => {
     await api.delete(`/notifications/${id}`)
     await load()
+  }
+
+  const openTarget = async (item: Notification) => {
+    const path = typeof item.data?.path === 'string' ? item.data.path.trim() : ''
+    if (!path.startsWith('/')) return
+    if (!item.read_at) {
+      try {
+        await api.post(`/notifications/${item.id}/read`)
+        onUnreadChange?.(Math.max(0, meta.unread_count - 1))
+      } catch {
+        // Navigation must succeed even if mark-read fails.
+      }
+    }
+    setPage(1)
+    onClose()
+    navigate(path)
   }
 
   const lastPage = Math.max(1, meta.last_page)
@@ -144,6 +173,8 @@ export function NotificationsModal({
             <div className="max-h-[min(52vh,24rem)] space-y-2 overflow-y-auto pr-1">
               {rows.map((item) => {
                 const unread = !item.read_at
+                const targetPath = typeof item.data?.path === 'string' ? item.data.path.trim() : ''
+                const canOpen = targetPath.startsWith('/')
                 return (
                   <article
                     key={item.id}
@@ -171,6 +202,11 @@ export function NotificationsModal({
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                           <time className="text-xs text-muted">{new Date(item.created_at).toLocaleString()}</time>
                           <div className="flex flex-wrap items-center gap-2">
+                            {canOpen ? (
+                              <Button variant="secondary" className="h-9 px-3" onClick={() => void openTarget(item)}>
+                                {t('notifications.open')}
+                              </Button>
+                            ) : null}
                             {unread ? (
                               <Button variant="ghost" className="h-9 px-3" onClick={() => void markRead(item.id)}>
                                 {t('notifications.markRead')}

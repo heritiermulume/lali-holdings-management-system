@@ -35,12 +35,15 @@ Route::post('stock/transfers', [KamsStockController::class, 'storeTransfer'])->m
 Route::post('stock/transfers/{transfer}/receive', [KamsStockController::class, 'receiveTransfer'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::get('stock/assignments', [KamsStockController::class, 'assignments'])->middleware(EnsurePermission::class.':kams.stock.assignments.view');
 Route::get('stock/assignments/report', [KamsStockController::class, 'assignmentsReport'])->middleware(EnsurePermission::class.':kams.stock.reports.view');
+Route::delete('stock/assignments/report', [KamsStockController::class, 'destroyAssignmentsReport'])->middleware(EnsurePermission::class.':kams.stock.reports.delete');
 Route::get('stock/journal', [KamsStockController::class, 'journal'])->middleware(EnsurePermission::class.':kams.stock.journal.view');
+Route::delete('stock/journal/{entry}', [KamsStockController::class, 'destroyJournal'])->middleware(EnsurePermission::class.':kams.stock.journal.delete');
 Route::post('stock/assignments', [KamsStockController::class, 'storeAssignment'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::post('stock/assignments/close-day', [KamsStockController::class, 'closeAssignmentDay'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::post('stock/assignments/{assignment}/close', [KamsStockController::class, 'closeAssignment'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::post('stock/assignments/{assignment}/items', [KamsStockController::class, 'addAssignmentItems'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::put('stock/assignments/{assignment}', [KamsStockController::class, 'updateAssignment'])->middleware(EnsurePermission::class.':kams.stock.update');
+Route::delete('stock/assignments/{assignment}', [KamsStockController::class, 'destroyAssignment'])->middleware(EnsurePermission::class.':kams.stock.assignments.delete');
 Route::get('stock/sales', [KamsStockController::class, 'sales'])->middleware(EnsurePermission::class.':kams.stock.assignments.view,kams.orders.view');
 Route::post('stock/sales/{sale}/pay', [KamsStockController::class, 'paySale'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::get('stock/returns', [KamsStockController::class, 'returns'])->middleware(EnsurePermission::class.':kams.stock.warehouses.view,kams.stock.depots.view,kams.stock.assignments.view');
@@ -77,6 +80,9 @@ Route::post('finance/company-accounts/{treasuryAccount}/entries/{treasuryEntry}/
 Route::post('finance/company-accounts/{treasuryAccount}/entries/{treasuryEntry}/reject', [KamsFinanceController::class, 'companyReject'])->middleware(EnsurePermission::class.':kams.finance.company.approve');
 Route::get('finance/company-accounts', [KamsFinanceController::class, 'companyAccounts'])->middleware(EnsurePermission::class.':kams.finance.company.view');
 Route::get('finance/company-accounts/{treasuryAccount}', [KamsFinanceController::class, 'companyAccount'])->middleware(EnsurePermission::class.':kams.finance.company.view');
+Route::get('finance/company-accounts/{treasuryAccount}/commissions', [KamsFinanceController::class, 'companyCommissions'])->middleware(EnsurePermission::class.':kams.finance.company.view');
+Route::get('finance/company-accounts/{treasuryAccount}/commissions/{member}', [KamsFinanceController::class, 'companyCommissionDetail'])->middleware(EnsurePermission::class.':kams.finance.company.view');
+Route::post('finance/company-accounts/{treasuryAccount}/commissions/{member}/transfer', [KamsFinanceController::class, 'companyCommissionTransfer'])->middleware(EnsurePermission::class.':kams.finance.company.deposit');
 Route::post('finance/company-accounts/{treasuryAccount}/deposit', [KamsFinanceController::class, 'companyDeposit'])->middleware(EnsurePermission::class.':kams.finance.company.deposit');
 Route::post('finance/company-accounts/{treasuryAccount}/withdraw', [KamsFinanceController::class, 'companyWithdraw'])->middleware(EnsurePermission::class.':kams.finance.company.withdraw');
 Route::post('finance/company-accounts/{treasuryAccount}/expense', [KamsFinanceController::class, 'companyExpense'])->middleware(EnsurePermission::class.':kams.finance.company.expense');

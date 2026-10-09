@@ -1,13 +1,16 @@
 import { Camera, Eye, Gem, ListFilter, Pencil, Plus, Printer, Search, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { money } from '../../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
@@ -92,10 +95,10 @@ export function KamsPatrimoinePage() {
   }
 
   const reload = () => {
-    setLoading(true)
+    const stop = trackLoadSpinner(setLoading)
     return api.get('/modules/kams/patrimoine', { params: listParams() })
       .then(applyListResponse)
-      .finally(() => setLoading(false))
+      .finally(stop)
   }
 
   useEffect(() => {
@@ -121,17 +124,10 @@ export function KamsPatrimoinePage() {
   }, [])
 
   useEffect(() => {
-    let active = true
-    setLoading(true)
-    api.get('/modules/kams/patrimoine', { params: listParams() }).then((res) => {
-      if (active) applyListResponse(res)
-    }).finally(() => {
-      if (active) setLoading(false)
-    })
-    return () => {
-      active = false
-    }
+    void reload()
   }, [query, status, category, officeId])
+
+  useLiveData(reload)
 
   const clearImageState = () => {
     setImageFile(null)
@@ -324,19 +320,11 @@ export function KamsPatrimoinePage() {
 
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         {showOfficeFilter ? (
-          <select
-            className="min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:w-64"
+          <OfficeFilterSelect
             value={officeId}
-            aria-label={t('kams.filterOffice')}
+            offices={offices}
             onChange={(e) => setOfficeId(e.target.value)}
-          >
-            <option value="">{t('kams.allOffices')}</option>
-            {offices.map((office) => (
-              <option key={office.id} value={office.id}>
-                {office.name}{office.code ? ` · ${office.code}` : ''}
-              </option>
-            ))}
-          </select>
+          />
         ) : null}
         <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />

@@ -12,7 +12,9 @@ import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { permissionLabel, roleLabel } from '../../lib/format'
 import { businessModuleIcon } from '../../modules/registry'
@@ -120,7 +122,7 @@ function SectionCheckbox({
 export function RolesSettingsPage() {
   const { t, i18n } = useTranslation()
   const { modules } = useSystemModules()
-  const { user, hasPermission } = useAuth()
+  const { user, hasPermission, refresh } = useAuth()
   const localeFr = i18n.language.startsWith('fr')
   const [roles, setRoles] = useState<RoleRow[]>([])
   const [permissionGroups, setPermissionGroups] = useState<Record<string, Permission[]>>({})
@@ -137,8 +139,8 @@ export function RolesSettingsPage() {
   const canSeePermission = (slug: string) => canGrantAll || hasPermission(slug)
 
   const load = () => {
-    setLoading(true)
-    Promise.all([
+    const stop = trackLoadSpinner(setLoading)
+    return Promise.all([
       api.get('/roles'),
       api.get('/permissions'),
     ]).then(([rolesRes, permsRes]) => {
@@ -148,10 +150,11 @@ export function RolesSettingsPage() {
       const first = nextRoles[0]
       setSelectedId((current) => current ?? first?.id ?? null)
       setOpenModules((current) => current.includes('system') ? current : ['system', ...current])
-    }).finally(() => setLoading(false))
+    }).finally(stop)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { void load() }, [])
+  useLiveData(load)
 
   useEffect(() => {
     const role = roles.find((entry) => entry.id === selectedId)
@@ -298,6 +301,8 @@ export function RolesSettingsPage() {
       })
       const updated = res.data.data as RoleRow
       setRoles((current) => current.map((role) => (role.id === updated.id ? { ...role, ...updated } : role)))
+      // Apply new grants immediately for the current session (and hide revoked UI actions).
+      await refresh().catch(() => {})
     } finally {
       setSaving(false)
     }

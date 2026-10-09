@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[Fillable([
     'company_id', 'sale_id', 'sale_item_id', 'product_id', 'office_id', 'rule_id', 'rule_code',
     'role_slug', 'beneficiary_user_id', 'beneficiary_member_id', 'base_amount', 'percent', 'divisor',
-    'amount', 'formula', 'status', 'parent_share_id', 'snapshot', 'posted_at',
+    'amount', 'formula', 'status', 'parent_share_id', 'snapshot', 'posted_at', 'paid_at', 'transfer_entry_id',
 ])]
 class KamsRevenueShare extends Model
 {
@@ -24,6 +24,7 @@ class KamsRevenueShare extends Model
             'amount' => 'float',
             'snapshot' => 'array',
             'posted_at' => 'datetime',
+            'paid_at' => 'datetime',
         ];
     }
 
@@ -65,5 +66,10 @@ class KamsRevenueShare extends Model
     public function parentShare(): BelongsTo
     {
         return $this->belongsTo(self::class, 'parent_share_id');
+    }
+
+    public function transferEntry(): BelongsTo
+    {
+        return $this->belongsTo(KamsTreasuryEntry::class, 'transfer_entry_id');
     }
 }

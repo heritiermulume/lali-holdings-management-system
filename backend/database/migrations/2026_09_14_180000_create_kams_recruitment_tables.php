@@ -46,7 +46,6 @@ return new class extends Migration
             $table->foreignId('company_id')->constrained()->cascadeOnDelete();
             $table->foreignId('office_id')->nullable()->constrained('offices')->nullOnDelete();
             $table->foreignId('member_id')->nullable()->constrained('kams_members')->nullOnDelete();
-            $table->foreignId('sponsor_member_id')->nullable()->constrained('kams_members')->nullOnDelete();
             $table->string('candidate_id', 64)->unique();
             $table->string('full_name');
             $table->string('phone')->nullable();
@@ -55,7 +54,6 @@ return new class extends Migration
             $table->string('guardian_name')->nullable();
             $table->string('guardian_phone')->nullable();
             $table->enum('source', ['poster', 'qr_code', 'online_form', 'sponsorship', 'other'])->default('online_form');
-            $table->string('sponsor_name')->nullable();
             $table->enum('status', [
                 'received',
                 'under_review',

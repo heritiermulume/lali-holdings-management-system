@@ -10,7 +10,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('kams_candidates', function (Blueprint $table) {
-            $table->foreignId('guardian_member_id')->nullable()->after('sponsor_member_id')->constrained('kams_members')->nullOnDelete();
+            $table->foreignId('guardian_member_id')->nullable()->after('member_id')->constrained('kams_members')->nullOnDelete();
         });
 
         $driver = Schema::getConnection()->getDriverName();

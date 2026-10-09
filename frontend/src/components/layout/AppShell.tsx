@@ -1,4 +1,5 @@
 import {
+  BadgeCheck,
   Bell,
   Crown,
   House,
@@ -19,6 +20,7 @@ import { NotificationsModal } from '../NotificationsModal'
 import { UserAvatar } from '../UserAvatar'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import { canAccessModule, ADMIN_PERMS } from '../../lib/access'
 import { businessModuleIcon, dashboardBusinessSlug, moduleFromPath, moduleRegistry, navItemLabel } from '../../modules/registry'
 import { cn } from '../../lib/cn'
@@ -85,7 +87,7 @@ export function AppShell() {
 
   useEffect(() => {
     setActiveCurrency(workspaceCurrencyCode(location.pathname, user))
-  }, [location.pathname, user])
+  }, [location.pathname, user?.id, user?.primary_company?.id, user?.accessible_companies])
 
   useEffect(() => {
     if (!userMenuOpen) return
@@ -98,15 +100,20 @@ export function AppShell() {
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [userMenuOpen])
 
-  useEffect(() => {
-    if (!hasPermission('notifications.view')) {
+  const canViewNotifications = hasPermission('notifications.view')
+  const loadUnread = () => {
+    if (!canViewNotifications) {
       setUnread(0)
       return
     }
-    api.get('/notifications', { params: { unread: 1, per_page: 1 } }).then((res) => {
+    return api.get('/notifications', { params: { unread: 1, per_page: 1 } }).then((res) => {
       setUnread(res.data.meta?.unread_count ?? 0)
     }).catch(() => undefined)
-  }, [location.pathname, hasPermission])
+  }
+  useEffect(() => {
+    void loadUnread()
+  }, [location.pathname, canViewNotifications])
+  useLiveData(loadUnread, { enabled: canViewNotifications })
 
   const canSeeItem = (item: { perm?: string; anyPerm?: string[] }) => {
     if (item.anyPerm?.length) return item.anyPerm.some((perm) => hasPermission(perm))
@@ -225,7 +232,18 @@ export function AppShell() {
                 <UserAvatar user={user} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold">{user?.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-sm font-semibold">{user?.name}</span>
+                  {user?.is_certified ? (
+                    <BadgeCheck
+                      size={16}
+                      className="shrink-0 text-[#1D9BF0]"
+                      fill="currentColor"
+                      stroke="white"
+                      aria-label={t('users.certified')}
+                    />
+                  ) : null}
+                </span>
                 <span className="block truncate text-xs text-white/70">{roleLabel(t, user?.roles?.[0], user?.gender)}</span>
               </span>
             </button>
@@ -339,9 +357,20 @@ export function AppShell() {
                 aria-haspopup="menu"
                 aria-label={user?.name || t('settings.profile')}
                 onClick={() => setUserMenuOpen((visible) => !visible)}
-                className="grid h-10 w-10 overflow-hidden place-items-center rounded-full bg-lhms text-sm font-bold text-white ring-2 ring-white/20 hover:ring-white/50"
+                className="relative grid h-10 w-10 place-items-center rounded-full bg-lhms text-sm font-bold text-white ring-2 ring-white/20 hover:ring-white/50"
               >
-                <UserAvatar user={user} />
+                <span className="grid h-full w-full overflow-hidden place-items-center rounded-full">
+                  <UserAvatar user={user} />
+                </span>
+                {user?.is_certified ? (
+                  <BadgeCheck
+                    size={16}
+                    className="absolute -bottom-0.5 -right-0.5 rounded-full bg-white text-[#1D9BF0]"
+                    fill="currentColor"
+                    stroke="white"
+                    aria-label={t('users.certified')}
+                  />
+                ) : null}
               </button>
               {userMenuOpen ? (
                 <>

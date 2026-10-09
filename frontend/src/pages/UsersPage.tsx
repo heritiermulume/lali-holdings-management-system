@@ -1,4 +1,4 @@
-import { Camera, Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserRound, Users as UsersIcon, VenusAndMars } from 'lucide-react'
+import { BadgeCheck, Camera, Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserRound, Users as UsersIcon, VenusAndMars } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
@@ -6,8 +6,10 @@ import { PaginationButtons } from '../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal, Select } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
+import { useLiveData } from '../hooks/useLiveData'
 import api from '../lib/api'
 import { withBusy } from '../lib/busy'
+import { trackLoadSpinner } from '../lib/dataSync'
 import { cn } from '../lib/cn'
 import { dateTime, initials, roleLabel } from '../lib/format'
 import { buildBrandedTableHtml, printHtml } from '../lib/printDocument'
@@ -32,6 +34,8 @@ type UserRow = {
   phone?: string | null
   avatar_url?: string | null
   is_active: boolean
+  is_certified?: boolean
+  can_be_certified?: boolean
   last_login_at?: string | null
   roles: RoleOption[]
   assignments?: Assignment[]
@@ -44,6 +48,8 @@ type UserRow = {
     is_active?: boolean
   } | null
 }
+
+const CERTIFIABLE_ROLE_SLUGS = new Set(['partner', 'vice_president', 'divisionnaire', 'manager', 'assistant_manager'])
 
 type UsersSummary = {
   total: number
@@ -64,6 +70,7 @@ const emptyForm = () => ({
   email: '',
   phone: '',
   is_active: true,
+  is_certified: false,
   platform_role_id: '',
   memberships: [emptyMembership()],
 })
@@ -136,9 +143,13 @@ function isSuperAdminUser(row: UserRow) {
   return row.roles.some((role) => role.slug === 'super_administrator')
 }
 
+function roleIsCertifiable(role?: RoleOption | null) {
+  return Boolean(role?.slug && CERTIFIABLE_ROLE_SLUGS.has(role.slug))
+}
+
 export function UsersPage() {
   const { t, i18n } = useTranslation()
-  const { user, hasPermission } = useAuth()
+  const { user, hasPermission, refresh } = useAuth()
   const canCreate = hasPermission('users.create')
   const canUpdate = hasPermission('users.update')
   const canDelete = hasPermission('users.delete')
@@ -190,6 +201,19 @@ export function UsersPage() {
     return true
   }), [roles, user, form.platform_role_id])
   const moduleRoles = useMemo(() => roles.filter((role) => !role.full_access && role.module_slug), [roles])
+  const formCanBeCertified = useMemo(() => {
+    const platform = roles.find((role) => String(role.id) === form.platform_role_id)
+    if (roleIsCertifiable(platform)) return true
+    for (const membership of form.memberships) {
+      const companyRole = roles.find((role) => String(role.id) === membership.role_id)
+      if (roleIsCertifiable(companyRole)) return true
+      for (const office of membership.offices) {
+        const officeRole = roles.find((role) => String(role.id) === office.role_id)
+        if (roleIsCertifiable(officeRole)) return true
+      }
+    }
+    return false
+  }, [form.memberships, form.platform_role_id, roles])
   const filtersActive = Boolean(status || companyId || roleId)
   const safePage = Math.min(page, lastPage)
   const rangeStart = total === 0 ? 0 : (safePage - 1) * perPage + 1
@@ -206,7 +230,7 @@ export function UsersPage() {
   })
 
   const load = (term = query, nextPage = page, nextPerPage = perPage) => {
-    setLoading(true)
+    const stop = trackLoadSpinner(setLoading)
     return api.get('/users', { params: listParams(term, { page: nextPage, per_page: nextPerPage }) })
       .then((res) => {
         const nextLast = Math.max(1, Number(res.data.meta?.last_page || 1))
@@ -227,7 +251,7 @@ export function UsersPage() {
         if (current > nextLast) setPage(nextLast)
         else if (current !== page) setPage(current)
       })
-      .finally(() => setLoading(false))
+      .finally(stop)
   }
 
   useEffect(() => {
@@ -251,10 +275,18 @@ export function UsersPage() {
     void load(query, page, perPage)
   }, [query, status, companyId, roleId, page, perPage])
 
+  useLiveData(() => load(query, page, perPage))
+
   useEffect(() => {
     api.get('/roles').then((res) => setRoles(res.data.data))
     api.get('/companies', { params: { business: 1, per_page: 50 } }).then((res) => setCompanies(res.data.data))
   }, [])
+
+  useEffect(() => {
+    if (!formCanBeCertified && form.is_certified) {
+      setForm((current) => ({ ...current, is_certified: false }))
+    }
+  }, [formCanBeCertified, form.is_certified])
 
   const rolesForCompany = (id: string) => {
     const company = companies.find((entry) => String(entry.id) === id)
@@ -336,6 +368,7 @@ export function UsersPage() {
       email: row.email,
       phone: row.phone || '',
       is_active: row.is_active,
+      is_certified: Boolean(row.is_certified),
       platform_role_id: platform ? String(platform.id) : '',
       memberships: memberships.length ? memberships : emptyForm().memberships,
     })
@@ -451,6 +484,7 @@ export function UsersPage() {
     payload.append('email', email)
     payload.append('phone', form.phone.trim())
     payload.append('is_active', form.is_active ? '1' : '0')
+    payload.append('is_certified', formCanBeCertified && form.is_certified ? '1' : '0')
     payload.append('platform_role_id', form.platform_role_id || '')
     payload.append('assignments', JSON.stringify(assignments))
     if (photo) payload.append('avatar', photo)
@@ -461,6 +495,9 @@ export function UsersPage() {
       if (editing) {
         payload.append('_method', 'PUT')
         await api.post(`/users/${editing.id}`, payload)
+        if (editing.id === user?.id) {
+          await refresh().catch(() => {})
+        }
       } else {
         await api.post('/users', payload)
       }
@@ -802,6 +839,9 @@ export function UsersPage() {
               <div className="truncate text-xs text-muted sm:text-sm">{subtitle(row)}</div>
             </div>
             <div className="hidden min-w-0 shrink items-center gap-2 sm:flex">
+              {row.is_certified ? (
+                <BadgeCheck size={18} className="shrink-0 text-[#1D9BF0]" fill="currentColor" stroke="white" aria-label={t('users.certified')} />
+              ) : null}
               <Badge tone={row.is_active ? 'green' : 'red'}>{row.is_active ? t('users.active') : t('users.inactive')}</Badge>
             </div>
             <div className="flex shrink-0 items-center gap-1">
@@ -902,6 +942,19 @@ export function UsersPage() {
             <option value="1">{t('users.active')}</option>
             <option value="0">{t('users.inactive')}</option>
           </Select>
+          {formCanBeCertified ? (
+            <div className="space-y-1.5">
+              <Select
+                label={t('users.certified')}
+                value={form.is_certified ? '1' : '0'}
+                onChange={(e) => setForm({ ...form, is_certified: e.target.value === '1' })}
+              >
+                <option value="1">{t('users.certified')}</option>
+                <option value="0">{t('users.notCertified')}</option>
+              </Select>
+              <p className="text-xs text-muted">{t('users.certifiedHint')}</p>
+            </div>
+          ) : null}
           <Select label={t('users.platformRole')} value={form.platform_role_id} onChange={(e) => setForm({ ...form, platform_role_id: e.target.value })}>
             <option value="">{t('users.noPlatformRole')}</option>
             {platformRoles.map((role) => <option key={role.id} value={role.id}>{roleLabel(t, role)}</option>)}
@@ -1066,7 +1119,13 @@ export function UsersPage() {
                 </ul>
               ) : <strong>—</strong>}
             </div>
-            <div>{t('common.status')}: <Badge tone={viewing.is_active ? 'green' : 'red'}>{viewing.is_active ? t('users.active') : t('users.inactive')}</Badge></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{t('common.status')}:</span>
+              {viewing.is_certified ? (
+                <BadgeCheck size={18} className="shrink-0 text-[#1D9BF0]" fill="currentColor" stroke="white" aria-label={t('users.certified')} />
+              ) : null}
+              <Badge tone={viewing.is_active ? 'green' : 'red'}>{viewing.is_active ? t('users.active') : t('users.inactive')}</Badge>
+            </div>
             <div>{t('users.lastLogin')}: <strong>{dateTime(viewing.last_login_at, viewing.last_login_at)}</strong></div>
             {canUpdate ? (
               <Button className="w-full" onClick={() => { setViewing(null); openEdit(viewing) }}>{t('common.edit')}</Button>

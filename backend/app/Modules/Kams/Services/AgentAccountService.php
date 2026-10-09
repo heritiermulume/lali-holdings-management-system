@@ -29,8 +29,11 @@ class AgentAccountService
 
         $preferred = $this->preferredEmail($member);
         if ($preferred) {
-            $existing = User::query()->where('email', $preferred)->first();
+            $existing = User::withTrashed()->where('email', $preferred)->first();
             if ($existing) {
+                if ($existing->trashed()) {
+                    $existing->restore();
+                }
                 $member->forceFill(['user_id' => $existing->id])->save();
 
                 return $this->ensureCredentials($member, $existing);
@@ -97,6 +100,24 @@ class AgentAccountService
         }
 
         $this->syncUser($member, $user);
+    }
+
+    public function setCertified(KamsMember $member, bool $certified): void
+    {
+        if (! $member->user_id) {
+            return;
+        }
+
+        $user = $member->user()->first();
+        if (! $user) {
+            return;
+        }
+
+        $member->loadMissing('role:id,slug');
+        $canCertify = $member->role !== null
+            && in_array($member->role->slug, User::CERTIFIABLE_ROLE_SLUGS, true);
+
+        $user->forceFill(['is_certified' => $canCertify && $certified])->save();
     }
 
     public function deactivate(KamsMember $member): void
@@ -296,7 +317,7 @@ class AgentAccountService
 
     private function emailTaken(string $email, ?int $ignoreUserId = null): bool
     {
-        return User::query()
+        return User::withTrashed()
             ->where('email', $email)
             ->when($ignoreUserId, fn ($q) => $q->where('id', '!=', $ignoreUserId))
             ->exists();

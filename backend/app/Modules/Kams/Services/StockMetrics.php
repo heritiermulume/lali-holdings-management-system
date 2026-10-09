@@ -8,8 +8,10 @@ use App\Support\SettingsCatalog;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSavingsAccount;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockAssignment;
+use App\Modules\Kams\Support\RevenueRuleCatalog;
 use App\Modules\Kams\Models\KamsStockAssignmentItem;
 use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockReturnItem;
@@ -62,11 +64,6 @@ class StockMetrics
 
         $threshold = (int) SettingsCatalog::number('kams', 'stock_alert_threshold');
         $products = KamsProduct::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId));
-        $balances = KamsStockBalance::query()
-            ->with(['depot:id,name,kind,office_id', 'product:id,name,sku,price,cost,avg_cost,stock'])
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)));
-        $available = (clone $balances)->where('condition', 'available');
         $assignments = KamsStockAssignment::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds));
@@ -109,17 +106,57 @@ class StockMetrics
             }
         }
 
-        $warehouseUnits = (int) (clone $available)->whereHas('depot', fn ($q) => $q->where('kind', 'warehouse'))->sum('quantity');
-        $depotUnits = (int) (clone $available)->whereHas('depot', fn ($q) => $q->where('kind', 'depot'))->sum('quantity');
-        $withAgents = (int) (clone $available)->whereHas('depot', fn ($q) => $q->where('kind', 'seller'))->sum('quantity');
-        $inTransit = (int) (clone $balances)->where('condition', 'in_transit')->sum('quantity');
-        $quarantine = (int) (clone $balances)->whereIn('condition', ['quarantine', 'damaged'])->sum('quantity');
-        $inventoryValue = (float) KamsStockBalance::query()
-            ->when($companyId, fn ($q) => $q->where('kams_stock_balances.company_id', $companyId))
-            ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
-            ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-            ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
-            ->value('value');
+        $officeScoped = $officeIds !== [];
+        // Available stock = office depots only (never warehouses, never agents), always office-scoped when filtered.
+        $warehouseUnits = $officeScoped
+            ? 0
+            : (int) KamsStockBalance::query()
+                ->available()
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->whereHas('depot', fn ($q) => $q->where('kind', 'warehouse'))
+                ->sum('quantity');
+        $depotUnits = (int) KamsStockBalance::query()
+            ->available()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->whereHas('depot', fn ($q) => $q
+                ->where('kind', 'depot')
+                ->when($officeScoped, fn ($inner) => $inner->whereIn('office_id', $officeIds)))
+            ->sum('quantity');
+        $withAgents = (int) KamsStockBalance::query()
+            ->available()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->whereHas('depot', fn ($q) => $q
+                ->where('kind', 'seller')
+                ->when($officeScoped, fn ($inner) => $inner->whereIn('office_id', $officeIds)))
+            ->sum('quantity');
+        $inTransit = (int) KamsStockBalance::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('condition', 'in_transit')
+            ->whereHas('depot', fn ($depot) => $depot
+                ->when(
+                    $officeScoped,
+                    fn ($inner) => $inner->whereIn('office_id', $officeIds)->where('kind', '!=', 'warehouse'),
+                    fn ($inner) => $inner->whereIn('kind', ['warehouse', 'depot', 'seller']),
+                ))
+            ->sum('quantity');
+        $quarantine = (int) KamsStockBalance::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->whereIn('condition', ['quarantine', 'damaged'])
+            ->whereHas('depot', fn ($depot) => $depot
+                ->when(
+                    $officeScoped,
+                    fn ($inner) => $inner->whereIn('office_id', $officeIds)->where('kind', '!=', 'warehouse'),
+                    fn ($inner) => $inner->whereIn('kind', ['warehouse', 'depot', 'seller']),
+                ))
+            ->sum('quantity');
+        $inventoryValue = KamsProduct::sumStockSaleValue(
+            KamsStockBalance::query()
+                ->available()
+                ->when($companyId, fn ($q) => $q->where('kams_stock_balances.company_id', $companyId))
+                ->whereHas('depot', fn ($depot) => $depot
+                    ->where('kind', 'depot')
+                    ->when($officeScoped, fn ($inner) => $inner->whereIn('office_id', $officeIds)))
+        );
         $periodSales = KamsStockSale::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->when($officeIds !== [], fn ($q) => $q->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
@@ -133,6 +170,7 @@ class StockMetrics
         $returnedSold = (int) KamsStockReturnItem::query()
             ->whereHas('stockReturn', fn ($q) => $q
                 ->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))
+                ->when($officeIds !== [], fn ($inner) => $inner->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
                 ->where('type', 'customer')
                 ->whereIn('status', ['restocked', 'quarantine'])
                 ->whereBetween('validated_at', [$start, $end]))
@@ -141,15 +179,18 @@ class StockMetrics
         $returnedMargin = (float) KamsStockReturnItem::query()
             ->whereHas('stockReturn', fn ($q) => $q
                 ->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))
+                ->when($officeIds !== [], fn ($inner) => $inner->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
                 ->where('type', 'customer')
                 ->whereIn('status', ['restocked', 'quarantine'])
                 ->whereBetween('validated_at', [$start, $end]))
             ->selectRaw('COALESCE(SUM(quantity * (unit_price - unit_cost)), 0) as value')
             ->value('value');
-        $commissionsPayable = (float) KamsSellerCommission::query()
+        $commissionsPayable = (float) KamsRevenueShare::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds))
             ->where('status', 'payable')
-            ->sum('payable_amount');
+            ->whereIn('rule_code', RevenueRuleCatalog::heldOfficeCommissionCodes())
+            ->sum('amount');
         $activeSellers = KamsDepot::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds))
@@ -157,8 +198,13 @@ class StockMetrics
             ->whereHas('balances', fn ($q) => $q->where('condition', 'available')->where('quantity', '>', 0))
             ->count();
 
-        $lowLocations = (clone $available)
-            ->whereHas('depot', fn ($q) => $q->where('kind', 'depot'))
+        $lowLocations = KamsStockBalance::query()
+            ->with(['depot:id,name,kind,office_id', 'product:id,name,sku,price,cost,avg_cost,field_price,stock'])
+            ->available()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->whereHas('depot', fn ($q) => $q
+                ->where('kind', 'depot')
+                ->when($officeScoped, fn ($inner) => $inner->whereIn('office_id', $officeIds)))
             ->where('quantity', '<=', $threshold)
             ->where('quantity', '>', 0)
             ->orderBy('quantity')
@@ -167,8 +213,16 @@ class StockMetrics
 
         $officesMissingDepot = 0;
         if ($companyId) {
-            $offices = Office::query()->where('company_id', $companyId)->where('is_active', true)->pluck('id');
-            $covered = KamsDepot::query()->where('company_id', $companyId)->where('kind', 'depot')->whereIn('office_id', $offices)->pluck('office_id');
+            $offices = Office::query()
+                ->where('company_id', $companyId)
+                ->where('is_active', true)
+                ->when($officeScoped, fn ($q) => $q->whereIn('id', $officeIds))
+                ->pluck('id');
+            $covered = KamsDepot::query()
+                ->where('company_id', $companyId)
+                ->where('kind', 'depot')
+                ->whereIn('office_id', $offices)
+                ->pluck('office_id');
             $officesMissingDepot = $offices->diff($covered)->count();
         }
 
@@ -184,7 +238,8 @@ class StockMetrics
                 'with_agents' => $withAgents,
                 'in_transit' => $inTransit,
                 'quarantine' => $quarantine,
-                'units' => $warehouseUnits + $depotUnits + $withAgents,
+                // Available stock = sum of office depots only (exclude warehouses and agents).
+                'units' => $depotUnits,
                 'inventory_value' => round($inventoryValue, 2),
                 'open_assignments' => (clone $assignments)->where('status', 'open')->count(),
                 'sold_units' => $soldUnits,
@@ -253,14 +308,13 @@ class StockMetrics
                 ->withSum('items', 'quantity')
                 ->get()
                 ->sum('items_sum_quantity');
-            $value = (float) KamsStockBalance::query()
-                ->whereIn('depot_id', KamsDepot::query()->where(function ($q) use ($depot, $office) {
-                    $q->whereKey($depot->id)->orWhere(fn ($inner) => $inner->where('kind', 'seller')->where('office_id', $office->id));
-                })->pluck('id'))
-                ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-                ->where('kams_stock_balances.condition', 'available')
-                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
-                ->value('value');
+            $value = KamsProduct::sumStockSaleValue(
+                KamsStockBalance::query()
+                    ->available()
+                    ->whereIn('depot_id', KamsDepot::query()->where(function ($q) use ($depot, $office) {
+                        $q->whereKey($depot->id)->orWhere(fn ($inner) => $inner->where('kind', 'seller')->where('office_id', $office->id));
+                    })->pluck('id'))
+            );
 
             $guys = KamsMember::query()
                 ->where('office_id', $office->id)
@@ -355,7 +409,7 @@ class StockMetrics
             $data['totals']['manager_savings'] = round(array_sum(array_column($officeRows, 'manager_savings')), 2);
             $data['totals']['assistant_manager_savings'] = round(array_sum(array_column($officeRows, 'assistant_manager_savings')), 2);
             $data['totals']['commissions_payable'] = round(array_sum(array_column($officeRows, 'commissions_payable')), 2);
-            $data['totals']['inventory_value'] = round(array_sum(array_column($officeRows, 'inventory_value')), 2);
+            // Keep recap inventory_value (offices + warehouses); per-office rows stay office-only.
             $data['series'] = $this->officeSeries($data['series'], $groupBy, $companyId, $officeIds, $start, $end);
         }
 
@@ -433,15 +487,17 @@ class StockMetrics
             ->whereHas('member', fn ($m) => $m->where('office_id', $office->id))
             ->whereBetween('sold_at', [$from.' 00:00:00', $to.' 23:59:59']);
         $memberIds = KamsMember::query()->where('office_id', $office->id)->pluck('id');
-        $depotIds = KamsDepot::query()->where('office_id', $office->id)->pluck('id');
+        $depotIds = KamsDepot::query()
+            ->where('office_id', $office->id)
+            ->where('kind', 'depot')
+            ->pluck('id');
         $inventory = $depotIds->isEmpty()
-            ? 0
-            : (float) KamsStockBalance::query()
-                ->whereIn('depot_id', $depotIds)
-                ->where('condition', 'available')
-                ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
-                ->value('value');
+            ? 0.0
+            : KamsProduct::sumStockSaleValue(
+                KamsStockBalance::query()
+                    ->available()
+                    ->whereIn('depot_id', $depotIds)
+            );
 
         $comp = $compensation ?? [
             'generated' => 0.0,
@@ -451,6 +507,7 @@ class StockMetrics
             'manager_sale' => 0.0,
             'assistant_manager' => 0.0,
             'manager_office' => 0.0,
+            'manager_certified_office' => 0.0,
             'manager_descendant_office' => 0.0,
             'divisionnaire_office' => 0.0,
             'secretary_office' => 0.0,
@@ -468,15 +525,20 @@ class StockMetrics
             'sales_count' => (clone $sales)->count(),
             'agents' => KamsMember::query()->where('office_id', $office->id)->whereIn('status', ['active', 'verified'])->count(),
             'guy_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'guy')->sum('balance'), 2),
-            'manager_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'manager')->sum('balance'), 2),
+            'manager_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->whereIn('kind', ['manager', 'salary', 'percentage'])->sum('balance'), 2),
             'assistant_manager_savings' => round((float) KamsSavingsAccount::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('kind', 'assistant_manager')->sum('balance'), 2),
-            'commissions_payable' => round((float) KamsSellerCommission::query()->whereIn('member_id', $memberIds->all() ?: [0])->where('status', 'payable')->sum('payable_amount'), 2),
+            'commissions_payable' => round((float) KamsRevenueShare::query()
+                ->where('office_id', $office->id)
+                ->where('status', 'payable')
+                ->whereIn('rule_code', RevenueRuleCatalog::heldOfficeCommissionCodes())
+                ->sum('amount'), 2),
             'inventory_value' => round($inventory, 2),
             'compensation_generated' => round((float) ($comp['generated'] ?? 0), 2),
             'compensation_posted' => round((float) ($comp['posted'] ?? 0), 2),
             'compensation_remaining' => round((float) ($comp['remaining'] ?? $comp['accrued'] ?? 0), 2),
             'manager_sale' => round((float) ($comp['manager_sale'] ?? 0), 2),
-            'assistant_share' => round((float) ($comp['assistant_manager'] ?? 0), 2),
+            'assistant_share' => round((float) ($comp['assistant_manager'] ?? $comp['assistant_share'] ?? 0), 2),
+            'manager_certified_share' => round((float) ($comp['manager_certified_office'] ?? 0), 2),
             'manager_office_share' => round((float) (($comp['manager_office'] ?? 0) + ($comp['manager_descendant_office'] ?? 0)), 2),
             'divisionnaire_share' => round((float) ($comp['divisionnaire_office'] ?? 0), 2),
             'secretary_share' => round((float) ($comp['secretary_office'] ?? 0), 2),
@@ -497,6 +559,7 @@ class StockMetrics
             'remaining' => round((float) ($compensation['remaining'] ?? 0), 2),
             'assistant_share' => round((float) ($compensation['assistant_share'] ?? 0), 2),
             'manager_sale' => round((float) ($compensation['manager_sale'] ?? 0), 2),
+            'manager_certified_office' => round((float) ($compensation['manager_certified_office'] ?? 0), 2),
             'manager_office' => round((float) (($compensation['manager_office'] ?? 0) + ($compensation['manager_descendant_office'] ?? 0)), 2),
             'divisionnaire_office' => round((float) ($compensation['divisionnaire_office'] ?? 0), 2),
             'secretary_office' => round((float) ($compensation['secretary_office'] ?? 0), 2),
@@ -523,10 +586,12 @@ class StockMetrics
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->whereIn('condition', ['quarantine', 'damaged'])
             ->sum('quantity');
-        $payableCommissions = KamsSellerCommission::query()
+        $payableCommissions = KamsRevenueShare::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->where('status', 'payable')
-            ->count();
+            ->whereIn('rule_code', RevenueRuleCatalog::heldOfficeCommissionCodes())
+            ->distinct()
+            ->count('beneficiary_member_id');
         $emptyWarehouse = KamsProduct::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->where('status', 'active')

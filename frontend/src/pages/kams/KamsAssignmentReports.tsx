@@ -1,13 +1,16 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Link, useOutletContext, useParams } from 'react-router-dom'
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Info, Package } from 'lucide-react'
+import { ChevronDown, Info, Package, Trash2 } from 'lucide-react'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { PaginationButtons } from '../../components/PaginationButtons'
-import { Badge, Card, Field } from '../../components/ui'
+import { Badge, Button, Card, Field, Modal } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { withBusy } from '../../lib/busy'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { money } from '../../lib/format'
 import { buildBrandedDocumentHtml, printHtml } from '../../lib/printDocument'
@@ -77,6 +80,7 @@ type ReportPayload = {
   period: Period
   range: { from: string; to: string }
   can_filter_offices?: boolean
+  can_delete?: boolean
   office_id?: number | null
   office_name?: string | null
   filter_offices?: Array<{ id: number; name: string; code?: string | null }>
@@ -174,6 +178,7 @@ function sortAssignments(rows: Assignment[], sort: DaySort) {
 export function KamsAssignmentReports() {
   const { t, i18n } = useTranslation()
   const { hasPermission } = useAuth()
+  const navigate = useNavigate()
   const { date: reportDate } = useParams()
   const detailDate = reportDate && /^\d{4}-\d{2}-\d{2}$/.test(reportDate) ? reportDate : ''
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
@@ -192,12 +197,14 @@ export function KamsAssignmentReports() {
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const [printPreviewTitle, setPrintPreviewTitle] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [deletingDate, setDeletingDate] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
 
-  useEffect(() => {
+  const load = () => {
     if (!from || !to) return
-    let active = true
-    setLoading(true)
-    api.get('/modules/kams/stock/assignments/report', {
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/modules/kams/stock/assignments/report', {
       params: {
         from,
         to,
@@ -205,41 +212,68 @@ export function KamsAssignmentReports() {
         ...(officeId ? { office_id: officeId } : {}),
       },
     }).then((res) => {
-      if (!active) return
       const payload = res.data.data as ReportPayload
       setData(payload)
       setPage(1)
     }).catch(() => {
-      if (active) {
-        setData({
-          period,
-          range: { from, to },
-          can_filter_offices: false,
-          office_id: null,
-          office_name: null,
-          filter_offices: [],
-          totals: {
-            assignments: 0,
-            agents: 0,
-            expected_amount: 0,
-            collected_amount: 0,
-            profit_amount: 0,
-            loss_amount: 0,
-            assigned_units: 0,
-            sold_units: 0,
-            returned_units: 0,
-            lost_units: 0,
-            surplus: 0,
-            shortfall: 0,
+      setData({
+        period,
+        range: { from, to },
+        can_filter_offices: false,
+        can_delete: false,
+        office_id: null,
+        office_name: null,
+        filter_offices: [],
+        totals: {
+          assignments: 0,
+          agents: 0,
+          expected_amount: 0,
+          collected_amount: 0,
+          profit_amount: 0,
+          loss_amount: 0,
+          assigned_units: 0,
+          sold_units: 0,
+          returned_units: 0,
+          lost_units: 0,
+          surplus: 0,
+          shortfall: 0,
+        },
+        days: [],
+      })
+    }).finally(stop)
+  }
+
+  useEffect(() => {
+    void load()
+  }, [from, to, period, officeId, reloadKey])
+
+  useLiveData(load, { enabled: Boolean(from && to) })
+
+  const canDelete = hasPermission('kams.stock.reports.delete') || Boolean(data?.can_delete)
+
+  const confirmDeleteReport = async () => {
+    if (!deletingDate) return
+    const date = deletingDate
+    setDeleteError('')
+    try {
+      await withBusy('data', async () => {
+        await api.delete('/modules/kams/stock/assignments/report', {
+          data: {
+            date,
+            ...(officeId ? { office_id: officeId } : {}),
           },
-          days: [],
         })
+      })
+      setDeletingDate(null)
+      if (detailDate && detailDate === date) {
+        navigate('/modules/kams/stock/assignments/reports')
       }
-    }).finally(() => {
-      if (active) setLoading(false)
-    })
-    return () => { active = false }
-  }, [from, to, period, officeId])
+      setReloadKey((value) => value + 1)
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { message?: string } } })?.response?.data?.message
+      setDeleteError(message || t('common.alertError'))
+    }
+  }
 
   useEffect(() => {
     if (!detailDate) return
@@ -516,13 +550,26 @@ export function KamsAssignmentReports() {
                     <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.expected_amount)}</td>
                     <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.collected_amount)}</td>
                     <td className="px-3 py-2 text-right">
-                      <Link
-                        to={`/modules/kams/stock/assignments/reports/${day.date}`}
-                        aria-label={t('kams.dayReportDetails')}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-lhms/10 text-lhms hover:bg-lhms/20"
-                      >
-                        <Info size={20} />
-                      </Link>
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <Link
+                          to={`/modules/kams/stock/assignments/reports/${day.date}`}
+                          aria-label={t('kams.dayReportDetails')}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-lhms/10 text-lhms hover:bg-lhms/20"
+                        >
+                          <Info size={20} />
+                        </Link>
+                        {canDelete ? (
+                          <button
+                            type="button"
+                            aria-label={t('kams.deleteDayReport')}
+                            title={t('kams.deleteDayReport')}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-danger hover:bg-danger/10"
+                            onClick={() => { setDeleteError(''); setDeletingDate(day.date) }}
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -557,6 +604,18 @@ export function KamsAssignmentReports() {
           html={printPreviewHtml}
           onClose={() => setPrintPreviewHtml('')}
         />
+        <Modal open={Boolean(deletingDate)} title={t('kams.deleteDayReport')} onClose={() => { setDeletingDate(null); setDeleteError('') }}>
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              {t('kams.deleteDayReportConfirm', { date: deletingDate ? formatDay(deletingDate, locale) : '' })}
+            </p>
+            {deleteError ? <p className="text-sm text-danger">{deleteError}</p> : null}
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => { setDeletingDate(null); setDeleteError('') }}>{t('common.cancel')}</Button>
+              <Button onClick={() => void confirmDeleteReport()}>{t('common.delete')}</Button>
+            </div>
+          </div>
+        </Modal>
       </div>
     )
   }
@@ -575,6 +634,17 @@ export function KamsAssignmentReports() {
             ) : null}
           </div>
           <div className="flex shrink-0 items-center justify-end gap-1.5">
+            {canDelete && detailDate ? (
+              <button
+                type="button"
+                aria-label={t('kams.deleteDayReport')}
+                title={t('kams.deleteDayReport')}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full text-danger hover:bg-danger/10"
+                onClick={() => { setDeleteError(''); setDeletingDate(detailDate) }}
+              >
+                <Trash2 size={18} />
+              </button>
+            ) : null}
             <KamsTransactionsPrintMenu
               buttonClassName="px-2.5 sm:px-4"
               canPreview={canPreview}
@@ -734,6 +804,18 @@ export function KamsAssignmentReports() {
         html={printPreviewHtml}
         onClose={() => setPrintPreviewHtml('')}
       />
+      <Modal open={Boolean(deletingDate)} title={t('kams.deleteDayReport')} onClose={() => { setDeletingDate(null); setDeleteError('') }}>
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            {t('kams.deleteDayReportConfirm', { date: deletingDate ? formatDay(deletingDate, locale) : '' })}
+          </p>
+          {deleteError ? <p className="text-sm text-danger">{deleteError}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => { setDeletingDate(null); setDeleteError('') }}>{t('common.cancel')}</Button>
+            <Button onClick={() => void confirmDeleteReport()}>{t('common.delete')}</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

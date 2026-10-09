@@ -25,6 +25,7 @@ use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\KamsIdentityService;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\MemberRegistrationService;
+use App\Modules\Kams\Services\PromotionEligibilityService;
 use App\Modules\Kams\Services\RecruitmentCommunicationService;
 use App\Modules\Kams\Services\RecruitmentMetrics;
 use App\Modules\Kams\Support\DomainOptions;
@@ -34,6 +35,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class KamsRecruitmentController extends Controller
 {
@@ -46,6 +48,7 @@ class KamsRecruitmentController extends Controller
         private readonly MemberRegistrationService $registration,
         private readonly MemberMigrationService $migration,
         private readonly RecruitmentMetrics $metrics,
+        private readonly PromotionEligibilityService $promotionEligibility,
         private readonly AgentAccountService $accounts,
         private readonly KamsAccountProvisioner $wallets,
     ) {}
@@ -125,6 +128,7 @@ class KamsRecruitmentController extends Controller
             $groupBy === 'custom' ? $request->string('from')->toString() : null,
             $groupBy === 'custom' ? $request->string('to')->toString() : null,
         );
+        $payload['promotion_eligibility'] = $this->promotionEligibility->counts($companyId, $officeIds);
         $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
         return $this->ok($payload);
@@ -134,7 +138,7 @@ class KamsRecruitmentController extends Controller
     {
         $report = $request->boolean('report');
         $query = $this->scopedCandidates($request)
-            ->with(['office', 'sponsor', 'guardian', 'member', 'latestInterview', 'latestObservationDay']);
+            ->with(['office', 'guardian', 'member.coach', 'latestInterview', 'latestObservationDay.supervisor']);
 
         if ($report) {
             $query->where(function (Builder $q) {
@@ -191,8 +195,6 @@ class KamsRecruitmentController extends Controller
             'guardian_phone' => ['nullable', 'string', 'max:64'],
             'guardian_member_id' => ['nullable', 'exists:kams_members,id'],
             'source' => ['required', 'in:poster,qr_code,online_form,sponsorship,social_media,other'],
-            'sponsor_name' => ['nullable', 'string', 'max:255'],
-            'sponsor_member_id' => ['nullable', 'exists:kams_members,id'],
             'notes' => ['nullable', 'string'],
             'documents' => ['nullable', 'array'],
         ]);
@@ -218,7 +220,7 @@ class KamsRecruitmentController extends Controller
 
         $this->communications->notifyApplicationReceived($candidate, $request->getPreferredLanguage() === 'en' ? 'en' : 'fr');
 
-        return $this->created($candidate->load(['office', 'sponsor', 'guardian']));
+        return $this->created($candidate->load(['office', 'guardian']));
     }
 
     public function showCandidate(Request $request, KamsCandidate $candidate): JsonResponse
@@ -227,10 +229,12 @@ class KamsRecruitmentController extends Controller
 
         return $this->ok($candidate->load([
             'office',
-            'sponsor',
+            'member.coach',
             'member.openingPositions',
             'interviews.recorder',
+            'observationDays.supervisor',
             'observationDays.recorder',
+            'latestObservationDay.supervisor',
             'communications',
         ]));
     }
@@ -255,8 +259,6 @@ class KamsRecruitmentController extends Controller
             'guardian_phone' => ['nullable', 'string'],
             'guardian_member_id' => ['nullable', 'exists:kams_members,id'],
             'source' => ['sometimes', 'in:poster,qr_code,online_form,sponsorship,social_media,other'],
-            'sponsor_name' => ['nullable', 'string'],
-            'sponsor_member_id' => ['nullable', 'exists:kams_members,id'],
             'notes' => ['nullable', 'string'],
             'documents' => ['nullable', 'array'],
         ]);
@@ -283,10 +285,9 @@ class KamsRecruitmentController extends Controller
             $data['photo_path'] = null;
         }
 
-        $old = $candidate->only(array_keys($data));
         $candidate->fill($data)->save();
 
-        return $this->ok($candidate->fresh(['office', 'sponsor', 'guardian']));
+        return $this->ok($candidate->fresh(['office', 'guardian']));
     }
 
     public function destroyCandidate(Request $request, KamsCandidate $candidate): JsonResponse
@@ -378,7 +379,6 @@ class KamsRecruitmentController extends Controller
             'attended' => ['nullable', 'boolean'],
             'supervisor_member_id' => ['required', 'exists:kams_members,id'],
             'supervisor_name' => ['nullable', 'string', 'max:255'],
-            'sponsor_member_id' => ['required_if:decision,approved', 'nullable', 'exists:kams_members,id'],
             'evaluation' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
             'decision' => ['required', 'in:approved,rejected'],
@@ -393,50 +393,42 @@ class KamsRecruitmentController extends Controller
         abort_unless($supervisor && (int) $supervisor->company_id === (int) $candidate->company_id, 422, 'The selected coach does not belong to this company.');
         $data['supervisor_name'] = $supervisor->full_name;
 
-        $sponsor = null;
-        if (! empty($data['sponsor_member_id'])) {
-            $sponsor = KamsMember::query()->find($data['sponsor_member_id']);
-            abort_unless($sponsor && (int) $sponsor->company_id === (int) $candidate->company_id, 422, 'The selected sponsor does not belong to this company.');
-            abort_if($this->isDistributorMember($sponsor), 422, 'Distributors cannot be selected as sponsors.');
-            abort_unless($sponsor->user_id, 422, 'The selected sponsor must have a user account so the candidate can join their team.');
-        } elseif ($data['decision'] === 'approved') {
-            abort(422, 'A sponsor is required when the observation is approved.');
-        } else {
-            $data['sponsor_member_id'] = null;
-        }
-
-        $observation = KamsObservationDay::query()->create([
-            ...$data,
-            'company_id' => $candidate->company_id,
-            'office_id' => $data['office_id'] ?? $candidate->office_id,
-            'attended' => $data['attended'] ?? false,
-            'recorded_by' => $request->user()->id,
-            'recorded_at' => now(),
-        ]);
-
-        $candidateUpdates = [
-            'status' => $data['decision'] === 'approved' ? 'approved' : 'rejected',
-        ];
-        if ($sponsor) {
-            $candidateUpdates['sponsor_member_id'] = $sponsor->id;
-            $candidateUpdates['sponsor_name'] = $sponsor->full_name;
-        }
-        $candidate->forceFill($candidateUpdates)->save();
-
-        $member = null;
-        $credentials = null;
         if ($data['decision'] === 'approved') {
-            $registered = $this->registration->registerFromObservation(
-                $observation,
-                $request->getPreferredLanguage() === 'en' ? 'en' : 'fr'
-            );
-            $member = $registered['member'];
-            $credentials = $registered['credentials'];
+            abort_if($this->isDistributorMember($supervisor), 422, 'Distributors cannot be selected as coaches.');
+            abort_unless($supervisor->user_id, 422, 'The selected coach must have a user account so the candidate can join their team.');
         }
+
+        $locale = $request->getPreferredLanguage() === 'en' ? 'en' : 'fr';
+        $recordedBy = $request->user()->id;
+
+        [$observation, $member, $credentials] = DB::transaction(function () use ($data, $candidate, $locale, $recordedBy) {
+            $observation = KamsObservationDay::query()->create([
+                ...$data,
+                'company_id' => $candidate->company_id,
+                'office_id' => $data['office_id'] ?? $candidate->office_id,
+                'attended' => $data['attended'] ?? false,
+                'recorded_by' => $recordedBy,
+                'recorded_at' => now(),
+            ]);
+
+            $candidate->forceFill([
+                'status' => $data['decision'] === 'approved' ? 'approved' : 'rejected',
+            ])->save();
+
+            $member = null;
+            $credentials = null;
+            if ($data['decision'] === 'approved') {
+                $registered = $this->registration->registerFromObservation($observation, $locale);
+                $member = $registered['member'];
+                $credentials = $registered['credentials'];
+            }
+
+            return [$observation, $member, $credentials];
+        });
 
         return $this->created([
-            'observation' => $observation->load(['candidate', 'office', 'recorder', 'sponsor']),
-            'member' => $member?->load(['office', 'openingPositions', 'user', 'role', 'trainer']),
+            'observation' => $observation->load(['candidate', 'office', 'recorder', 'supervisor']),
+            'member' => $member?->load(['office', 'openingPositions', 'user', 'role', 'coach', 'trainer']),
             'credentials' => $credentials,
         ]);
     }
@@ -444,7 +436,7 @@ class KamsRecruitmentController extends Controller
     public function members(Request $request): JsonResponse
     {
         $query = $this->scopedMembers($request)
-            ->with(['office', 'role', 'trainer', 'coach', 'candidate.sponsor', 'openingPositions', 'user'])
+            ->with(['office', 'role', 'trainer', 'coach', 'openingPositions', 'user'])
             ->latest();
 
         if ($origin = $request->string('origin')->toString()) {
@@ -468,7 +460,39 @@ class KamsRecruitmentController extends Controller
             });
         }
 
-        return $this->paginated($query->paginate($request->integer('per_page', 50)));
+        $companyId = $request->filled('company_id')
+            ? (int) $request->company_id
+            : ($request->user()->isGroupAdmin() ? null : $request->user()->primary_company_id);
+        $evaluated = $this->promotionEligibility->evaluate($companyId);
+
+        $eligibility = $request->string('promotion_eligibility')->toString();
+        if (in_array($eligibility, ['eligible', 'chef', 'assistant_manager', 'not_eligible'], true)) {
+            $ids = match ($eligibility) {
+                'chef' => array_keys($evaluated['chef']),
+                'assistant_manager' => array_keys($evaluated['assistant_manager']),
+                'eligible' => array_keys($evaluated['any']),
+                default => [],
+            };
+            if ($eligibility === 'not_eligible') {
+                $eligibleIds = array_keys($evaluated['any']);
+                if ($eligibleIds !== []) {
+                    $query->whereNotIn('id', $eligibleIds);
+                }
+            } else {
+                $query->whereIn('id', $ids !== [] ? $ids : [0]);
+            }
+        }
+
+        $page = $query->paginate($request->integer('per_page', 50));
+        $page->getCollection()->transform(function (KamsMember $member) use ($evaluated) {
+            $flags = $this->promotionEligibility->flagsFor((int) $member->id, $evaluated);
+            $member->setAttribute('promotion_eligible', $flags['eligible']);
+            $member->setAttribute('promotion_for', $flags['promotion_for']);
+
+            return $member;
+        });
+
+        return $this->paginated($page);
     }
 
     public function storeMember(Request $request): JsonResponse
@@ -501,12 +525,14 @@ class KamsRecruitmentController extends Controller
             'role_id' => ['nullable', 'exists:roles,id'],
             'joined_on' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
+            'is_certified' => ['sometimes', 'boolean'],
         ]);
 
         $this->assertCompany($request, (int) $data['company_id']);
         $this->assertOfficeCompany($data['office_id'] ?? null, (int) $data['company_id']);
         $photoPath = $this->storePeoplePhoto($request);
-        unset($data['photo']);
+        $isCertified = array_key_exists('is_certified', $data) ? $request->boolean('is_certified') : null;
+        unset($data['photo'], $data['is_certified']);
         $data = array_merge($data, PersonName::fromParts($data['first_name'], $data['last_name']));
         $data = $this->withTrainerUser($data);
         $data = $this->withCoachMember($data, (int) $data['company_id']);
@@ -524,6 +550,9 @@ class KamsRecruitmentController extends Controller
 
         $credentials = $this->accounts->provision($member);
         $this->wallets->ensureWallet($member);
+        if ($isCertified !== null) {
+            $this->accounts->setCertified($member->fresh(['role', 'user']), $isCertified);
+        }
         $fresh = $member->fresh(['office', 'role', 'trainer', 'coach', 'user', 'managerMember', 'assistantManager']);
         $locale = $request->getPreferredLanguage() === 'en' ? 'en' : 'fr';
         $this->accounts->mailCredentials($fresh, $credentials);
@@ -550,7 +579,6 @@ class KamsRecruitmentController extends Controller
             'managerMember',
             'assistantManager',
             'user',
-            'candidate.sponsor:id,full_name,member_code',
             'history.changer',
             'history.approver',
             'communications',
@@ -606,10 +634,12 @@ class KamsRecruitmentController extends Controller
             'joined_on' => ['nullable', 'date'],
             'status' => ['nullable', 'in:pending_verification,verified,active,inactive,disputed'],
             'reason' => ['nullable', 'string'],
+            'is_certified' => ['sometimes', 'boolean'],
         ]);
 
         $reason = $data['reason'] ?? 'Profile update';
-        unset($data['reason'], $data['photo'], $data['remove_photo']);
+        $isCertified = array_key_exists('is_certified', $data) ? $request->boolean('is_certified') : null;
+        unset($data['reason'], $data['photo'], $data['remove_photo'], $data['is_certified']);
 
         if (array_key_exists('first_name', $data) || array_key_exists('last_name', $data)) {
             $data = array_merge($data, PersonName::fromParts(
@@ -638,6 +668,11 @@ class KamsRecruitmentController extends Controller
 
         $member = $member->fresh(['office', 'role', 'trainer', 'coach', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']);
         $this->accounts->syncFromMember($member);
+        if ($isCertified !== null) {
+            $this->accounts->setCertified($member, $isCertified);
+        } elseif (array_key_exists('role_id', $data)) {
+            $this->accounts->setCertified($member, (bool) $member->user?->is_certified);
+        }
 
         return $this->ok($member->fresh(['office', 'role', 'trainer', 'coach', 'managerMember', 'assistantManager', 'history', 'openingPositions', 'user']));
     }
@@ -797,7 +832,6 @@ class KamsRecruitmentController extends Controller
             'guardian_name' => ['nullable', 'string', 'max:255'],
             'guardian_phone' => ['nullable', 'string', 'max:64'],
             'source' => ['required', 'in:poster,qr_code,online_form,sponsorship,social_media,other'],
-            'sponsor_name' => ['nullable', 'string', 'max:255'],
         ]);
 
         $photoPath = $this->storePeoplePhoto($request);
@@ -930,6 +964,9 @@ class KamsRecruitmentController extends Controller
         if (! $coachId) {
             $data['coach_member_id'] = null;
             $data['coach_name'] = null;
+            // Encadreur = parrain: finance still reads trainer_user_id.
+            $data['trainer_user_id'] = null;
+            $data['trainer_name'] = null;
 
             return $data;
         }
@@ -937,6 +974,8 @@ class KamsRecruitmentController extends Controller
         $coach = KamsMember::query()->find($coachId);
         abort_unless($coach && (int) $coach->company_id === $companyId, 422, 'The selected coach does not belong to this company.');
         $data['coach_name'] = $coach->full_name;
+        $data['trainer_user_id'] = $coach->user_id;
+        $data['trainer_name'] = $coach->full_name;
 
         return $data;
     }
@@ -952,13 +991,6 @@ class KamsRecruitmentController extends Controller
             if ($guardian) {
                 $data['guardian_name'] = $guardian->full_name;
                 $data['guardian_phone'] = $guardian->phone;
-            }
-        }
-
-        if (! empty($data['sponsor_member_id'])) {
-            $sponsor = KamsMember::query()->find($data['sponsor_member_id']);
-            if ($sponsor) {
-                $data['sponsor_name'] = $sponsor->full_name;
             }
         }
 

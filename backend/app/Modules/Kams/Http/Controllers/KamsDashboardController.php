@@ -47,8 +47,14 @@ class KamsDashboardController extends Controller
         if ($canProducts) {
             $stats['stock'] = (int) KamsStockBalance::query()
                 ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-                ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
                 ->where('condition', 'available')
+                ->whereHas('depot', function ($depot) use ($officeIds) {
+                    // Module stock = office depots only (warehouses shown on admin dashboard).
+                    $depot->where('kind', 'depot');
+                    if ($officeIds !== []) {
+                        $depot->whereIn('office_id', $officeIds);
+                    }
+                })
                 ->sum('quantity');
         }
         if ($canOrders) {

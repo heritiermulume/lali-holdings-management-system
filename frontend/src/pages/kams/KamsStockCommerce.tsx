@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { money } from '../../lib/format'
 
@@ -31,6 +32,7 @@ export function KamsReceipts() {
   const load = () => api.get('/modules/kams/stock/receipts').then((res) => setRows(res.data.data))
 
   useEffect(() => { void load() }, [])
+  useLiveData(load)
 
   const act = async (id: number, action: 'validate' | 'cancel') => {
     setError('')
@@ -115,6 +117,8 @@ export function KamsReturns() {
     })
     api.get('/modules/kams/stock/sales').then((res) => setSales((res.data.data || []).map((row: { id: number; reference: string }) => ({ id: row.id, reference: row.reference }))))
   }, [])
+
+  useLiveData(load)
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -247,6 +251,7 @@ export function KamsCommissions() {
 
   const load = () => api.get('/modules/kams/stock/commissions').then((res) => setRows(res.data.data))
   useEffect(() => { void load() }, [])
+  useLiveData(load)
 
   const pay = async (event: FormEvent) => {
     event.preventDefault()

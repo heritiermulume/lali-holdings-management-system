@@ -26,6 +26,7 @@ use Laravel\Sanctum\HasApiTokens;
     'locale',
     'timezone',
     'is_active',
+    'is_certified',
     'primary_company_id',
     'primary_office_id',
     'password',
@@ -38,6 +39,8 @@ class User extends Authenticatable
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, HasLhmsPermissions, Notifiable, SoftDeletes;
 
+    public const CERTIFIABLE_ROLE_SLUGS = ['partner', 'vice_president', 'divisionnaire', 'manager', 'assistant_manager'];
+
     protected function casts(): array
     {
         return [
@@ -45,9 +48,17 @@ class User extends Authenticatable
             'last_login_at' => 'datetime',
             'password_changed_at' => 'datetime',
             'is_active' => 'boolean',
+            'is_certified' => 'boolean',
             'password' => 'hashed',
             'login_password' => 'encrypted',
         ];
+    }
+
+    public function isCertifiable(): bool
+    {
+        $this->loadMissing('roles:id,slug');
+
+        return $this->roles->contains(fn (Role $role) => in_array($role->slug, self::CERTIFIABLE_ROLE_SLUGS, true));
     }
 
     protected static function booted(): void

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Kams\Services;
 
+use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsRevenueRule;
@@ -42,25 +43,23 @@ class RevenueShareService
     {
         $this->accrue($sale);
         $shares = KamsRevenueShare::query()
+            ->with(['beneficiary:id,full_name,member_code,office_id,role_id', 'beneficiary.role:id,slug', 'parentShare'])
             ->where('sale_id', $sale->id)
-            ->whereIn('status', ['accrued', 'posted'])
+            ->whereIn('status', ['accrued', 'posted', 'payable'])
             ->get();
         foreach ($shares as $share) {
-            $member = $share->beneficiary_member_id
-                ? KamsMember::query()->find($share->beneficiary_member_id)
-                : null;
-            if ($member && (float) $share->amount != 0.0) {
-                $kind = RevenueRuleCatalog::savingsKind($share->rule_code);
-                $this->savings->postCompensation(
-                    $member,
-                    $kind,
-                    (float) $share->amount,
-                    'revenue_share',
-                    $share,
-                    $sale->sold_at?->toDateString(),
-                    trim(($share->formula ?: $share->rule_code).' · '.$sale->reference)
-                );
+            // Office-opening manager/divisionnaire % stays payable until transferred from the office account.
+            if (RevenueRuleCatalog::isHeldOfficeCommission((string) $share->rule_code)) {
+                if ($share->status === 'accrued') {
+                    $share->forceFill([
+                        'status' => 'payable',
+                        'posted_at' => null,
+                    ])->save();
+                }
+                continue;
             }
+
+            $this->postShareToLedger($share, $sale);
             if ($share->status === 'accrued') {
                 $share->forceFill([
                     'status' => 'posted',
@@ -75,25 +74,46 @@ class RevenueShareService
      */
     public function syncMemberLedger(KamsMember $member): void
     {
+        $member->loadMissing('role:id,slug');
         $shares = KamsRevenueShare::query()
-            ->with('sale:id,reference,sold_at')
+            ->with([
+                'sale:id,reference,sold_at',
+                'beneficiary:id,full_name,member_code,office_id,role_id',
+                'beneficiary.role:id,slug',
+                'parentShare',
+            ])
             ->where('beneficiary_member_id', $member->id)
             ->where('status', 'posted')
             ->where('amount', '!=', 0)
             ->get();
 
         foreach ($shares as $share) {
-            $kind = RevenueRuleCatalog::savingsKind($share->rule_code);
-            $sale = $share->sale;
-            $this->savings->postCompensation(
-                $member,
-                $kind,
-                (float) $share->amount,
-                'revenue_share',
-                $share,
-                $sale?->sold_at?->toDateString() ?: $share->created_at?->toDateString(),
-                trim(($share->formula ?: $share->rule_code).($sale?->reference ? ' · '.$sale->reference : ''))
-            );
+            $this->postShareToLedger($share, $share->sale);
+        }
+
+        // Backfill salary debits for assistants paid from this manager's office production.
+        $managerSaleIds = KamsRevenueShare::query()
+            ->where('beneficiary_member_id', $member->id)
+            ->where('rule_code', RevenueRuleCatalog::MANAGER_SALE)
+            ->where('status', 'posted')
+            ->pluck('id')
+            ->filter()
+            ->all();
+        if ($managerSaleIds !== []) {
+            $childShares = KamsRevenueShare::query()
+                ->with([
+                    'sale:id,reference,sold_at',
+                    'beneficiary:id,full_name,member_code,office_id,role_id',
+                    'beneficiary.role:id,slug',
+                    'parentShare',
+                ])
+                ->whereIn('parent_share_id', $managerSaleIds)
+                ->where('status', 'posted')
+                ->where('amount', '!=', 0)
+                ->get();
+            foreach ($childShares as $child) {
+                $this->postManagerAssistantPayout($child, $child->sale);
+            }
         }
 
         $salaries = KamsSalaryEntry::query()
@@ -102,10 +122,14 @@ class RevenueShareService
             ->where('amount', '!=', 0)
             ->get();
 
+        $salaryKind = RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug)
+            ? 'salary'
+            : 'secretary';
+
         foreach ($salaries as $salary) {
             $this->savings->postCompensation(
                 $member,
-                'secretary',
+                $salaryKind,
                 (float) $salary->amount,
                 'salary',
                 $salary,
@@ -127,6 +151,7 @@ class RevenueShareService
      *   assistant_share: float,
      *   manager_sale: float,
      *   manager_office: float,
+     *   manager_certified_office: float,
      *   manager_descendant_office: float,
      *   divisionnaire_office: float,
      *   secretary_office: float,
@@ -140,7 +165,9 @@ class RevenueShareService
         $emptyRules = [
             RevenueRuleCatalog::MANAGER_SALE => 0.0,
             RevenueRuleCatalog::ASSISTANT_MANAGER => 0.0,
+            RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED => 0.0,
             RevenueRuleCatalog::MANAGER_OFFICE => 0.0,
+            RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE => 0.0,
             RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE => 0.0,
             RevenueRuleCatalog::DIVISIONNAIRE_OFFICE => 0.0,
             RevenueRuleCatalog::SECRETARY_OFFICE => 0.0,
@@ -167,7 +194,8 @@ class RevenueShareService
             $code = (string) $row->rule_code;
             $officeId = (int) ($row->office_id ?: 0);
             $generated += $amount;
-            if ($row->status === 'posted') {
+            $isSettled = in_array((string) $row->status, ['posted', 'paid'], true);
+            if ($isSettled) {
                 $posted += $amount;
             } else {
                 $accrued += $amount;
@@ -188,7 +216,7 @@ class RevenueShareService
                     ]);
                 }
                 $byOffice[$officeId]['generated'] = round($byOffice[$officeId]['generated'] + $amount, 2);
-                if ($row->status === 'posted') {
+                if ($isSettled) {
                     $byOffice[$officeId]['posted'] = round($byOffice[$officeId]['posted'] + $amount, 2);
                 } else {
                     $byOffice[$officeId]['accrued'] = round($byOffice[$officeId]['accrued'] + $amount, 2);
@@ -231,9 +259,14 @@ class RevenueShareService
             'posted' => round($posted, 2),
             'accrued' => round($accrued, 2),
             'remaining' => round($accrued, 2),
-            'assistant_share' => round($byRule[RevenueRuleCatalog::ASSISTANT_MANAGER] ?? 0, 2),
+            'assistant_share' => round(
+                ($byRule[RevenueRuleCatalog::ASSISTANT_MANAGER] ?? 0)
+                + ($byRule[RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED] ?? 0),
+                2
+            ),
             'manager_sale' => round($byRule[RevenueRuleCatalog::MANAGER_SALE] ?? 0, 2),
             'manager_office' => round($byRule[RevenueRuleCatalog::MANAGER_OFFICE] ?? 0, 2),
+            'manager_certified_office' => round($byRule[RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE] ?? 0, 2),
             'manager_descendant_office' => round($byRule[RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE] ?? 0, 2),
             'divisionnaire_office' => round($byRule[RevenueRuleCatalog::DIVISIONNAIRE_OFFICE] ?? 0, 2),
             'secretary_office' => round($byRule[RevenueRuleCatalog::SECRETARY_OFFICE] ?? 0, 2),
@@ -258,7 +291,9 @@ class RevenueShareService
         $emptyRules = [
             RevenueRuleCatalog::MANAGER_SALE => 0.0,
             RevenueRuleCatalog::ASSISTANT_MANAGER => 0.0,
+            RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED => 0.0,
             RevenueRuleCatalog::MANAGER_OFFICE => 0.0,
+            RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE => 0.0,
             RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE => 0.0,
             RevenueRuleCatalog::DIVISIONNAIRE_OFFICE => 0.0,
             RevenueRuleCatalog::SECRETARY_OFFICE => 0.0,
@@ -272,7 +307,7 @@ class RevenueShareService
             $amount = round((float) $row->total, 2);
             $code = (string) $row->rule_code;
             $generated += $amount;
-            if ($row->status === 'posted') {
+            if (in_array((string) $row->status, ['posted', 'paid'], true)) {
                 $posted += $amount;
             } else {
                 $accrued += $amount;
@@ -321,8 +356,13 @@ class RevenueShareService
                 'distributed_to_assistants' => round((float) $toAssistants, 2),
                 'manager_remaining' => round(max(0, ($byRule[RevenueRuleCatalog::MANAGER_SALE] ?? 0) - (float) $toAssistants), 2),
                 'manager_sale' => round($byRule[RevenueRuleCatalog::MANAGER_SALE] ?? 0, 2),
-                'assistant_share' => round($byRule[RevenueRuleCatalog::ASSISTANT_MANAGER] ?? 0, 2),
+                'assistant_share' => round(
+                    ($byRule[RevenueRuleCatalog::ASSISTANT_MANAGER] ?? 0)
+                    + ($byRule[RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED] ?? 0),
+                    2
+                ),
                 'manager_office' => round($byRule[RevenueRuleCatalog::MANAGER_OFFICE] ?? 0, 2),
+                'manager_certified_office' => round($byRule[RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE] ?? 0, 2),
                 'manager_descendant_office' => round($byRule[RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE] ?? 0, 2),
                 'divisionnaire_office' => round($byRule[RevenueRuleCatalog::DIVISIONNAIRE_OFFICE] ?? 0, 2),
                 'secretary_office' => round($byRule[RevenueRuleCatalog::SECRETARY_OFFICE] ?? 0, 2),
@@ -376,9 +416,10 @@ class RevenueShareService
             ]
         );
         if ($entry->wasRecentlyCreated) {
+            $member->loadMissing('role:id,slug');
             $this->savings->postCompensation(
                 $member,
-                'secretary',
+                RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug) ? 'salary' : 'secretary',
                 $amount,
                 'salary',
                 $entry,
@@ -407,7 +448,7 @@ class RevenueShareService
         $sales = round($price * $qty, 2);
         $product = $item->product;
         $managerRule = $rules->get(RevenueRuleCatalog::MANAGER_SALE);
-        $managerPercent = $this->managerPercent($product, $managerRule);
+        $managerPercent = $this->managerPercent($product);
         $office = $context['office_model'];
         $manager = $context['manager'];
         $lineSnapshot = array_merge($publicSnapshot, [
@@ -418,6 +459,8 @@ class RevenueShareService
             'manager_percent' => $managerPercent,
         ]);
 
+        // Local office production share (product %): manager, VP, partner or divisionnaire
+        // acting as office manager all receive the same package on their office sales.
         $managerShare = null;
         if ($manager && $managerRule && $managerPercent > 0) {
             $amount = RevenueRuleCatalog::percentOf($sales, $managerPercent);
@@ -431,19 +474,25 @@ class RevenueShareService
                 $managerPercent,
                 $amount,
                 RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_SALE, $sales, $managerPercent),
-                $lineSnapshot
+                array_merge($lineSnapshot, [
+                    'office_manager_role' => $this->hierarchy->roleSlug($manager),
+                ])
             );
         }
 
         $amRule = $rules->get(RevenueRuleCatalog::ASSISTANT_MANAGER);
         $assistant = $context['assistant'];
-        if ($assistant && $amRule && $managerPercent > 0 && $managerShare) {
+        $amDeducted = 0.0;
+        // Keep manager_sale GROSS on the share; AM payouts are debited from Compte Salaire at post time.
+        $remainingForAm = $managerShare ? (float) $managerShare->amount : 0.0;
+        $amPercent = $amRule ? (float) $amRule->percent : 0.0;
+        if ($assistant && $amRule && $amPercent > 0 && $managerShare) {
             $divisor = (float) ($amRule->divisor ?? 0);
             if ($divisor <= 0) {
                 $divisor = 0;
             }
-            $amAmount = RevenueRuleCatalog::assistantShare($sales, $divisor, $managerPercent);
-            $amAmount = min($amAmount, (float) $managerShare->amount);
+            $amAmount = RevenueRuleCatalog::assistantShare($sales, $divisor, $amPercent);
+            $amAmount = min($amAmount, $remainingForAm);
             if ($amAmount > 0) {
                 $this->storeShare(
                     $sale,
@@ -452,21 +501,114 @@ class RevenueShareService
                     $amRule,
                     $assistant,
                     $sales,
-                    $managerPercent,
+                    $amPercent,
                     $amAmount,
-                    RevenueRuleCatalog::formula(RevenueRuleCatalog::ASSISTANT_MANAGER, $sales, $managerPercent, $divisor),
-                    array_merge($lineSnapshot, ['team_sales' => $sales, 'divisor' => $divisor]),
+                    RevenueRuleCatalog::formula(RevenueRuleCatalog::ASSISTANT_MANAGER, $sales, $amPercent, $divisor),
+                    array_merge($lineSnapshot, [
+                        'team_sales' => $sales,
+                        'divisor' => $divisor,
+                        'assistant_percent' => $amPercent,
+                        'paid_from_manager_salary' => true,
+                    ]),
                     $managerShare->id
                 );
-                $managerShare->amount = round((float) $managerShare->amount - $amAmount, 2);
-                $managerShare->formula = RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_SALE, $sales, $managerPercent)
-                    .' − AM '.$amAmount;
-                $managerShare->save();
+                $amDeducted += $amAmount;
+                $remainingForAm = round($remainingForAm - $amAmount, 2);
+            }
+
+            // Certified upline AM: +1/8 of this sub-AM's team production, paid from manager Salaire.
+            $certifiedSponsor = $context['certified_assistant_sponsor_model'] ?? null;
+            if (
+                $certifiedSponsor
+                && $remainingForAm > 0
+                && $this->memberIsCertified($certifiedSponsor)
+            ) {
+                $certifiedDivisor = RevenueRuleCatalog::CERTIFIED_ASSISTANT_DIVISOR;
+                $certifiedAmount = RevenueRuleCatalog::certifiedAssistantShare($sales, $certifiedDivisor);
+                $certifiedAmount = min($certifiedAmount, $remainingForAm);
+                if ($certifiedAmount > 0) {
+                    $this->storeShare(
+                        $sale,
+                        $item,
+                        $office?->id,
+                        $amRule,
+                        $certifiedSponsor,
+                        $sales,
+                        0,
+                        $certifiedAmount,
+                        RevenueRuleCatalog::formula(
+                            RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED,
+                            $sales,
+                            0,
+                            $certifiedDivisor
+                        ),
+                        array_merge($lineSnapshot, [
+                            'team_sales' => $sales,
+                            'divisor' => $certifiedDivisor,
+                            'sub_assistant_manager' => $context['assistant_manager'] ?? null,
+                            'assistant_certified_surplus' => true,
+                            'paid_from_manager_salary' => true,
+                        ]),
+                        $managerShare->id,
+                        RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED
+                    );
+                    $amDeducted += $certifiedAmount;
+                    $remainingForAm = round($remainingForAm - $certifiedAmount, 2);
+                }
+            }
+
+            if ($amDeducted > 0) {
+                $gross = (float) $managerShare->amount;
+                $managerShare->forceFill([
+                    'formula' => RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_SALE, $sales, $managerPercent)
+                        .' − AM '.$amDeducted.' (Salaire)',
+                    'snapshot' => array_merge($managerShare->snapshot ?? [], [
+                        'assistant_deducted' => $amDeducted,
+                        'manager_sale_gross' => $gross,
+                        'manager_sale_net_after_am' => round($gross - $amDeducted, 2),
+                        'pay_assistants_from_salary' => true,
+                    ]),
+                ])->save();
             }
         }
 
         $directRule = $rules->get(RevenueRuleCatalog::MANAGER_OFFICE);
         $descendantRule = $rules->get(RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE);
+        $officeBase = RevenueRuleCatalog::officeSalesAfterManagerShare($sales, $managerPercent);
+
+        // Certified surplus → Compte Overed. Base = product sales − manager product share
+        // (e.g. 6000 − 1500 = 4500), never shared with assistant managers.
+        if ($manager && $directRule && (float) $directRule->percent > 0 && $this->memberIsCertified($manager)) {
+            $managerSaleCut = RevenueRuleCatalog::percentOf($sales, $managerPercent);
+            $certifiedBase = max(0.0, round($sales - $managerSaleCut, 2));
+            $certifiedPercent = (float) $directRule->percent;
+            $certifiedAmount = RevenueRuleCatalog::percentOf($certifiedBase, $certifiedPercent);
+            if ($certifiedAmount > 0) {
+                $this->storeShare(
+                    $sale,
+                    $item,
+                    $office?->id,
+                    $directRule,
+                    $manager,
+                    $certifiedBase,
+                    $certifiedPercent,
+                    $certifiedAmount,
+                    sprintf(
+                        '(%s − %s manager sale) × %s%% · certified',
+                        rtrim(rtrim(number_format($sales, 4, '.', ''), '0'), '.') ?: '0',
+                        rtrim(rtrim(number_format($managerSaleCut, 4, '.', ''), '0'), '.') ?: '0',
+                        rtrim(rtrim(number_format($certifiedPercent, 4, '.', ''), '0'), '.') ?: '0',
+                    ),
+                    array_merge($lineSnapshot, [
+                        'certified_surplus' => true,
+                        'manager_sale_cut' => $managerSaleCut,
+                        'certified_base' => $certifiedBase,
+                    ]),
+                    null,
+                    RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE,
+                );
+            }
+        }
         foreach ($context['manager_models'] as $row) {
             /** @var KamsMember $upline */
             $upline = $row['member'];
@@ -481,10 +623,10 @@ class RevenueShareService
                 $office?->id,
                 $rule,
                 $upline,
-                $sales,
+                $officeBase,
                 (float) $rule->percent,
-                RevenueRuleCatalog::percentOf($sales, (float) $rule->percent),
-                RevenueRuleCatalog::formula($rule->code, $sales, (float) $rule->percent),
+                RevenueRuleCatalog::percentOf($officeBase, (float) $rule->percent),
+                RevenueRuleCatalog::formula($rule->code, $officeBase, (float) $rule->percent, null, $sales, $managerPercent),
                 $lineSnapshot
             );
         }
@@ -498,10 +640,10 @@ class RevenueShareService
                     $office?->id,
                     $divRule,
                     $divisionnaire,
-                    $sales,
+                    $officeBase,
                     (float) $divRule->percent,
-                    RevenueRuleCatalog::percentOf($sales, (float) $divRule->percent),
-                    RevenueRuleCatalog::formula($divRule->code, $sales, (float) $divRule->percent),
+                    RevenueRuleCatalog::percentOf($officeBase, (float) $divRule->percent),
+                    RevenueRuleCatalog::formula($divRule->code, $officeBase, (float) $divRule->percent, null, $sales, $managerPercent),
                     $lineSnapshot
                 );
             }
@@ -516,23 +658,144 @@ class RevenueShareService
                     $office?->id,
                     $secretaryRule,
                     $secretary,
-                    $sales,
+                    $officeBase,
                     (float) $secretaryRule->percent,
-                    RevenueRuleCatalog::percentOf($sales, (float) $secretaryRule->percent),
-                    RevenueRuleCatalog::formula($secretaryRule->code, $sales, (float) $secretaryRule->percent),
+                    RevenueRuleCatalog::percentOf($officeBase, (float) $secretaryRule->percent),
+                    RevenueRuleCatalog::formula($secretaryRule->code, $officeBase, (float) $secretaryRule->percent, null, $sales, $managerPercent),
                     $lineSnapshot
                 );
             }
         }
     }
 
-    private function managerPercent(?KamsProduct $product, ?KamsRevenueRule $rule): float
+    private function managerPercent(?KamsProduct $product): float
     {
-        if ($product && $product->manager_share_percent !== null && (float) $product->manager_share_percent > 0) {
-            return (float) $product->manager_share_percent;
+        // Manager sale share is defined per product (not via finance settings).
+        if (! $product || $product->manager_share_percent === null) {
+            return 0.0;
         }
 
-        return $rule ? (float) $rule->percent : 0;
+        return max(0.0, (float) $product->manager_share_percent);
+    }
+
+    private function memberIsCertified(?KamsMember $member): bool
+    {
+        if (! $member?->user_id) {
+            return false;
+        }
+
+        $user = User::query()->with('roles:id,slug')->find($member->user_id);
+        if (! $user || ! $user->is_certified) {
+            return false;
+        }
+
+        $slugs = $user->roles->pluck('slug')->filter()->all();
+        $memberSlug = $member->role?->slug ?: \App\Models\Role::query()->whereKey($member->role_id)->value('slug');
+        if ($memberSlug) {
+            $slugs[] = $memberSlug;
+        }
+
+        return collect($slugs)->intersect(User::CERTIFIABLE_ROLE_SLUGS)->isNotEmpty();
+    }
+
+    private function isAssistantShare(KamsRevenueShare $share): bool
+    {
+        return in_array((string) $share->rule_code, [
+            RevenueRuleCatalog::ASSISTANT_MANAGER,
+            RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED,
+        ], true);
+    }
+
+    private function postShareToLedger(KamsRevenueShare $share, ?KamsStockSale $sale = null): void
+    {
+        $member = $share->beneficiary;
+        if (! $member && $share->beneficiary_member_id) {
+            $member = KamsMember::query()->with('role:id,slug')->find($share->beneficiary_member_id);
+        }
+        if (! $member || (float) $share->amount == 0.0) {
+            return;
+        }
+        $member->loadMissing('role:id,slug');
+
+        $kind = RevenueRuleCatalog::compensationAccountKind(
+            (string) $share->rule_code,
+            $member->role?->slug,
+            $share->office_id ? (int) $share->office_id : null,
+            $member->office_id ? (int) $member->office_id : null,
+        );
+        $date = $sale?->sold_at?->toDateString()
+            ?: $share->created_at?->toDateString()
+            ?: now()->toDateString();
+        $reference = $sale?->reference ? ' · '.$sale->reference : '';
+        $this->savings->postCompensation(
+            $member,
+            $kind,
+            (float) $share->amount,
+            'revenue_share',
+            $share,
+            $date,
+            trim(($share->formula ?: $share->rule_code).$reference)
+        );
+
+        if ($this->isAssistantShare($share)) {
+            $this->postManagerAssistantPayout($share, $sale);
+        }
+    }
+
+    /**
+     * Debit the office manager's Compte Salaire for an assistant payout (traceable counterpart of the AM credit).
+     */
+    private function postManagerAssistantPayout(KamsRevenueShare $share, ?KamsStockSale $sale = null): void
+    {
+        if (! $this->isAssistantShare($share) || ! $share->parent_share_id || (float) $share->amount == 0.0) {
+            return;
+        }
+        $snapshot = is_array($share->snapshot) ? $share->snapshot : [];
+        if (! ($snapshot['paid_from_manager_salary'] ?? false)) {
+            return;
+        }
+
+        $parent = $share->parentShare;
+        if (! $parent) {
+            $parent = KamsRevenueShare::query()->find($share->parent_share_id);
+        }
+        if (! $parent?->beneficiary_member_id) {
+            return;
+        }
+
+        $manager = KamsMember::query()->with('role:id,slug')->find($parent->beneficiary_member_id);
+        if (! $manager) {
+            return;
+        }
+
+        $assistant = $share->beneficiary;
+        if (! $assistant && $share->beneficiary_member_id) {
+            $assistant = KamsMember::query()->find($share->beneficiary_member_id);
+        }
+        $assistantName = $assistant?->full_name ?: ('#'.$share->beneficiary_member_id);
+        $date = $sale?->sold_at?->toDateString()
+            ?: $share->created_at?->toDateString()
+            ?: now()->toDateString();
+        $reference = $sale?->reference ?: '';
+        $ruleLabel = (string) $share->rule_code === RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED
+            ? 'AM certifié'
+            : 'AM';
+        $notes = trim(sprintf(
+            'Versement assistant %s (%s)%s',
+            $assistantName,
+            $ruleLabel,
+            $reference !== '' ? ' · '.$reference : ''
+        ));
+
+        $this->savings->postCompensation(
+            $manager,
+            'salary',
+            -abs((float) $share->amount),
+            'assistant_payout',
+            $share,
+            $date,
+            $notes
+        );
     }
 
     private function storeShare(
@@ -547,6 +810,7 @@ class RevenueShareService
         string $formula,
         array $snapshot,
         ?int $parentId = null,
+        ?string $ruleCodeOverride = null,
     ): KamsRevenueShare {
         return KamsRevenueShare::query()->create([
             'company_id' => $sale->company_id,
@@ -555,7 +819,7 @@ class RevenueShareService
             'product_id' => $item->product_id,
             'office_id' => $officeId,
             'rule_id' => $rule->id,
-            'rule_code' => $rule->code,
+            'rule_code' => $ruleCodeOverride ?: $rule->code,
             'role_slug' => $rule->role_slug,
             'beneficiary_user_id' => $beneficiary->user_id,
             'beneficiary_member_id' => $beneficiary->id,
@@ -579,6 +843,7 @@ class RevenueShareService
         return [
             'seller' => $context['seller'],
             'assistant_manager' => $context['assistant_manager'],
+            'certified_assistant_sponsor' => $context['certified_assistant_sponsor'] ?? null,
             'office' => $context['office'],
             'office_creator' => $context['office_creator'],
             'office_manager' => $context['office_manager'],

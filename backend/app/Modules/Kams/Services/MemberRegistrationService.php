@@ -36,8 +36,7 @@ class MemberRegistrationService
         }
 
         return DB::transaction(function () use ($candidate, $observation, $locale) {
-            $sponsor = $observation->sponsor()->first()
-                ?: ($candidate->sponsor_member_id ? KamsMember::query()->find($candidate->sponsor_member_id) : null);
+            // Encadreur (observation supervisor) is the upline used by finance.
             $coach = $observation->supervisor()->first();
 
             $member = KamsMember::query()->create([
@@ -56,8 +55,8 @@ class MemberRegistrationService
                 'address' => $candidate->address,
                 'guardian_name' => $candidate->guardian_name,
                 'guardian_phone' => $candidate->guardian_phone,
-                'trainer_name' => $sponsor?->full_name,
-                'trainer_user_id' => $sponsor?->user_id,
+                'trainer_name' => $coach?->full_name ?: $observation->supervisor_name,
+                'trainer_user_id' => $coach?->user_id,
                 'coach_member_id' => $coach?->id,
                 'coach_name' => $coach?->full_name ?: $observation->supervisor_name,
                 'rank' => SettingsCatalog::string('kams', 'default_member_rank'),

@@ -1,22 +1,21 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 
+/**
+ * Historically added sponsor_member_id to observation days.
+ * The parrain concept was removed — encadreur (supervisor/coach) is the only upline.
+ * Kept as a no-op so already-applied migration history stays valid.
+ */
 return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('kams_observation_days', function (Blueprint $table) {
-            $table->foreignId('sponsor_member_id')->nullable()->after('supervisor_member_id')->constrained('kams_members')->nullOnDelete();
-        });
+        //
     }
 
     public function down(): void
     {
-        Schema::table('kams_observation_days', function (Blueprint $table) {
-            $table->dropConstrainedForeignId('sponsor_member_id');
-        });
+        //
     }
 };

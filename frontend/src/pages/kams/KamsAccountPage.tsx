@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge, Button, Card, Empty, Field, Modal } from '../../components/ui'
+import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { money } from '../../lib/format'
 import type { User } from '../../types'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
@@ -11,12 +13,15 @@ import { KamsBankCard } from './KamsBankCard'
 
 type Entry = {
   id: number
+  kind?: string
   type: string
   status: string
   amount: number
   occurred_on?: string | null
   notes?: string | null
   created_by?: { name?: string } | null
+  is_commission_transfer?: boolean
+  source?: { is_commission_transfer?: boolean; entry_type?: string } | null
 }
 
 type Share = {
@@ -46,6 +51,7 @@ type CompensationSummary = {
     manager_sale: number
     assistant_share: number
     manager_office: number
+    manager_certified_office?: number
     manager_descendant_office: number
     divisionnaire_office: number
     secretary_office: number
@@ -53,6 +59,13 @@ type CompensationSummary = {
   }
   by_rule?: Array<{ code: string; amount: number }>
   shares: Share[]
+}
+
+type Wallet = {
+  kind: string
+  balance: number
+  pending_withdrawals: number
+  pending_deposits?: number
 }
 
 type Account = {
@@ -70,9 +83,12 @@ type Account = {
   deposits: number
   withdrawals: number
   expenses: number
+  split_accounts?: boolean
+  accounts?: Wallet[]
   entries: Entry[]
   can_deposit: boolean
   can_withdraw: boolean
+  can_decide_incoming?: boolean
 }
 
 type Action = 'deposit' | 'withdraw'
@@ -113,22 +129,39 @@ function profileCompensationKpis(
   totals: CompensationSummary['totals'],
   roleSlug: string | null | undefined,
   t: (key: string, options?: { defaultValue?: string }) => string,
+  walletsTotal?: number | null,
 ): CompensationKpi[] {
+  const generated = walletsTotal ?? totals.generated
   const overview: CompensationKpi[] = [
-    { key: 'generated', value: totals.generated },
+    { key: 'generated', value: generated },
     { key: 'postedShares', value: totals.posted },
-    { key: 'accrued', value: totals.accrued },
   ]
+
+  const certifiedSurplus: CompensationKpi = {
+    key: 'managerCertifiedShare',
+    value: totals.manager_certified_office ?? 0,
+    label: t('kams.rule.manager_certified_office'),
+  }
 
   switch (roleSlug) {
     case 'manager':
       return [
         ...overview,
         { key: 'managerSaleShare', value: totals.manager_sale, label: t('kams.rule.manager_sale') },
+        certifiedSurplus,
         { key: 'managerOfficeShare', value: totals.manager_office, label: t('kams.rule.manager_office') },
         { key: 'managerDescendantShare', value: totals.manager_descendant_office, label: t('kams.rule.manager_descendant_office') },
         { key: 'assistantDistributed', value: totals.distributed_to_assistants },
-        { key: 'managerRemaining', value: totals.manager_remaining },
+        { key: 'managerRemaining', value: walletsTotal ?? totals.manager_remaining },
+      ]
+    case 'partner':
+    case 'vice_president':
+      return [
+        ...overview,
+        { key: 'managerSaleShare', value: totals.manager_sale, label: t('kams.rule.manager_sale') },
+        certifiedSurplus,
+        { key: 'managerOfficeShare', value: totals.manager_office, label: t('kams.rule.manager_office') },
+        { key: 'managerDescendantShare', value: totals.manager_descendant_office, label: t('kams.rule.manager_descendant_office') },
       ]
     case 'secretary':
       return [
@@ -139,6 +172,8 @@ function profileCompensationKpis(
     case 'divisionnaire':
       return [
         ...overview,
+        { key: 'managerSaleShare', value: totals.manager_sale, label: t('kams.rule.manager_sale') },
+        certifiedSurplus,
         { key: 'divisionnaireShare', value: totals.divisionnaire_office, label: t('kams.rule.divisionnaire_office') },
       ]
     case 'assistant_manager':
@@ -151,6 +186,14 @@ function profileCompensationKpis(
   }
 }
 
+function walletLabel(kind: string, t: (key: string, options?: { defaultValue?: string }) => string) {
+  return t(`kams.wallet.${kind}`, { defaultValue: kind })
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100
+}
+
 export function KamsAccountPage() {
   const { t } = useTranslation()
   const { user, hasPermission } = useAuth()
@@ -159,6 +202,7 @@ export function KamsAccountPage() {
   const [missing, setMissing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [action, setAction] = useState<Action | null>(null)
+  const [accountKind, setAccountKind] = useState('salary')
   const [amount, setAmount] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
@@ -167,10 +211,14 @@ export function KamsAccountPage() {
   const [hasPrintableRows, setHasPrintableRows] = useState(false)
 
   const showCompensation = canViewMyCompensation(user, data?.member.role?.slug)
+  const splitAccounts = Boolean(data?.split_accounts)
+  const wallets = data?.accounts?.length
+    ? data.accounts
+    : [{ kind: 'guy', balance: data?.balance ?? 0, pending_withdrawals: data?.pending_withdrawals ?? 0, pending_deposits: data?.pending_deposits ?? 0 }]
 
   const load = () => {
-    setLoading(true)
-    api.get('/modules/kams/finance/account')
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/modules/kams/finance/account')
       .then((res) => {
         setMissing(!res.data.data)
         setData(res.data.data || null)
@@ -179,10 +227,11 @@ export function KamsAccountPage() {
         setMissing(true)
         setData(null)
       })
-      .finally(() => setLoading(false))
+      .finally(stop)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { void load() }, [])
+  useLiveData(load)
 
   useEffect(() => {
     if (!data || !showCompensation) {
@@ -194,8 +243,26 @@ export function KamsAccountPage() {
       .catch(() => setCompensation(null))
   }, [data, showCompensation])
 
-  const available = Math.max(0, (data?.balance ?? 0) - (data?.pending_withdrawals ?? 0))
+  useEffect(() => {
+    if (!data) return
+    if (data.split_accounts) {
+      setAccountKind((current) => (current === 'salary' || current === 'percentage' ? current : 'salary'))
+    } else {
+      setAccountKind('guy')
+    }
+  }, [data])
+
+  const selectedWallet = wallets.find((wallet) => wallet.kind === accountKind) || wallets[0]
+  const available = Math.max(0, (selectedWallet?.balance ?? 0) - (selectedWallet?.pending_withdrawals ?? 0))
   const withdrawTooHigh = action === 'withdraw' && amount !== '' && Number(amount) > available + 0.001
+
+  const openAction = (next: Action, kind?: string) => {
+    setAction(next)
+    setError('')
+    setAmount('')
+    setNotes('')
+    if (kind) setAccountKind(kind)
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -210,6 +277,7 @@ export function KamsAccountPage() {
       const res = await api.post(`/modules/kams/finance/account/${action}`, {
         amount: Number(amount),
         notes,
+        account_kind: accountKind,
       })
       setData(res.data.data)
       setAction(null)
@@ -223,6 +291,25 @@ export function KamsAccountPage() {
     }
   }
 
+  const decideIncoming = async (id: number, decision: 'approve' | 'reject', notesValue: string) => {
+    setError('')
+    try {
+      const res = await api.post(`/modules/kams/finance/account/entries/${id}/${decision}`, {
+        notes: notesValue,
+      })
+      setData(res.data.data)
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    }
+  }
+
+  const isIncomingCommission = (entry: Entry) => Boolean(
+    entry.is_commission_transfer
+    || entry.source?.is_commission_transfer
+    || entry.source?.entry_type === 'commission_transfer',
+  )
+
   if (loading) return <LoadingScreen />
   if (missing || !data) {
     return <Empty>{t('kams.noAgentAccount')}</Empty>
@@ -233,7 +320,12 @@ export function KamsAccountPage() {
     withdraw: t('kams.requestWithdrawal'),
   }
 
-  const compensationEntries = (data.entries || []).filter((entry) => entry.type === 'revenue_share' || entry.type === 'salary')
+  const compensationEntries = (data.entries || []).filter((entry) => (
+    entry.type === 'revenue_share' || entry.type === 'salary' || entry.type === 'assistant_payout'
+  ))
+  const walletsTotal = splitAccounts
+    ? roundMoney(wallets.reduce((sum, wallet) => sum + (wallet.balance || 0), 0))
+    : null
 
   return (
     <div className="space-y-5">
@@ -250,18 +342,37 @@ export function KamsAccountPage() {
 
       {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
 
-      <KamsBankCard
-        kind="member"
-        holder={data.member.full_name}
-        subtitle={data.member.office?.name}
-        balance={data.balance}
-        pending={data.pending_withdrawals}
-        pendingDeposits={data.pending_deposits}
-      />
-
-      <div className="flex flex-wrap items-center gap-2">
-        {data.can_deposit && hasPermission('kams.finance.account.deposit') ? <Button onClick={() => { setAction('deposit'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestDeposit')}</Button> : null}
-        {data.can_withdraw && hasPermission('kams.finance.account.withdraw') ? <Button variant="secondary" disabled={available <= 0.001} onClick={() => { setAction('withdraw'); setError(''); setAmount(''); setNotes('') }}>{t('kams.requestWithdrawal')}</Button> : null}
+      <div className={splitAccounts ? 'grid gap-4 lg:grid-cols-2' : ''}>
+        {wallets.map((wallet) => {
+          const walletAvailable = Math.max(0, wallet.balance - (wallet.pending_withdrawals || 0))
+          const subtitle = wallet.kind === 'salary'
+            ? t('kams.salaryAccountHint')
+            : wallet.kind === 'percentage'
+              ? t('kams.percentageAccountHint')
+              : data.member.office?.name
+          return (
+            <div key={wallet.kind} className="space-y-3">
+              <KamsBankCard
+                kind="member"
+                holder={walletLabel(wallet.kind, t)}
+                subtitle={subtitle}
+                balance={wallet.balance}
+                pending={wallet.pending_withdrawals}
+                pendingDeposits={wallet.pending_deposits}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                {data.can_deposit && hasPermission('kams.finance.account.deposit') ? (
+                  <Button onClick={() => openAction('deposit', wallet.kind)}>{t('kams.requestDeposit')}</Button>
+                ) : null}
+                {data.can_withdraw && hasPermission('kams.finance.account.withdraw') ? (
+                  <Button variant="secondary" disabled={walletAvailable <= 0.001} onClick={() => openAction('withdraw', wallet.kind)}>
+                    {t('kams.requestWithdrawal')}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       {showCompensation && (compensation || compensationEntries.length > 0) ? (
@@ -274,6 +385,7 @@ export function KamsAccountPage() {
                 compensation.totals,
                 compensation.member.role?.slug || data.member.role?.slug,
                 t,
+                walletsTotal,
               ).map((item) => (
                 <div key={item.key} className="rounded-xl bg-surface p-3">
                   <div className="text-xs text-muted">{item.label ?? t(`kams.${item.key}`)}</div>
@@ -310,7 +422,7 @@ export function KamsAccountPage() {
                     <Badge>{money(entry.amount)}</Badge>
                   </div>
                   <div className="mt-1 text-xs text-muted">
-                    {[entry.occurred_on, entry.notes, entry.status].filter(Boolean).join(' · ')}
+                    {[entry.kind ? walletLabel(entry.kind, t) : null, entry.occurred_on, entry.notes, entry.status].filter(Boolean).join(' · ')}
                   </div>
                 </div>
               ))
@@ -319,6 +431,8 @@ export function KamsAccountPage() {
         </Card>
       ) : null}
 
+      {error && !action ? <p className="text-sm text-red-600">{error}</p> : null}
+
       <KamsAccountTransactions
         ref={transactionsRef}
         key={data.member.id}
@@ -326,13 +440,24 @@ export function KamsAccountPage() {
         subtitle={data.member.full_name}
         entries={data.entries}
         showMember={false}
+        showProvenance={splitAccounts || wallets.some((wallet) => wallet.kind === 'salary' || wallet.kind === 'percentage')}
+        provenanceKinds={splitAccounts ? ['salary', 'percentage'] : wallets.map((wallet) => wallet.kind)}
         compact
+        onDecide={data.can_decide_incoming ? (id, decision, notesValue) => void decideIncoming(id, decision, notesValue) : undefined}
+        canDecideEntry={(entry) => isIncomingCommission(entry as Entry)}
         onRowsChange={(count) => setHasPrintableRows(count > 0)}
       />
 
       <Modal open={Boolean(action)} title={action ? titles[action] : ''} onClose={() => setAction(null)}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {splitAccounts ? (
+            <Select label={t('kams.selectWallet')} value={accountKind} onChange={(e) => setAccountKind(e.target.value)}>
+              {wallets.map((wallet) => (
+                <option key={wallet.kind} value={wallet.kind}>{walletLabel(wallet.kind, t)}</option>
+              ))}
+            </Select>
+          ) : null}
           <Field
             label={t('kams.amount')}
             type="number"
@@ -351,7 +476,7 @@ export function KamsAccountPage() {
             required
           />
           <Field label={t('kams.motif')} value={notes} onChange={(e) => setNotes(e.target.value)} required />
-          <Button type="submit" className="w-full" disabled={saving || withdrawTooHigh}>{saving ? t('common.loading') : t('common.save')}</Button>
+          <Button type="submit" className="w-full" disabled={saving || withdrawTooHigh}>{saving ? t('common.loading') : t('common.send')}</Button>
         </form>
       </Modal>
     </div>

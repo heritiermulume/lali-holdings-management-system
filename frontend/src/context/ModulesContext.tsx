@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useLiveData } from '../hooks/useLiveData'
 import api from '../lib/api'
 import type { SystemModule } from '../types'
 import { useAuth } from './AuthContext'
@@ -13,16 +14,21 @@ export function SystemModulesProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   const [modules, setModules] = useState<SystemModule[]>([])
 
-  useEffect(() => {
-    if (!user) {
+  const loadModules = () => {
+    if (!user?.id) {
       setModules([])
       return
     }
-
-    api.get('/modules').then((res) => setModules(res.data.data)).catch(() => {
+    return api.get('/modules').then((res) => setModules(res.data.data)).catch(() => {
       api.get('/dashboard').then((res) => setModules(res.data.data.modules ?? [])).catch(() => undefined)
     })
-  }, [user])
+  }
+
+  useEffect(() => {
+    void loadModules()
+  }, [user?.id])
+
+  useLiveData(loadModules, { enabled: Boolean(user?.id) })
 
   return <ModulesContext.Provider value={{ modules }}>{children}</ModulesContext.Provider>
 }

@@ -52,6 +52,16 @@ class RoleCatalog
         return ['partner', 'president', 'super_administrator'];
     }
 
+    /**
+     * Platform roles excluded from stock assignment pickers.
+     *
+     * @return list<string>
+     */
+    public static function kamsStockAssignmentExcludedSlugs(): array
+    {
+        return ['super_administrator', 'president'];
+    }
+
     public static function isOfficeScoped(string $slug): bool
     {
         $role = collect(self::all())->firstWhere('slug', $slug);

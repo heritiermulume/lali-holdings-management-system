@@ -30,9 +30,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Card, Empty, Field, Select } from '../../components/ui'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
+import { Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { compact, money, setActiveCurrency } from '../../lib/format'
@@ -64,6 +66,7 @@ type CompensationTotals = {
   assistant_share: number
   manager_sale: number
   manager_office: number
+  manager_certified_office?: number
   divisionnaire_office: number
   secretary_office: number
   salary_paid: number
@@ -90,6 +93,7 @@ type OfficeFinance = {
   manager_sale?: number
   assistant_share?: number
   manager_office_share?: number
+  manager_certified_share?: number
   divisionnaire_share?: number
   secretary_share?: number
   salary_paid?: number
@@ -302,15 +306,13 @@ export function KamsFinanceDashboard() {
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
   const [officeId, setOfficeId] = useState('')
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const [data, setData] = useState<FinanceData | null>(null)
   const [openOffice, setOpenOffice] = useState<number | null>(null)
   const [failed, setFailed] = useState(false)
 
-  useEffect(() => {
+  const load = () => {
     if (!from || !to) return
-    let active = true
-    api.get('/modules/kams/finance/dashboard', {
+    return api.get('/modules/kams/finance/dashboard', {
       params: {
         group_by: period,
         from,
@@ -319,7 +321,6 @@ export function KamsFinanceDashboard() {
       },
     })
       .then((res) => {
-        if (!active) return
         const payload = res.data.data
         setData(payload)
         syncOfficeIdFromPayload(setOfficeId, payload)
@@ -327,11 +328,15 @@ export function KamsFinanceDashboard() {
         setFailed(false)
       })
       .catch(() => {
-        if (!active) return
         setFailed(true)
       })
-    return () => { active = false }
+  }
+
+  useEffect(() => {
+    void load()
   }, [period, from, to, officeId])
+
+  useLiveData(load, { enabled: Boolean(from && to) })
 
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)
@@ -397,6 +402,7 @@ export function KamsFinanceDashboard() {
     { key: 'managerRemaining', value: compensation.remaining },
     { key: 'assistantShare', value: compensation.assistant_share },
     { key: 'managerSaleShare', value: compensation.manager_sale },
+    { key: 'managerCertifiedShare', value: compensation.manager_certified_office || 0 },
     { key: 'managerOfficeShare', value: compensation.manager_office },
     { key: 'divisionnaireShare', value: compensation.divisionnaire_office },
     { key: 'secretaryShare', value: compensation.secretary_office + compensation.salary_paid },
@@ -430,16 +436,19 @@ export function KamsFinanceDashboard() {
       </Card>
 
       <Card className="p-3 sm:p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((open) => !open)}
-            className={cn('min-h-10 w-fit rounded-full px-4 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-surface text-lhms')}
-          >
-            {filtersOpen ? t('common.hide') : t('common.filter')}
-          </button>
-          <div className="flex min-w-0 flex-col gap-2 sm:items-end">
-            <div className="flex w-full overflow-x-auto rounded-full bg-surface p-1 sm:w-auto">
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            {data.can_filter_offices ? (
+              <OfficeFilterSelect
+                value={officeId}
+                offices={data.filter_offices || []}
+                onChange={(e) => {
+                  setOfficeId(e.target.value)
+                  setOpenOffice(null)
+                }}
+              />
+            ) : null}
+            <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-surface p-1 sm:w-auto sm:ml-auto">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
                   key={item}
@@ -458,31 +467,14 @@ export function KamsFinanceDashboard() {
                 {t('dashboard.customPeriod')}
               </button>
             </div>
-            {period === 'custom' ? (
-              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
-                <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
-                <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
-              </div>
-            ) : null}
           </div>
+          {period === 'custom' ? (
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-80 sm:ml-auto">
+              <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
+              <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
+            </div>
+          ) : null}
         </div>
-        {filtersOpen && data.can_filter_offices ? (
-          <div className="mt-3 max-w-sm">
-            <Select
-              label={t('kams.filterOffice')}
-              value={officeId}
-              onChange={(e) => {
-                setOfficeId(e.target.value)
-                setOpenOffice(null)
-              }}
-            >
-              <option value="">{t('kams.allOffices')}</option>
-              {(data.filter_offices || []).map((office) => (
-                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
-              ))}
-            </Select>
-          </div>
-        ) : null}
       </Card>
 
       <div>
@@ -755,6 +747,7 @@ export function KamsFinanceDashboard() {
                         [t('kams.inventoryValue'), money(office.inventory_value)],
                         [t('kams.generated'), money(office.compensation_generated || 0)],
                         [t('kams.managerSaleShare'), money(office.manager_sale || 0)],
+                        [t('kams.rule.manager_certified_office'), money(office.manager_certified_share || 0)],
                         [t('kams.assistantShare'), money(office.assistant_share || 0)],
                         [t('kams.managerOfficeShare'), money(office.manager_office_share || 0)],
                         [t('kams.divisionnaireShare'), money(office.divisionnaire_share || 0)],

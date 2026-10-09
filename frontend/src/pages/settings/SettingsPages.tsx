@@ -8,7 +8,9 @@ import { LoadingScreen } from '../../components/LoadingScreen'
 import { SettingsMobileTabs } from '../../components/layout/SettingsMobileTabs'
 import { useAuth } from '../../context/AuthContext'
 import { useSystemModules } from '../../context/ModulesContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { roleLabel } from '../../lib/format'
 import { moduleRegistry, settingsNavItems } from '../../modules/registry'
@@ -212,11 +214,9 @@ export function SettingsForm({
   const { prefix, mail, suffix } = splitMailSections(fields)
   const showMailSection = group === 'general' && mail.length > 0
 
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    api.get('/settings').then((res) => {
-      if (cancelled) return
+  const load = () => {
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/settings').then((res) => {
       const grouped = (res.data.data ?? {}) as Record<string, SettingRow[]>
       const rows = grouped[group] ?? []
       const next = snapshotValues(fields, {
@@ -225,15 +225,14 @@ export function SettingsForm({
       setValues(next)
       setBaseline(next)
     }).catch(() => {
-      if (!cancelled) {
-        const next = snapshotValues(fields, {})
-        setValues(next)
-        setBaseline(next)
-      }
-    }).finally(() => {
-      if (!cancelled) setLoading(false)
-    })
-    return () => { cancelled = true }
+      const next = snapshotValues(fields, {})
+      setValues(next)
+      setBaseline(next)
+    }).finally(stop)
+  }
+
+  useEffect(() => {
+    void load()
   }, [group])
 
   const setField = (key: string, value: string) => {
@@ -241,6 +240,8 @@ export function SettingsForm({
   }
 
   const dirty = formDirty(fields, baseline, values)
+
+  useLiveData(load, { enabled: !dirty })
 
   const submit = async () => {
     if (!dirty) return

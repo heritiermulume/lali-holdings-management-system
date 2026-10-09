@@ -14,6 +14,7 @@ use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\KamsFinanceService;
+use App\Modules\Kams\Services\OfficeCommissionService;
 use App\Modules\Kams\Services\SavingsLedger;
 use App\Modules\Kams\Services\StockMetrics;
 use App\Modules\Kams\Services\TreasuryLedger;
@@ -179,7 +180,16 @@ class KamsFinanceController extends Controller
     {
         $companyId = $this->kamsCompanyId($request);
         $officeState = $this->resolveOfficeFilterState($request, $companyId);
-        $payload = $ledger->memberAccounts($companyId, $officeState['office_ids']);
+        // Own row lives under "Mon compte" — keep it out of the agents list/totals.
+        $selfMemberId = KamsMember::query()
+            ->where('user_id', $request->user()->id)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->value('id');
+        $payload = $ledger->memberAccounts(
+            $companyId,
+            $officeState['office_ids'],
+            $selfMemberId ? (int) $selfMemberId : null,
+        );
         $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
         return $this->ok($payload);
@@ -208,8 +218,15 @@ class KamsFinanceController extends Controller
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'notes' => ['required', 'string', 'max:500'],
+            'account_kind' => ['nullable', 'string', 'in:guy,salary,percentage,manager,assistant_manager,secretary,divisionnaire'],
         ]);
-        $entry = $treasury->requestDeposit($member, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id);
+        $entry = $treasury->requestDeposit(
+            $member,
+            (float) $data['amount'],
+            (string) ($data['notes'] ?? ''),
+            $request->user()->id,
+            $data['account_kind'] ?? null,
+        );
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Deposit requested.'));
     }
@@ -221,8 +238,15 @@ class KamsFinanceController extends Controller
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'notes' => ['required', 'string', 'max:500'],
+            'account_kind' => ['nullable', 'string', 'in:guy,salary,percentage,manager,assistant_manager,secretary,divisionnaire'],
         ]);
-        $entry = $treasury->requestWithdrawal($member, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id);
+        $entry = $treasury->requestWithdrawal(
+            $member,
+            (float) $data['amount'],
+            (string) ($data['notes'] ?? ''),
+            $request->user()->id,
+            $data['account_kind'] ?? null,
+        );
 
         return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal requested.'));
     }
@@ -289,6 +313,8 @@ class KamsFinanceController extends Controller
         $officeScoped = ! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped();
         $officeIds = $officeScoped ? $request->user()->accessibleOfficeIds() : [];
 
+        // Principal/central treasury is company-wide only — office-scoped roles
+        // (manager, secretary, …) see their office accounts, not the central one.
         return $this->ok($treasury->overview((int) $companyId, $officeIds, ! $officeScoped));
     }
 
@@ -299,18 +325,29 @@ class KamsFinanceController extends Controller
         return $this->ok($this->treasuryPayload($request, $treasuryAccount, $treasury));
     }
 
-    public function companyDeposit(Request $request, KamsTreasuryAccount $treasuryAccount, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
+    public function companyDeposit(Request $request, KamsTreasuryAccount $treasuryAccount, TreasuryLedger $treasury): JsonResponse
     {
         $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.deposit');
+        abort_unless(! $treasuryAccount->isCentral(), 422, __('Deposits to the principal account must be requested from an office account.'));
+
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['required', 'string', 'max:500'],
-            'member_id' => ['nullable', 'integer', 'exists:kams_members,id'],
+            'occurred_on' => ['required', 'date'],
+            'notes' => ['nullable', 'string', 'max:500'],
         ]);
-        $member = $this->memberForTreasury($request, $treasuryAccount, $accounts, $data['member_id'] ?? null);
-        $entry = $treasury->deposit($treasuryAccount, (float) $data['amount'], (string) ($data['notes'] ?? ''), $request->user()->id, $member);
 
-        return $this->created($this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury), __('Deposit recorded.'));
+        $treasury->requestOfficeBankDeposit(
+            $treasuryAccount,
+            (float) $data['amount'],
+            (string) $data['occurred_on'],
+            (string) ($data['notes'] ?? ''),
+            $request->user()->id,
+        );
+
+        return $this->created(
+            $this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury),
+            __('Deposit requested. Waiting for principal account validation.'),
+        );
     }
 
     public function companyWithdraw(Request $request, KamsTreasuryAccount $treasuryAccount, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
@@ -341,6 +378,78 @@ class KamsFinanceController extends Controller
         return $this->created($this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury), __('Expense recorded.'));
     }
 
+    public function companyCommissions(Request $request, KamsTreasuryAccount $treasuryAccount, OfficeCommissionService $commissions): JsonResponse
+    {
+        $this->assertTreasuryAccess($request, $treasuryAccount);
+        abort_unless($treasuryAccount->office_id, 422, __('Commissions are only available on office accounts.'));
+        $treasuryAccount->loadMissing('office:id,name,code');
+        $beneficiaries = $commissions->beneficiariesForOffice($treasuryAccount);
+
+        return $this->ok([
+            'account' => [
+                'id' => $treasuryAccount->id,
+                'office' => $treasuryAccount->office?->only(['id', 'name', 'code']),
+            ],
+            'beneficiaries' => $beneficiaries,
+            'total' => round(array_sum(array_column($beneficiaries, 'amount')), 2),
+            'can_transfer' => $this->hasFinancePermission($request, 'kams.finance.company.deposit'),
+        ]);
+    }
+
+    public function companyCommissionDetail(
+        Request $request,
+        KamsTreasuryAccount $treasuryAccount,
+        KamsMember $member,
+        OfficeCommissionService $commissions,
+    ): JsonResponse {
+        $this->assertTreasuryAccess($request, $treasuryAccount);
+        abort_unless($treasuryAccount->office_id, 422, __('Commissions are only available on office accounts.'));
+        $this->assertCompany($request, (int) $member->company_id);
+
+        return $this->ok($commissions->beneficiaryDetail($treasuryAccount, $member));
+    }
+
+    public function companyCommissionTransfer(
+        Request $request,
+        KamsTreasuryAccount $treasuryAccount,
+        KamsMember $member,
+        OfficeCommissionService $commissions,
+        TreasuryLedger $treasury,
+    ): JsonResponse {
+        $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.deposit');
+        abort_unless($treasuryAccount->office_id, 422, __('Commissions are only available on office accounts.'));
+        $this->assertCompany($request, (int) $member->company_id);
+
+        $data = $request->validate([
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $treasuryAccount->loadMissing('office:id,name,code');
+        $commissions->transfer(
+            $treasuryAccount,
+            $member,
+            $request->user()->id,
+            $data['notes'] ?? null,
+        );
+        $beneficiaries = $commissions->beneficiariesForOffice($treasuryAccount);
+
+        return $this->created(
+            [
+                'commissions' => [
+                    'account' => [
+                        'id' => $treasuryAccount->id,
+                        'office' => $treasuryAccount->office?->only(['id', 'name', 'code']),
+                    ],
+                    'beneficiaries' => $beneficiaries,
+                    'total' => round(array_sum(array_column($beneficiaries, 'amount')), 2),
+                    'can_transfer' => $this->hasFinancePermission($request, 'kams.finance.company.deposit'),
+                ],
+                'statement' => $this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury),
+            ],
+            __('Commission transfer requested. Waiting for the beneficiary to accept it in My account.'),
+        );
+    }
+
     private function accountPayload(Request $request, KamsMember $member, SavingsLedger $ledger, KamsAccountProvisioner $accounts): array
     {
         $member->loadMissing(['office:id,name,code', 'role:id,name,slug']);
@@ -353,6 +462,8 @@ class KamsFinanceController extends Controller
         $payload['can_post_withdraw'] = $this->canPostAgentMovement($request, 'withdraw');
         $payload['can_expense'] = false;
         $payload['can_decide'] = $this->hasFinancePermission($request, 'kams.finance.company.approve');
+        // Owner can accept/reject incoming commission transfers on Mon compte.
+        $payload['can_decide_incoming'] = $owns;
         $payload['can_browse_agents'] = $canViewAgents;
         $officeId = $request->filled('office_id') ? (int) $request->integer('office_id') : null;
         $payload['agents'] = $canViewAgents ? $this->agentOptions($request, $member, $officeId) : [];
@@ -369,11 +480,28 @@ class KamsFinanceController extends Controller
         string $decision,
     ): JsonResponse {
         $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.approve');
-        abort_unless((int) $treasuryEntry->account_id === (int) $treasuryAccount->id, 404);
         $data = $request->validate([
             'notes' => [$decision === 'reject' ? 'required' : 'nullable', 'string', 'max:500'],
         ]);
-        $decided = $treasury->decide($treasuryEntry, $decision, $request->user()->id, (string) ($data['notes'] ?? ''));
+
+        abort_unless((int) $treasuryEntry->account_id === (int) $treasuryAccount->id, 404);
+
+        if ($treasuryEntry->type === 'commission_transfer') {
+            abort(422, __('Commission transfers must be accepted by the beneficiary in My account.'));
+        }
+
+        if ($treasuryEntry->type === 'transfer_deposit') {
+            abort_unless($treasuryAccount->isCentral(), 422, __('Bank deposit requests are validated on the principal account.'));
+            $user = $request->user();
+            abort_unless(
+                $user->isGroupAdmin() || ! $user->isOfficeScoped(),
+                403,
+                __('Only principal account administrators can validate this deposit.'),
+            );
+            $treasury->decideBankDeposit($treasuryEntry, $decision, $user->id, (string) ($data['notes'] ?? ''));
+        } else {
+            $treasury->decide($treasuryEntry, $decision, $request->user()->id, (string) ($data['notes'] ?? ''));
+        }
 
         return $this->ok(
             $this->treasuryPayload($request, $treasuryAccount->fresh('office'), $treasury),
@@ -389,7 +517,6 @@ class KamsFinanceController extends Controller
         KamsAccountProvisioner $accounts,
         string $decision,
     ): JsonResponse {
-        abort_unless($this->hasFinancePermission($request, 'kams.finance.company.approve'), 403);
         abort_unless($savingsEntry->status === 'pending', 422, __('This request cannot be processed.'));
         abort_unless(in_array($savingsEntry->type, ['deposit_request', 'withdrawal_request'], true), 422, __('This request cannot be processed.'));
 
@@ -397,7 +524,6 @@ class KamsFinanceController extends Controller
         $member = $savingsEntry->member;
         abort_unless($member, 404);
         $this->assertCompany($request, (int) $member->company_id);
-        $this->assertCashierCanAccessMember($request, $member);
         $accounts->ensureWallet($member);
 
         $data = $request->validate([
@@ -409,14 +535,30 @@ class KamsFinanceController extends Controller
             $treasuryEntry = KamsTreasuryEntry::query()
                 ->where('member_id', $member->id)
                 ->where('status', 'pending')
-                ->where('type', $savingsEntry->type === 'deposit_request' ? 'deposit' : 'withdrawal')
-                ->where('amount', round((float) $savingsEntry->amount, 2))
+                ->whereIn('type', $savingsEntry->type === 'deposit_request'
+                    ? ['deposit', 'commission_transfer']
+                    : ['withdrawal'])
+                ->where('amount', round(abs((float) $savingsEntry->amount), 2))
                 ->orderByDesc('id')
                 ->first();
         }
         abort_unless($treasuryEntry instanceof KamsTreasuryEntry, 422, __('This request cannot be processed.'));
 
-        $treasury->decide($treasuryEntry, $decision, $request->user()->id, (string) ($data['notes'] ?? ''));
+        $isCommissionTransfer = $treasuryEntry->type === 'commission_transfer';
+        if ($isCommissionTransfer) {
+            // Beneficiary accepts/rejects their own commission transfer in Mon compte.
+            abort_unless($this->ownsAccount($request, $member), 403);
+            $treasury->decideCommissionTransfer(
+                $treasuryEntry,
+                $decision,
+                $request->user()->id,
+                (string) ($data['notes'] ?? ''),
+            );
+        } else {
+            abort_unless($this->hasFinancePermission($request, 'kams.finance.company.approve'), 403);
+            $this->assertCashierCanAccessMember($request, $member);
+            $treasury->decide($treasuryEntry, $decision, $request->user()->id, (string) ($data['notes'] ?? ''));
+        }
 
         $request->merge(['member_id' => $member->id]);
 
@@ -569,6 +711,8 @@ class KamsFinanceController extends Controller
         abort_unless($this->canViewCompanyAccounts($request), 403);
         $this->assertCompany($request, (int) $account->company_id);
         if (! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped()) {
+            // Office-scoped roles cannot open the company principal account.
+            abort_unless(! $account->isCentral(), 403);
             abort_unless($account->office_id && in_array((int) $account->office_id, $request->user()->accessibleOfficeIds(), true), 403);
         }
     }
@@ -618,7 +762,8 @@ class KamsFinanceController extends Controller
             $query->whereHas('role', fn ($q) => $q->whereIn('slug', RoleCatalog::kamsCentralSlugs()));
         }
         $rows = $query->get(['id', 'full_name', 'member_code', 'office_id', 'role_id']);
-        $balances = $ledger->balancesFor($rows->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $memberIds = $rows->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $balances = $ledger->withdrawableBalancesFor($memberIds);
 
         return $rows->map(fn (KamsMember $row) => [
             'id' => $row->id,
@@ -635,7 +780,9 @@ class KamsFinanceController extends Controller
     private function treasuryPayload(Request $request, KamsTreasuryAccount $account, TreasuryLedger $treasury): array
     {
         $payload = $treasury->statement($account);
-        $payload['can_deposit'] = $this->hasFinancePermission($request, 'kams.finance.company.deposit');
+        // Deposit = request transfer from office → principal bank (never a direct credit on the bank).
+        $payload['can_deposit'] = ! $account->isCentral()
+            && $this->hasFinancePermission($request, 'kams.finance.company.deposit');
         $payload['can_withdraw'] = $this->hasFinancePermission($request, 'kams.finance.company.withdraw');
         $payload['can_expense'] = $this->hasFinancePermission($request, 'kams.finance.company.expense');
         $payload['can_operate'] = $payload['can_deposit'] || $payload['can_withdraw'] || $payload['can_expense'];

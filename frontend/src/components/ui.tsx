@@ -148,13 +148,14 @@ export function Select({
   )
 }
 
-export function Badge({ children, tone = 'green' }: { children: ReactNode; tone?: 'green' | 'lime' | 'amber' | 'red' | 'slate' }) {
+export function Badge({ children, tone = 'green' }: { children: ReactNode; tone?: 'green' | 'lime' | 'amber' | 'red' | 'slate' | 'blue' }) {
   const tones = {
     green: 'bg-lhms-soft text-lhms',
     lime: 'bg-lime-soft text-lime',
     amber: 'bg-amber-50 text-warn',
     red: 'bg-danger-soft text-danger',
     slate: 'bg-slate-100 text-slate-600',
+    blue: 'bg-sky-100 text-sky-700',
   }
   return <span className={cn('inline-flex rounded-full px-2.5 py-1 text-xs font-semibold', tones[tone])}>{children}</span>
 }

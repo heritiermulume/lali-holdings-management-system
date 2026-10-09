@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
-    'company_id', 'reference', 'member_id', 'manager_member_id', 'depot_id', 'client_id', 'client_name',
+    'company_id', 'reference', 'member_id', 'assignment_id', 'manager_member_id', 'depot_id', 'client_id', 'client_name',
     'payment_status', 'subtotal', 'field_total', 'manager_total', 'company_total', 'seller_margin', 'manager_margin',
     'cost_total', 'margin', 'paid_amount', 'notes', 'created_by', 'sold_at',
 ])]
@@ -35,6 +35,11 @@ class KamsStockSale extends Model
     public function member(): BelongsTo
     {
         return $this->belongsTo(KamsMember::class, 'member_id');
+    }
+
+    public function assignment(): BelongsTo
+    {
+        return $this->belongsTo(KamsStockAssignment::class, 'assignment_id');
     }
 
     public function manager(): BelongsTo

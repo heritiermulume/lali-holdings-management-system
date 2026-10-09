@@ -5,6 +5,7 @@ namespace App\Modules\Kams\Models;
 use App\Core\Support\TaxSettings;
 use App\Models\Company;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -102,10 +103,41 @@ class KamsProduct extends Model
         return $this->purchasePrice();
     }
 
-    /** SQL fragment for stock valuation (same ladder as inventoryUnitCost). */
+    /** SQL fragment for COGS / purchase unit cost (not stock display value). */
     public static function inventoryUnitCostSql(string $alias = 'kams_products'): string
     {
         return "COALESCE(NULLIF({$alias}.avg_cost, 0), NULLIF({$alias}.cost, 0), NULLIF({$alias}.company_price, 0), 0)";
+    }
+
+    /**
+     * SQL unit sale price for stock value (qty × prix de vente, tax included when not exempt).
+     * Expects left joins on companies + countries (see sumStockSaleValue).
+     */
+    public static function inventoryUnitSalePriceSql(
+        string $productAlias = 'kams_products',
+        string $countryAlias = 'countries',
+    ): string {
+        $base = "COALESCE(NULLIF({$productAlias}.field_price, 0), NULLIF({$productAlias}.price, 0), 0)";
+
+        return "({$base} * CASE WHEN COALESCE({$productAlias}.tax_exempt, 0) = 1 THEN 1 ELSE (1 + COALESCE({$countryAlias}.tax_rate, 0) / 100) END)";
+    }
+
+    /**
+     * Stock value = quantity × sale price. Caller scopes balances (company, offices, warehouses, condition).
+     *
+     * @param  Builder<KamsStockBalance>  $balancesQuery
+     */
+    public static function sumStockSaleValue(Builder $balancesQuery): float
+    {
+        $table = (new KamsStockBalance)->getTable();
+        $value = (clone $balancesQuery)
+            ->join('kams_products', 'kams_products.id', '=', "{$table}.product_id")
+            ->leftJoin('companies', 'companies.id', '=', 'kams_products.company_id')
+            ->leftJoin('countries', 'countries.id', '=', 'companies.country_id')
+            ->selectRaw('COALESCE(SUM('.$table.'.quantity * '.self::inventoryUnitSalePriceSql().'), 0) as value')
+            ->value('value');
+
+        return round((float) $value, 2);
     }
 
     /** @deprecated Use salePrice() */

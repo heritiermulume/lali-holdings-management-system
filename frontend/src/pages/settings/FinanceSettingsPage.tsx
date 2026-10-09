@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { settingGroups } from './catalog'
 import { SettingsForm } from './SettingsPages'
 
@@ -80,13 +82,19 @@ export function FinanceSettingsPage() {
     }
   }
 
-  useEffect(() => {
-    setLoading(true)
-    Promise.all([
+  const refreshAll = () => {
+    const stop = trackLoadSpinner(setLoading)
+    return Promise.all([
       load().catch(() => undefined),
       loadKamsRevenue().catch(() => undefined),
-    ]).finally(() => setLoading(false))
+    ]).finally(stop)
+  }
+
+  useEffect(() => {
+    void refreshAll()
   }, [])
+
+  useLiveData(refreshAll)
 
   const saveRule = async (rule: RevenueRule) => {
     const raw = ruleDrafts[rule.id] ?? String(rule.percent)
@@ -250,6 +258,9 @@ export function FinanceSettingsPage() {
                     </button>
                   </div>
                   <div className="text-xs text-muted">{t(`kams.ruleScope.${rule.scope}`, { defaultValue: rule.scope })} · {rule.role_slug}</div>
+                  {rule.code === 'assistant_manager' ? (
+                    <p className="mt-1 text-xs text-muted">{t('kams.ruleHelp.assistant_manager_certified_hint')}</p>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <Field
@@ -258,7 +269,7 @@ export function FinanceSettingsPage() {
                     value={draftValue}
                     onChange={(e) => setRuleDrafts((current) => ({ ...current, [rule.id]: e.target.value }))}
                   />
-                  {rule.divisor ? <Badge>{t('kams.divisor')}: {rule.divisor}</Badge> : null}
+                  {rule.divisor ? <Badge>{t('kams.divisor')}: {Number(rule.divisor)}</Badge> : null}
                   <Button disabled={!dirty || saving} onClick={() => void saveRule(rule)}>
                     {saving ? t('common.loading') : dirty ? t('common.save') : t('common.saved')}
                   </Button>

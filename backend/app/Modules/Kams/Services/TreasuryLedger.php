@@ -29,7 +29,7 @@ class TreasuryLedger
             ['company_id' => $companyId, 'code' => 'CENTRAL'],
             [
                 'office_id' => null,
-                'name' => ($company?->name ?: 'KAMS').' — central',
+                'name' => ($company?->name ?: 'KAMS').' — principal',
                 'balance' => 0,
             ]
         );
@@ -96,9 +96,13 @@ class TreasuryLedger
     public function statement(KamsTreasuryAccount $account): array
     {
         $this->ensurePendingSavingsLinked($account);
+        $this->ensureOfficeBankDepositMirrors($account);
         $this->refreshBalance($account);
         $account->loadMissing('office:id,name,code');
-        $posted = KamsTreasuryEntry::query()->where('status', 'posted');
+        // Principal (bank) and office ledgers stay separate: never merge company-wide movements.
+        $posted = KamsTreasuryEntry::query()
+            ->where('status', 'posted')
+            ->where('account_id', $account->id);
         $entriesQuery = KamsTreasuryEntry::query()
             ->with([
                 'createdBy:id,name',
@@ -107,16 +111,11 @@ class TreasuryLedger
                 'member:id,full_name,member_code,user_id',
                 'account:id,name,code,office_id',
                 'account.office:id,name,code',
-            ]);
-        if ($account->isCentral()) {
-            $posted->where('company_id', $account->company_id);
-            $entriesQuery->where('company_id', $account->company_id);
-        } else {
-            $posted->where('account_id', $account->id);
-            $entriesQuery->where('account_id', $account->id);
-        }
+                'office:id,name,code',
+            ])
+            ->where('account_id', $account->id);
         $entries = $entriesQuery->orderBy('created_at')->orderBy('id')->get();
-        $savings = $this->unmirroredSavingsEntries($account, $account->isCentral());
+        $savings = $this->unmirroredSavingsEntries($account, false);
         $serialized = $this->timelineWithBalances($account, $entries, $savings);
         $serialized = collect($serialized)->sortBy([
             ['created_at', 'desc'],
@@ -132,12 +131,240 @@ class TreasuryLedger
                 'office' => $account->office?->only(['id', 'name', 'code']),
             ],
             'balance' => round((float) $account->balance, 2),
-            'available' => round((float) $account->balance, 2),
-            'deposits' => round((float) (clone $posted)->where('type', 'deposit')->sum('amount'), 2),
+            'available' => round($this->spendable($account), 2),
+            'pending_deposits' => $this->pendingBankDepositTotal($account),
+            'deposits' => round((float) (clone $posted)->whereIn('type', ['deposit', 'transfer', 'transfer_deposit'])->where('amount', '>', 0)->sum('amount'), 2),
             'withdrawals' => round(abs((float) (clone $posted)->where('type', 'withdrawal')->sum('amount')), 2),
             'expenses' => round(abs((float) (clone $posted)->where('type', 'expense')->sum('amount')), 2),
             'entries' => $serialized->all(),
         ];
+    }
+
+    /**
+     * Ensure each pending principal deposit has a matching pending line on the office ledger
+     * (so office cards/transactions show the same "en attente" request).
+     */
+    private function ensureOfficeBankDepositMirrors(KamsTreasuryAccount $account): void
+    {
+        if ($account->isCentral() || ! $account->office_id) {
+            return;
+        }
+
+        $central = $this->ensureForCompany((int) $account->company_id);
+        $orphans = KamsTreasuryEntry::query()
+            ->where('account_id', $central->id)
+            ->where('office_id', $account->office_id)
+            ->where('type', 'transfer_deposit')
+            ->whereIn('status', ['pending', 'rejected'])
+            ->where(function ($query) use ($account) {
+                $query->whereNull('related_entry_id')
+                    ->orWhereDoesntHave('related', fn ($related) => $related->where('account_id', $account->id));
+            })
+            ->orderBy('id')
+            ->get();
+
+        foreach ($orphans as $centralEntry) {
+            $officeEntry = new KamsTreasuryEntry([
+                'company_id' => $account->company_id,
+                'account_id' => $account->id,
+                'office_id' => $account->office_id,
+                'member_id' => null,
+                'related_entry_id' => $centralEntry->id,
+                'type' => 'transfer_deposit',
+                'status' => $centralEntry->status,
+                'amount' => -abs((float) $centralEntry->amount),
+                'occurred_on' => $centralEntry->occurred_on?->toDateString() ?: now()->toDateString(),
+                'notes' => $centralEntry->notes,
+                'decision_notes' => $centralEntry->decision_notes,
+                'created_by' => $centralEntry->created_by,
+                'requested_by' => $centralEntry->requested_by,
+                'performed_by' => $centralEntry->performed_by,
+            ]);
+            $officeEntry->created_at = $centralEntry->created_at ?: now();
+            $officeEntry->updated_at = $centralEntry->updated_at ?: now();
+            $officeEntry->save();
+            $centralEntry->forceFill(['related_entry_id' => $officeEntry->id])->save();
+            if ($officeEntry->status === 'rejected') {
+                $this->recordBalanceAfter($officeEntry->fresh());
+            }
+        }
+    }
+
+    /**
+     * Request a deposit from an office treasury into the company principal (bank) account.
+     * Money stays on the office until an admin/president approves the request.
+     */
+    public function requestOfficeBankDeposit(
+        KamsTreasuryAccount $office,
+        float $amount,
+        string $occurredOn,
+        string $notes,
+        int $userId,
+    ): KamsTreasuryEntry {
+        abort_unless(! $office->isCentral() && $office->office_id, 422, __('Deposits to the principal account must come from an office account.'));
+        abort_unless($amount > 0.001, 422, __('The amount must be greater than zero.'));
+        abort_unless($amount <= $this->spendable($office) + 0.001, 422, __('Insufficient office account balance.'));
+
+        $central = $this->ensureForCompany((int) $office->company_id);
+        $office->loadMissing('office:id,name,code');
+        $officeName = $office->office?->name ?: $office->name;
+
+        return DB::transaction(function () use ($office, $central, $amount, $occurredOn, $notes, $userId, $officeName) {
+            $value = round(abs($amount), 2);
+            $note = $notes !== ''
+                ? $notes
+                : __('Deposit from :office to principal account', ['office' => $officeName]);
+
+            // Mirror pending lines: office (debit pending) + principal (credit pending).
+            // Both keep status pending until admin/president decides; then both flip together.
+            $officeEntry = KamsTreasuryEntry::query()->create([
+                'company_id' => $office->company_id,
+                'account_id' => $office->id,
+                'office_id' => $office->office_id,
+                'member_id' => null,
+                'type' => 'transfer_deposit',
+                'status' => 'pending',
+                'amount' => -abs($value),
+                'occurred_on' => $occurredOn,
+                'notes' => $note,
+                'created_by' => $userId,
+                'requested_by' => $userId,
+                'performed_by' => null,
+            ]);
+
+            $centralEntry = KamsTreasuryEntry::query()->create([
+                'company_id' => $central->company_id,
+                'account_id' => $central->id,
+                'office_id' => $office->office_id,
+                'member_id' => null,
+                'related_entry_id' => $officeEntry->id,
+                'type' => 'transfer_deposit',
+                'status' => 'pending',
+                'amount' => abs($value),
+                'occurred_on' => $occurredOn,
+                'notes' => $note,
+                'created_by' => $userId,
+                'requested_by' => $userId,
+                'performed_by' => null,
+            ]);
+
+            $officeEntry->forceFill(['related_entry_id' => $centralEntry->id])->save();
+
+            $fresh = $centralEntry->fresh(['createdBy', 'requestedBy', 'office', 'account.office']);
+            $this->notifyBankApprovers($fresh);
+
+            return $fresh;
+        });
+    }
+
+    public function decideBankDeposit(KamsTreasuryEntry $entry, string $decision, int $userId, string $motif): KamsTreasuryEntry
+    {
+        abort_unless($entry->status === 'pending', 422, __('This request cannot be processed.'));
+        abort_unless($entry->type === 'transfer_deposit', 422, __('This request cannot be processed.'));
+        abort_unless(in_array($decision, ['approve', 'reject'], true), 422, __('Unknown decision.'));
+        if ($decision === 'reject') {
+            abort_unless(trim($motif) !== '', 422, __('A reason is required to reject this request.'));
+        }
+
+        return DB::transaction(function () use ($entry, $decision, $userId, $motif) {
+            $entry->loadMissing(['account', 'office', 'related']);
+            $central = $entry->account;
+            abort_unless($central && $central->isCentral(), 422, __('Unknown treasury account.'));
+            abort_unless($entry->office_id, 422, __('This deposit is not linked to an office account.'));
+
+            $office = $this->ensureOffice(
+                Office::query()->findOrFail((int) $entry->office_id)
+            );
+            $office->loadMissing('office:id,name,code');
+
+            $officeEntry = $entry->related_entry_id
+                ? KamsTreasuryEntry::query()
+                    ->whereKey($entry->related_entry_id)
+                    ->where('account_id', $office->id)
+                    ->where('type', 'transfer_deposit')
+                    ->where('status', 'pending')
+                    ->first()
+                : null;
+
+            if ($decision === 'approve') {
+                $value = round(abs((float) $entry->amount), 2);
+                $reservedOther = (float) KamsTreasuryEntry::query()
+                    ->where('account_id', $office->id)
+                    ->where('type', 'transfer_deposit')
+                    ->where('status', 'pending')
+                    ->when($officeEntry, fn ($query) => $query->where('id', '!=', $officeEntry->id))
+                    ->sum('amount');
+                $free = round($this->displayedBalance($office) - abs($reservedOther), 2);
+                abort_unless($value <= $free + 0.001, 422, __('Insufficient office account balance.'));
+
+                $officeName = $office->office?->name ?: $office->name;
+
+                if ($officeEntry) {
+                    $officeEntry->forceFill([
+                        'status' => 'posted',
+                        'type' => 'transfer',
+                        'performed_by' => $userId,
+                        'decision_notes' => $motif !== '' ? $motif : null,
+                        'notes' => $officeEntry->notes ?: __('Transfer to principal account'),
+                    ])->save();
+                } else {
+                    $officeEntry = KamsTreasuryEntry::query()->create([
+                        'company_id' => $office->company_id,
+                        'account_id' => $office->id,
+                        'office_id' => $office->office_id,
+                        'member_id' => null,
+                        'related_entry_id' => $entry->id,
+                        'type' => 'transfer',
+                        'status' => 'posted',
+                        'amount' => -abs($value),
+                        'occurred_on' => $entry->occurred_on?->toDateString() ?: now()->toDateString(),
+                        'notes' => __('Transfer to principal account'),
+                        'created_by' => $userId,
+                        'requested_by' => $entry->requested_by ?: $userId,
+                        'performed_by' => $userId,
+                        'decision_notes' => $motif !== '' ? $motif : null,
+                    ]);
+                }
+
+                $entry->forceFill([
+                    'status' => 'posted',
+                    'type' => 'transfer',
+                    'related_entry_id' => $officeEntry->id,
+                    'performed_by' => $userId,
+                    'decision_notes' => $motif !== '' ? $motif : null,
+                    'notes' => $entry->notes ?: __('Transfer from :office', ['office' => $officeName]),
+                ])->save();
+
+                if ((int) $officeEntry->related_entry_id !== (int) $entry->id) {
+                    $officeEntry->forceFill(['related_entry_id' => $entry->id])->save();
+                }
+
+                $this->refreshBalance($office);
+                $this->refreshBalance($central);
+                $this->recordBalanceAfter($officeEntry->fresh());
+                $this->recordBalanceAfter($entry->fresh());
+            } else {
+                $entry->forceFill([
+                    'status' => 'rejected',
+                    'performed_by' => $userId,
+                    'decision_notes' => $motif,
+                ])->save();
+                if ($officeEntry) {
+                    $officeEntry->forceFill([
+                        'status' => 'rejected',
+                        'performed_by' => $userId,
+                        'decision_notes' => $motif,
+                    ])->save();
+                    $this->recordBalanceAfter($officeEntry->fresh());
+                }
+                $this->recordBalanceAfter($entry->fresh());
+            }
+
+            $fresh = $entry->fresh(['createdBy', 'requestedBy', 'performedBy', 'office', 'account.office']);
+            $this->notifyRequester($fresh, $decision, $motif);
+
+            return $fresh;
+        });
     }
 
     /**
@@ -206,6 +433,16 @@ class TreasuryLedger
         $account = $this->accountForMember($member);
         $amount = round((float) $entry->amount, 2);
         $type = $amount < 0 ? 'withdrawal' : 'deposit';
+        $walletLabel = match ((string) $entry->kind) {
+            'salary' => 'Compte Salaire',
+            'percentage' => 'Compte Overed',
+            'assistant_manager' => 'Compte assistant',
+            'secretary' => 'Compte secrétaire',
+            'divisionnaire' => 'Compte divisionnaire',
+            'manager' => 'Compte manager',
+            default => 'Compte agent',
+        };
+        $notes = trim(($entry->notes ? $entry->notes.' · ' : '').$walletLabel);
         $treasury = KamsTreasuryEntry::query()->create([
             'company_id' => $account->company_id,
             'account_id' => $account->id,
@@ -216,11 +453,12 @@ class TreasuryLedger
             'status' => 'posted',
             'amount' => $amount,
             'occurred_on' => $entry->occurred_on?->toDateString() ?: now()->toDateString(),
-            'notes' => $entry->notes ?: null,
+            'notes' => $notes !== '' ? $notes : null,
             'created_by' => $userId ?: $entry->created_by,
             'requested_by' => $entry->requested_by ?: $userId,
             'performed_by' => $userId ?: $entry->performed_by,
         ]);
+        // Office refresh also recomputes the company central balance.
         $this->refreshBalance($account);
         $this->recordBalanceAfter($treasury);
 
@@ -253,25 +491,57 @@ class TreasuryLedger
 
     public function displayedBalance(KamsTreasuryAccount $account): float
     {
-        $own = round($this->available($account) + $this->unmirroredSavingsTotal($account), 2);
-        if (! $account->isCentral()) {
-            return $own;
-        }
-
-        $offices = KamsTreasuryAccount::query()
-            ->where('company_id', $account->company_id)
-            ->whereNotNull('office_id')
-            ->get();
-        foreach ($offices as $office) {
-            $own = round($own + $this->available($office) + $this->unmirroredSavingsTotal($office), 2);
-        }
-
-        return $own;
+        // Principal account is a bank: only its own posted movements count (no auto-sync from offices).
+        return round($this->available($account) + $this->unmirroredSavingsTotal($account), 2);
     }
 
     public function spendable(KamsTreasuryAccount $account): float
     {
-        return $this->displayedBalance($account);
+        $balance = $this->displayedBalance($account);
+        if ($account->isCentral() || ! $account->office_id) {
+            return $balance;
+        }
+
+        // Reserve principal deposit requests and pending commission transfers still awaiting the beneficiary.
+        $reserved = $this->pendingBankDepositTotal($account) + $this->pendingCommissionTransferTotal($account);
+
+        return round(max(0, $balance - $reserved), 2);
+    }
+
+    private function pendingCommissionTransferTotal(KamsTreasuryAccount $account): float
+    {
+        return round(abs((float) KamsTreasuryEntry::query()
+            ->where('account_id', $account->id)
+            ->where('type', 'commission_transfer')
+            ->where('status', 'pending')
+            ->sum('amount')), 2);
+    }
+
+    private function pendingBankDepositTotal(KamsTreasuryAccount $account): float
+    {
+        $total = (float) KamsTreasuryEntry::query()
+            ->where('account_id', $account->id)
+            ->where('type', 'transfer_deposit')
+            ->where('status', 'pending')
+            ->sum('amount');
+
+        // Older requests may exist only on the principal ledger for this office.
+        if (abs($total) < 0.001 && $account->office_id && ! $account->isCentral()) {
+            $centralId = KamsTreasuryAccount::query()
+                ->where('company_id', $account->company_id)
+                ->whereNull('office_id')
+                ->value('id');
+            if ($centralId) {
+                $total = (float) KamsTreasuryEntry::query()
+                    ->where('account_id', $centralId)
+                    ->where('office_id', $account->office_id)
+                    ->where('type', 'transfer_deposit')
+                    ->where('status', 'pending')
+                    ->sum('amount');
+            }
+        }
+
+        return round(abs($total), 2);
     }
 
     public function refreshBalance(KamsTreasuryAccount $account): KamsTreasuryAccount
@@ -367,10 +637,12 @@ class TreasuryLedger
             if ($counts) {
                 $buckets[$bucketId] = round($buckets[$bucketId] + (float) $entry->amount, 2);
             }
-            $balance = $account->isCentral()
-                ? round(array_sum($buckets), 2)
-                : round($buckets[(int) $account->id] ?? 0, 2);
+            $balance = round($buckets[(int) $account->id] ?? 0, 2);
             if ($event['kind'] === 'treasury') {
+                // Member deposit/withdrawal requests act on the agent wallet — show that balance.
+                if ($this->isMemberAccountRequest($entry)) {
+                    $balance = $this->memberWalletBalanceForRequest($entry);
+                }
                 $entry->setAttribute('balance_after', $balance);
                 $rows[] = $this->serializeEntry($entry);
             } else {
@@ -379,6 +651,31 @@ class TreasuryLedger
         }
 
         return $rows;
+    }
+
+    private function isMemberAccountRequest(KamsTreasuryEntry $entry): bool
+    {
+        if (! $entry->member_id) {
+            return false;
+        }
+
+        return in_array($entry->type, ['deposit', 'withdrawal', 'commission_transfer'], true)
+            && ($entry->status ?: 'posted') === 'pending';
+    }
+
+    private function memberWalletBalanceForRequest(KamsTreasuryEntry $entry): float
+    {
+        $entry->loadMissing('member');
+        $member = $entry->member;
+        if (! $member) {
+            return 0.0;
+        }
+
+        $queued = $this->savingsFor($entry);
+        $kind = $queued?->kind;
+        $savings = app(SavingsLedger::class);
+
+        return $savings->availableBalance($member, $kind ?: $savings->defaultManualKind($member));
     }
 
     private function unmirroredSavingsTotal(KamsTreasuryAccount $account): float
@@ -423,6 +720,7 @@ class TreasuryLedger
         return [
             'uid' => 'savings-'.$entry->id,
             'id' => $entry->id,
+            'kind' => $entry->kind,
             'type' => $entry->type,
             'status' => $entry->status ?: 'posted',
             'amount' => round((float) $entry->amount, 2),
@@ -454,6 +752,7 @@ class TreasuryLedger
      */
     private function summarize(KamsTreasuryAccount $account, ?float $own = null, ?float $officeTotal = null): array
     {
+        $this->ensureOfficeBankDepositMirrors($account);
         $posted = KamsTreasuryEntry::query()->where('account_id', $account->id)->where('status', 'posted');
         $own ??= $this->available($account);
         $balance = $this->displayedBalance($account);
@@ -465,7 +764,8 @@ class TreasuryLedger
             'is_central' => $account->isCentral(),
             'office' => $account->office?->only(['id', 'name', 'code']),
             'balance' => $balance,
-            'available' => $balance,
+            'available' => $this->spendable($account),
+            'pending_deposits' => $this->pendingBankDepositTotal($account),
             'deposits' => round((float) (clone $posted)->where('type', 'deposit')->sum('amount'), 2),
             'withdrawals' => round(abs((float) (clone $posted)->where('type', 'withdrawal')->sum('amount')), 2),
             'expenses' => round(abs((float) (clone $posted)->where('type', 'expense')->sum('amount')), 2),
@@ -553,14 +853,14 @@ class TreasuryLedger
             ->where('company_id', $account->company_id)
             ->whereNotNull('office_id')
             ->get()
-            ->sortByDesc(fn (KamsTreasuryAccount $office) => $this->available($office))
+            ->sortByDesc(fn (KamsTreasuryAccount $office) => $this->spendable($office))
             ->values();
 
         foreach ($offices as $office) {
             if ($needed <= 0.001) {
                 break;
             }
-            $take = round(min($this->available($office), $needed), 2);
+            $take = round(min($this->spendable($office), $needed), 2);
             if ($take <= 0.001) {
                 continue;
             }
@@ -583,7 +883,7 @@ class TreasuryLedger
             'status' => 'posted',
             'amount' => -abs($amount),
             'occurred_on' => now()->toDateString(),
-            'notes' => 'Transfert vers le compte central',
+            'notes' => __('Transfer to principal account'),
             'created_by' => $userId,
             'requested_by' => $userId,
             'performed_by' => $userId,
@@ -597,7 +897,7 @@ class TreasuryLedger
             'status' => 'posted',
             'amount' => abs($amount),
             'occurred_on' => now()->toDateString(),
-            'notes' => 'Transfert depuis '.$officeName,
+            'notes' => __('Transfer from :office', ['office' => $officeName]),
             'created_by' => $userId,
             'requested_by' => $userId,
             'performed_by' => $userId,
@@ -623,20 +923,135 @@ class TreasuryLedger
         return $this->ensureOffice($office);
     }
 
-    public function requestDeposit(KamsMember $member, float $amount, string $notes, int $userId): KamsTreasuryEntry
+    public function requestDeposit(KamsMember $member, float $amount, string $notes, int $userId, ?string $accountKind = null): KamsTreasuryEntry
     {
         abort_unless($amount > 0, 422, __('The amount must be greater than zero.'));
 
-        return $this->queueMemberRequest($member, 'deposit', abs($amount), $notes, $userId);
+        return $this->queueMemberRequest($member, 'deposit', abs($amount), $notes, $userId, $accountKind);
     }
 
-    public function requestWithdrawal(KamsMember $member, float $amount, string $notes, int $userId): KamsTreasuryEntry
+    /**
+     * Pending commission transfer: cash stays on the office account until the beneficiary
+     * accepts it in Mon compte. Acceptance credits their wallet and deducts the office.
+     */
+    public function requestCommissionTransfer(
+        KamsTreasuryAccount $account,
+        KamsMember $member,
+        float $amount,
+        string $notes,
+        int $userId,
+        ?string $accountKind = null,
+    ): KamsTreasuryEntry {
+        abort_unless($account->office_id, 422, __('Commissions are only available on office accounts.'));
+        abort_unless($amount > 0, 422, __('The amount must be greater than zero.'));
+        abort_unless((int) $member->company_id === (int) $account->company_id, 422, __('This member does not belong to this account.'));
+        abort_unless($amount <= $this->spendable($account) + 0.001, 422, __('Insufficient office account balance.'));
+
+        return DB::transaction(function () use ($account, $member, $amount, $notes, $userId, $accountKind) {
+            $entry = KamsTreasuryEntry::query()->create([
+                'company_id' => $account->company_id,
+                'account_id' => $account->id,
+                'office_id' => $account->office_id,
+                'member_id' => $member->id,
+                'type' => 'commission_transfer',
+                'status' => 'pending',
+                'amount' => round($amount, 2),
+                'occurred_on' => now()->toDateString(),
+                'notes' => $notes !== '' ? $notes : null,
+                'created_by' => $userId,
+                'requested_by' => $userId,
+                'performed_by' => null,
+            ]);
+
+            $savings = app(SavingsLedger::class);
+            $savings->queue(
+                $member,
+                'deposit_request',
+                round($amount, 2),
+                $notes,
+                $userId,
+                $entry,
+                $accountKind ?: $savings->defaultManualKind($member),
+            );
+
+            $fresh = $entry->fresh(['createdBy', 'requestedBy', 'member', 'account.office']);
+            $this->notifyCommissionBeneficiary($fresh);
+
+            return $fresh;
+        });
+    }
+
+    /**
+     * Beneficiary accepts or rejects a commission transfer on Mon compte.
+     * Accept → credit member wallet and deduct the office treasury.
+     */
+    public function decideCommissionTransfer(KamsTreasuryEntry $entry, string $decision, int $userId, string $motif): KamsTreasuryEntry
+    {
+        abort_unless($entry->type === 'commission_transfer', 422, __('This request cannot be processed.'));
+        abort_unless($entry->status === 'pending', 422, __('This request cannot be processed.'));
+        abort_unless(in_array($decision, ['approve', 'reject'], true), 422, __('Unknown decision.'));
+        if ($decision === 'reject') {
+            abort_unless(trim($motif) !== '', 422, __('A reason is required to reject this request.'));
+        }
+
+        return DB::transaction(function () use ($entry, $decision, $userId, $motif) {
+            $entry->loadMissing(['account', 'member']);
+            $account = $entry->account;
+            abort_unless($account, 422, __('Unknown treasury account.'));
+            $member = $entry->member;
+            abort_unless($member, 422, __('This request is not linked to a member account.'));
+            $savings = app(SavingsLedger::class);
+            $queued = $this->savingsFor($entry);
+            $value = abs((float) $entry->amount);
+
+            if ($decision === 'approve') {
+                // Current pending transfer is reserved in spendable — exclude it from the check.
+                $otherPending = max(0, $this->pendingCommissionTransferTotal($account) - $value);
+                $free = $this->displayedBalance($account) - $this->pendingBankDepositTotal($account) - $otherPending;
+                abort_unless($value <= $free + 0.001, 422, __('Insufficient office account balance.'));
+
+                if ($queued) {
+                    $savings->postQueued($queued, $userId, $motif);
+                } else {
+                    $savings->deposit($member, $value, (string) $entry->notes, $userId, $entry, $entry->requested_by);
+                }
+
+                // Deduct office cash (commission leaves the office pool).
+                $entry->forceFill([
+                    'status' => 'posted',
+                    'amount' => - $value,
+                    'performed_by' => $userId,
+                    'decision_notes' => $motif !== '' ? $motif : null,
+                ])->save();
+                $this->refreshBalance($account);
+                $this->recordBalanceAfter($entry->fresh());
+
+                app(OfficeCommissionService::class)->markTransferPaid($entry);
+            } else {
+                $entry->forceFill([
+                    'status' => 'rejected',
+                    'performed_by' => $userId,
+                    'decision_notes' => $motif,
+                ])->save();
+                $this->recordBalanceAfter($entry->fresh());
+                if ($queued) {
+                    $savings->rejectQueued($queued, $userId, $motif);
+                }
+                app(OfficeCommissionService::class)->markTransferRejected($entry);
+            }
+
+            return $entry->fresh(['createdBy', 'requestedBy', 'performedBy', 'member', 'account.office']);
+        });
+    }
+
+    public function requestWithdrawal(KamsMember $member, float $amount, string $notes, int $userId, ?string $accountKind = null): KamsTreasuryEntry
     {
         abort_unless($amount > 0, 422, __('The amount must be greater than zero.'));
         $savings = app(SavingsLedger::class);
-        abort_unless($amount <= $savings->withdrawableBalance($member) + 0.001, 422, __('Insufficient account balance.'));
+        $wallet = $accountKind ?: $savings->defaultManualKind($member);
+        abort_unless($amount <= $savings->withdrawableBalance($member, $wallet) + 0.001, 422, __('Insufficient account balance.'));
 
-        return $this->queueMemberRequest($member, 'withdrawal', -abs($amount), $notes, $userId);
+        return $this->queueMemberRequest($member, 'withdrawal', -abs($amount), $notes, $userId, $wallet);
     }
 
     public function decide(KamsTreasuryEntry $entry, string $decision, int $userId, string $motif): KamsTreasuryEntry
@@ -662,8 +1077,10 @@ class TreasuryLedger
                 $value = abs((float) $entry->amount);
                 if ($entry->type === 'withdrawal') {
                     abort_unless($value <= $this->spendable($account) + 0.001, 422, __('Insufficient office account balance.'));
-                    abort_unless($value <= $savings->withdrawableBalance($member) + 0.001, 422, __('Insufficient account balance.'));
-                    $this->coverFromOffices($account, $value, $userId);
+                    // Pending withdrawal_request already reserves this amount in withdrawableBalance;
+                    // approval must check posted availability instead.
+                    $walletKind = $queued?->kind ?: $savings->defaultManualKind($member);
+                    abort_unless($value <= $savings->availableBalance($member, $walletKind) + 0.001, 422, __('Insufficient account balance.'));
                 }
                 $entry->forceFill([
                     'status' => 'posted',
@@ -698,6 +1115,48 @@ class TreasuryLedger
         });
     }
 
+    private function notifyCommissionBeneficiary(KamsTreasuryEntry $entry): void
+    {
+        $entry->loadMissing(['member', 'account.office']);
+        $userId = (int) ($entry->member?->user_id ?: 0);
+        if ($userId <= 0) {
+            return;
+        }
+
+        $send = function () use ($entry, $userId) {
+            $user = User::query()->find($userId);
+            if (! $user) {
+                return;
+            }
+            $locale = $user->locale === 'en' ? 'en' : 'fr';
+            $amount = number_format(abs((float) $entry->amount), 2, '.', ' ');
+            $office = (string) ($entry->account?->office?->name ?: '');
+            $title = $locale === 'en' ? 'Commission transfer to accept' : 'Transfert de commission à accepter';
+            $body = $locale === 'en'
+                ? ("A commission transfer of {$amount}".($office !== '' ? " from {$office}" : '').' is waiting in My account.')
+                : ("Un transfert de commission de {$amount}".($office !== '' ? " depuis {$office}" : '').' vous attend dans Mon compte.');
+
+            AppNotification::query()->create([
+                'user_id' => $user->id,
+                'type' => 'finance_commission_transfer',
+                'title' => $title,
+                'body' => $body,
+                'data' => [
+                    'entry_id' => $entry->id,
+                    'amount' => (float) $entry->amount,
+                    'office' => $office,
+                    'path' => '/modules/kams/finance/account',
+                ],
+            ]);
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($send);
+        } else {
+            $send();
+        }
+    }
+
     private function notifyRequester(KamsTreasuryEntry $entry, string $decision, string $motif): void
     {
         $userId = (int) ($entry->requested_by ?: 0);
@@ -723,9 +1182,10 @@ class TreasuryLedger
 
             $locale = $user->locale === 'en' ? 'en' : 'fr';
             $approved = ($payload['decision'] ?? '') === 'approve';
-            $type = $payload['type'] === 'deposit'
-                ? ($locale === 'en' ? 'deposit' : 'dépôt')
-                : ($locale === 'en' ? 'withdrawal' : 'retrait');
+            $type = match ($payload['type'] ?? '') {
+                'deposit', 'transfer_deposit', 'transfer' => $locale === 'en' ? 'deposit' : 'dépôt',
+                default => $locale === 'en' ? 'withdrawal' : 'retrait',
+            };
             $amount = number_format(abs((float) ($payload['amount'] ?? 0)), 2, '.', ' ');
             $title = $locale === 'en'
                 ? ($approved ? 'Finance request approved' : 'Finance request rejected')
@@ -769,9 +1229,9 @@ class TreasuryLedger
         }
     }
 
-    private function queueMemberRequest(KamsMember $member, string $type, float $amount, string $notes, int $userId): KamsTreasuryEntry
+    private function queueMemberRequest(KamsMember $member, string $type, float $amount, string $notes, int $userId, ?string $accountKind = null): KamsTreasuryEntry
     {
-        return DB::transaction(function () use ($member, $type, $amount, $notes, $userId) {
+        return DB::transaction(function () use ($member, $type, $amount, $notes, $userId, $accountKind) {
             $account = $this->accountForMember($member);
             $requestedBy = $member->user_id ?: $userId;
             $entry = KamsTreasuryEntry::query()->create([
@@ -788,13 +1248,15 @@ class TreasuryLedger
                 'requested_by' => $requestedBy,
                 'performed_by' => null,
             ]);
-            app(SavingsLedger::class)->queue(
+            $savings = app(SavingsLedger::class);
+            $savings->queue(
                 $member,
                 $type === 'deposit' ? 'deposit_request' : 'withdrawal_request',
                 $amount,
                 $notes,
                 $userId,
                 $entry,
+                $accountKind ?: $savings->defaultManualKind($member),
             );
 
             $fresh = $entry->fresh(['createdBy', 'requestedBy', 'member', 'account.office']);
@@ -806,13 +1268,11 @@ class TreasuryLedger
 
     private function notifyApprovers(KamsTreasuryEntry $entry): void
     {
-        $entry->loadMissing(['member', 'account.office']);
+        $entry->loadMissing(['member', 'account.office', 'member.office']);
         $companyId = (int) $entry->company_id;
-        $officeId = $entry->office_id ? (int) $entry->office_id : null;
-        // Keep request alerts inside the office: no office => no office validators to ping.
-        if (! $officeId) {
-            return;
-        }
+        $officeId = $entry->office_id
+            ? (int) $entry->office_id
+            : ($entry->member?->office_id ? (int) $entry->member->office_id : null);
 
         $excludeIds = collect([(int) ($entry->requested_by ?: 0), (int) ($entry->created_by ?: 0)])
             ->filter(fn (int $id) => $id > 0)
@@ -824,22 +1284,32 @@ class TreasuryLedger
             $approvers = User::query()
                 ->where('is_active', true)
                 ->when($excludeIds !== [], fn ($query) => $query->whereNotIn('id', $excludeIds))
-                ->whereHas('roles.permissions', fn ($permissions) => $permissions->where('slug', 'kams.finance.company.approve'))
-                ->whereDoesntHave('roles', fn ($roles) => $roles->whereIn('slug', RoleCatalog::fullAccessSlugs()))
+                ->where(function ($query) {
+                    $query->whereHas('roles', fn ($roles) => $roles->whereIn('slug', RoleCatalog::fullAccessSlugs()))
+                        ->orWhereHas('roles.permissions', fn ($permissions) => $permissions->where('slug', 'kams.finance.company.approve'));
+                })
                 ->with(['roles.permissions', 'scopes'])
                 ->get();
 
-            $officeName = (string) ($entry->account?->office?->name ?: '');
+            $officeName = (string) ($entry->account?->office?->name ?: $entry->member?->office?->name ?: '');
             $amount = number_format(abs((float) $entry->amount), 2, '.', ' ');
             $isDeposit = $entry->type === 'deposit';
             $rawMemberName = trim((string) ($entry->member?->full_name ?: ''));
+            $pathQuery = array_filter([
+                'member_id' => $entry->member_id ? (int) $entry->member_id : null,
+                'office_id' => $officeId,
+            ]);
+            $path = '/modules/kams/finance/accounts'.($pathQuery !== [] ? '?'.http_build_query($pathQuery) : '');
 
             foreach ($approvers as $user) {
-                // Global roles (super admin / president) and company-wide roles stay out of office request alerts.
-                if ($user->isGroupAdmin() || ! $user->isOfficeScoped()) {
+                if (! $user->isGroupAdmin() && ! $user->hasPermission('kams.finance.company.approve')) {
                     continue;
                 }
-                if (! $user->canAccessCompany($companyId) || ! $user->canAccessOffice($officeId)) {
+                if (! $user->canAccessCompany($companyId)) {
+                    continue;
+                }
+                // Office cashiers only see requests for offices they can access.
+                if ($officeId && ! $user->isGroupAdmin() && $user->isOfficeScoped() && ! $user->canAccessOffice($officeId)) {
                     continue;
                 }
 
@@ -875,6 +1345,85 @@ class TreasuryLedger
                         'office_id' => $officeId,
                         'company_id' => $companyId,
                         'member_id' => $entry->member_id,
+                        'path' => $path,
+                    ],
+                ]);
+            }
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($send);
+        } else {
+            $send();
+        }
+    }
+
+    /**
+     * Notify admin/president (company-wide approvers) of an office→bank deposit request.
+     */
+    private function notifyBankApprovers(KamsTreasuryEntry $entry): void
+    {
+        $entry->loadMissing(['office', 'account']);
+        $companyId = (int) $entry->company_id;
+        $officeId = $entry->office_id ? (int) $entry->office_id : null;
+        $excludeIds = collect([(int) ($entry->requested_by ?: 0), (int) ($entry->created_by ?: 0)])
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        $send = function () use ($entry, $companyId, $officeId, $excludeIds) {
+            $candidates = User::query()
+                ->where('is_active', true)
+                ->when($excludeIds !== [], fn ($query) => $query->whereNotIn('id', $excludeIds))
+                ->where(function ($query) {
+                    $query->whereHas('roles', fn ($roles) => $roles->whereIn('slug', RoleCatalog::fullAccessSlugs()))
+                        ->orWhereHas('roles.permissions', fn ($permissions) => $permissions->where('slug', 'kams.finance.company.approve'));
+                })
+                ->with(['roles.permissions', 'scopes'])
+                ->get();
+
+            $officeName = (string) ($entry->office?->name ?: '');
+            $amount = number_format(abs((float) $entry->amount), 2, '.', ' ');
+
+            foreach ($candidates as $user) {
+                if (! $user->canAccessCompany($companyId)) {
+                    continue;
+                }
+                // Office-scoped managers validate local member requests, not the principal bank inbox.
+                if (! $user->isGroupAdmin() && $user->isOfficeScoped()) {
+                    continue;
+                }
+                if (! $user->isGroupAdmin() && ! $user->hasPermission('kams.finance.company.approve')) {
+                    continue;
+                }
+
+                $locale = $user->locale === 'en' ? 'en' : 'fr';
+                $title = $locale === 'en'
+                    ? 'New bank deposit request'
+                    : 'Nouvelle demande de dépôt (compte principal)';
+                $body = $locale === 'en'
+                    ? ("A deposit of {$amount} to the principal account requires validation.")
+                    : ("Un dépôt de {$amount} vers le compte principal nécessite une validation.");
+                if ($officeName !== '') {
+                    $body .= $locale === 'en'
+                        ? (" Office: {$officeName}.")
+                        : (" Bureau : {$officeName}.");
+                }
+
+                AppNotification::query()->create([
+                    'user_id' => $user->id,
+                    'type' => 'finance_request',
+                    'title' => $title,
+                    'body' => $body,
+                    'channel' => 'in_app',
+                    'data' => [
+                        'module' => 'kams',
+                        'entry_id' => $entry->id,
+                        'type' => $entry->type,
+                        'office_id' => $officeId,
+                        'company_id' => $companyId,
+                        'path' => '/modules/kams/finance/company',
                     ],
                 ]);
             }
@@ -948,9 +1497,6 @@ class TreasuryLedger
         abort_unless($amount != 0.0, 422, __('The amount must be greater than zero.'));
 
         return DB::transaction(function () use ($account, $type, $amount, $notes, $userId, $member) {
-            if (in_array($type, ['withdrawal', 'expense'], true)) {
-                $this->coverFromOffices($account, abs($amount), $userId);
-            }
             $requestedBy = $member?->user_id ?: $userId;
             $entry = KamsTreasuryEntry::query()->create([
                 'company_id' => $account->company_id,
@@ -988,9 +1534,10 @@ class TreasuryLedger
      */
     private function serializeEntry(KamsTreasuryEntry $entry): array
     {
-        $entry->loadMissing(['account:id,name,code,office_id', 'account.office:id,name,code']);
-        $holder = $entry->account?->office?->name
-            ?: ($entry->account?->isCentral() ? 'KAMS' : $entry->account?->name);
+        $entry->loadMissing(['account:id,name,code,office_id', 'account.office:id,name,code', 'office:id,name,code']);
+        $holder = $entry->office?->name
+            ?: ($entry->account?->office?->name
+                ?: ($entry->account?->isCentral() ? 'KAMS' : $entry->account?->name));
 
         return [
             'uid' => 'treasury-'.$entry->id,
@@ -1002,9 +1549,10 @@ class TreasuryLedger
             'occurred_on' => $entry->occurred_on?->toDateString(),
             'created_at' => $entry->created_at?->toIso8601String(),
             'updated_at' => $entry->updated_at?->toIso8601String(),
-            'notes' => $entry->notes,
+            'notes' => $this->localizedNotes($entry),
             'decision_notes' => $entry->decision_notes ?? null,
             'holder' => $holder,
+            'office' => $entry->office?->only(['id', 'name', 'code']),
             'member' => $entry->member ? [
                 'id' => $entry->member->id,
                 'full_name' => $entry->member->full_name,
@@ -1019,6 +1567,39 @@ class TreasuryLedger
                 'label' => $holder,
             ],
         ];
+    }
+
+    /**
+     * Re-emit known system note templates in the current request locale.
+     */
+    private function localizedNotes(KamsTreasuryEntry $entry): ?string
+    {
+        $notes = trim((string) ($entry->notes ?? ''));
+        if ($notes === '') {
+            return $entry->notes;
+        }
+
+        if (preg_match('/^Deposit from (.+) to principal account$/u', $notes, $match)
+            || preg_match('/^Dépôt de (.+) vers le compte principal$/u', $notes, $match)
+            || preg_match('/^Dépôt depuis (.+) vers le compte principal$/u', $notes, $match)) {
+            return __('Deposit from :office to principal account', ['office' => $match[1]]);
+        }
+
+        if (in_array($notes, [
+            'Transfer to principal account',
+            'Transfert vers le compte principal',
+            'Transfert vers le compte central',
+        ], true)) {
+            return __('Transfer to principal account');
+        }
+
+        if (preg_match('/^Transfer from (.+)$/u', $notes, $match)
+            || preg_match('/^Transfert depuis (.+)$/u', $notes, $match)
+            || preg_match('/^Transfert de (.+)$/u', $notes, $match)) {
+            return __('Transfer from :office', ['office' => $match[1]]);
+        }
+
+        return $entry->notes;
     }
 
     /**

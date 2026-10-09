@@ -6,8 +6,10 @@ use App\Models\Office;
 use App\Modules\Kams\Models\KamsAsset;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSavingsAccount;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockBalance;
+use App\Modules\Kams\Support\RevenueRuleCatalog;
 use App\Modules\Kams\Models\KamsStockReturnItem;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsTreasuryAccount;
@@ -197,11 +199,11 @@ class KamsFinanceService
 
     /**
      * @param  list<int>  $officeIds
-     * @return array{guy: float, manager: float, assistant_manager: float, secretary: float, divisionnaire: float, total: float}
+     * @return array{guy: float, manager: float, assistant_manager: float, secretary: float, divisionnaire: float, salary: float, percentage: float, total: float}
      */
     public function savingsByKind(?int $companyId = null, array $officeIds = []): array
     {
-        $kinds = ['guy', 'manager', 'assistant_manager', 'secretary', 'divisionnaire'];
+        $kinds = ['guy', 'manager', 'assistant_manager', 'secretary', 'divisionnaire', 'salary', 'percentage'];
         $totals = array_fill_keys($kinds, 0.0);
         $rows = KamsSavingsAccount::query()
             ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
@@ -336,13 +338,12 @@ class KamsFinanceService
      */
     private function inventoryValue(?int $companyId, array $officeIds): float
     {
-        return round((float) KamsStockBalance::query()
-            ->when($companyId, fn ($query) => $query->where('kams_stock_balances.company_id', $companyId))
-            ->where('kams_stock_balances.condition', 'available')
-            ->when($officeIds !== [], fn ($query) => $query->whereHas('depot', fn ($depot) => $depot->whereIn('office_id', $officeIds)))
-            ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-            ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
-            ->value('value'), 2);
+        return KamsProduct::sumStockSaleValue(
+            KamsStockBalance::query()
+                ->available()
+                ->when($companyId, fn ($query) => $query->where('kams_stock_balances.company_id', $companyId))
+                ->forOfficesOrWarehouses($officeIds)
+        );
     }
 
     /**
@@ -363,12 +364,21 @@ class KamsFinanceService
      */
     private function payables(?int $companyId, array $officeIds): float
     {
-        return round((float) KamsSellerCommission::query()
+        $officeCommissions = (float) KamsRevenueShare::query()
+            ->where('status', 'payable')
+            ->whereIn('rule_code', RevenueRuleCatalog::heldOfficeCommissionCodes())
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->when($officeIds !== [], fn ($query) => $query->whereIn('office_id', $officeIds))
+            ->sum('amount');
+
+        $sellerCommissions = (float) KamsSellerCommission::query()
             ->where('status', 'payable')
             ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
             ->when($officeIds !== [], fn ($query) => $query->whereHas('member', fn ($member) => $member->whereIn('office_id', $officeIds)))
             ->selectRaw('COALESCE(SUM(payable_amount - paid_amount), 0) as value')
-            ->value('value'), 2);
+            ->value('value');
+
+        return round($officeCommissions + $sellerCommissions, 2);
     }
 
     /**

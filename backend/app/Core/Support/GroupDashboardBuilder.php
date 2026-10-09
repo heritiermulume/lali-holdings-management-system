@@ -14,8 +14,10 @@ use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsSavingsAccount;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockAssignment;
+use App\Modules\Kams\Support\RevenueRuleCatalog;
 use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockSaleItem;
@@ -224,7 +226,12 @@ class GroupDashboardBuilder
             'finances_delta' => $this->deltaMap($finances, $previousFinances),
             'operations' => $operations,
             'operations_previous' => $previousOperations,
-            'operations_delta' => $this->deltaMap($operations, $previousOperations, ['agents', 'clients', 'products', 'inventory_units', 'inventory_value', 'commissions_payable', 'sales_count', 'sold_units']),
+            'operations_delta' => $this->deltaMap($operations, $previousOperations, [
+                'agents', 'clients', 'products',
+                'depot_units', 'warehouse_units', 'inventory_units',
+                'depot_value', 'warehouse_value', 'inventory_value',
+                'commissions_payable', 'sales_count', 'sold_units',
+            ]),
             'kams_compensation' => $compensation,
             'kams_savings' => $savings,
             'recruitment' => $recruitment,
@@ -331,31 +338,53 @@ class GroupDashboardBuilder
                     ->whereBetween('sold_at', [$from.' 00:00:00', $to.' 23:59:59']);
             })
             ->sum('quantity');
-        $inventoryUnits = (int) KamsStockBalance::query()
+        $depotUnits = (int) KamsStockBalance::query()
             ->whereIn('company_id', $companyIds)
-            ->where('condition', 'available')
-            ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($d) => $d->whereIn('office_id', $officeIds)))
+            ->available()
+            ->whereHas('depot', fn ($q) => $q
+                ->where('kind', 'depot')
+                ->when($officeIds !== [], fn ($inner) => $inner->whereIn('office_id', $officeIds)))
             ->sum('quantity');
-        $inventoryValue = 0.0;
+        // Warehouses are company-level — shown on admin overview, not when a single office is filtered.
+        $warehouseUnits = $officeIds !== []
+            ? 0
+            : (int) KamsStockBalance::query()
+                ->whereIn('company_id', $companyIds)
+                ->available()
+                ->whereHas('depot', fn ($q) => $q->where('kind', 'warehouse'))
+                ->sum('quantity');
+        $depotValue = 0.0;
+        $warehouseValue = 0.0;
         $commissions = 0.0;
         foreach ($companies as $company) {
             if ($company->module?->slug !== 'kams') {
                 continue;
             }
             $fromCurrency = strtoupper((string) ($company->currency_code ?: $currency));
-            $value = (float) KamsStockBalance::query()
-                ->where('kams_stock_balances.company_id', $company->id)
-                ->where('condition', 'available')
-                ->when($officeIds !== [], fn ($q) => $q->whereHas('depot', fn ($d) => $d->whereIn('office_id', $officeIds)))
-                ->join('kams_products', 'kams_products.id', '=', 'kams_stock_balances.product_id')
-                ->selectRaw('COALESCE(SUM(kams_stock_balances.quantity * '.KamsProduct::inventoryUnitCostSql().'), 0) as value')
-                ->value('value');
-            $payable = (float) KamsSellerCommission::query()
+            $officeValue = KamsProduct::sumStockSaleValue(
+                KamsStockBalance::query()
+                    ->available()
+                    ->where('kams_stock_balances.company_id', $company->id)
+                    ->whereHas('depot', fn ($q) => $q
+                        ->where('kind', 'depot')
+                        ->when($officeIds !== [], fn ($inner) => $inner->whereIn('office_id', $officeIds)))
+            );
+            $whValue = $officeIds !== []
+                ? 0.0
+                : KamsProduct::sumStockSaleValue(
+                    KamsStockBalance::query()
+                        ->available()
+                        ->where('kams_stock_balances.company_id', $company->id)
+                        ->whereHas('depot', fn ($q) => $q->where('kind', 'warehouse'))
+                );
+            $payable = (float) KamsRevenueShare::query()
                 ->where('company_id', $company->id)
                 ->where('status', 'payable')
-                ->when($officeIds !== [], fn ($q) => $q->whereHas('member', fn ($m) => $m->whereIn('office_id', $officeIds)))
-                ->sum('payable_amount');
-            $inventoryValue += $this->fx->convert($value, $fromCurrency, $currency);
+                ->whereIn('rule_code', RevenueRuleCatalog::heldOfficeCommissionCodes())
+                ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds))
+                ->sum('amount');
+            $depotValue += $this->fx->convert($officeValue, $fromCurrency, $currency);
+            $warehouseValue += $this->fx->convert($whValue, $fromCurrency, $currency);
             $commissions += $this->fx->convert($payable, $fromCurrency, $currency);
         }
 
@@ -365,8 +394,12 @@ class GroupDashboardBuilder
             'products' => $products,
             'sales_count' => (clone $salesQuery)->count(),
             'sold_units' => $soldUnits,
-            'inventory_units' => $inventoryUnits,
-            'inventory_value' => round($inventoryValue, 2),
+            'depot_units' => $depotUnits,
+            'warehouse_units' => $warehouseUnits,
+            'inventory_units' => $depotUnits + $warehouseUnits,
+            'depot_value' => round($depotValue, 2),
+            'warehouse_value' => round($warehouseValue, 2),
+            'inventory_value' => round($depotValue + $warehouseValue, 2),
             'commissions_payable' => round($commissions, 2),
         ];
     }
@@ -436,7 +469,7 @@ class GroupDashboardBuilder
             $row = [
                 'guy_savings' => (float) (clone $query)->where('kind', 'guy')->sum('balance'),
                 'assistant_manager_savings' => (float) (clone $query)->where('kind', 'assistant_manager')->sum('balance'),
-                'manager_savings' => (float) (clone $query)->where('kind', 'manager')->sum('balance'),
+                'manager_savings' => (float) (clone $query)->whereIn('kind', ['manager', 'salary', 'percentage'])->sum('balance'),
                 'divisionnaire_savings' => (float) (clone $query)->where('kind', 'divisionnaire')->sum('balance'),
             ];
             $converted = $this->fx->convertBag($row, $fromCurrency, $currency);

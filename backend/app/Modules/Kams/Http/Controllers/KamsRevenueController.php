@@ -13,6 +13,7 @@ use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\RevenueRuleService;
 use App\Modules\Kams\Services\RevenueShareService;
+use App\Modules\Kams\Support\RevenueRuleCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -40,6 +41,11 @@ class KamsRevenueController extends Controller
     public function updateRule(Request $request, KamsRevenueRule $rule): JsonResponse
     {
         $this->assertCompany($request, (int) $rule->company_id);
+        abort_if(
+            $rule->code === RevenueRuleCatalog::MANAGER_SALE,
+            422,
+            __('Manager sale share is configured on each product.'),
+        );
         $data = $request->validate([
             'percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'divisor' => ['nullable', 'numeric', 'min:0.0001'],

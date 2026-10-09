@@ -1,9 +1,17 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
+import { notifyPermissionsPossiblyStale } from './authSync'
 import { beginBusy, endBusy, type BusyKind } from './busy'
+import { isSoftRefresh, notifyDataChanged } from './dataSync'
+
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    skipBusy?: boolean
+    busyKind?: BusyKind
+    skipDataSync?: boolean
+  }
+}
 
 type BusyConfig = InternalAxiosRequestConfig & {
-  skipBusy?: boolean
-  busyKind?: BusyKind
   __busy?: boolean
 }
 
@@ -13,7 +21,7 @@ const api = axios.create({
 })
 
 function busyKindFor(config: BusyConfig): BusyKind | null {
-  if (config.skipBusy) return null
+  if (config.skipBusy || isSoftRefresh()) return null
   if (config.busyKind) return config.busyKind
 
   const url = String(config.url || '')
@@ -31,6 +39,21 @@ function busyKindFor(config: BusyConfig): BusyKind | null {
   }
 
   return null
+}
+
+function shouldNotifyDataChanged(config: BusyConfig | undefined, status: number | undefined) {
+  if (!config || config.skipDataSync) return false
+  if (isSoftRefresh()) return false
+  if (!status || status < 200 || status >= 300) return false
+
+  const method = String(config.method || 'get').toLowerCase()
+  if (method === 'get' || method === 'head' || method === 'options') return false
+
+  const url = String(config.url || '')
+  if (/\/auth\/(?:login|logout|register|forgot-password|reset-password|change-password)/i.test(url)) return false
+  if (/\/public\//i.test(url)) return false
+
+  return true
 }
 
 api.interceptors.request.use((config) => {
@@ -64,8 +87,12 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => {
-    if ((response.config as BusyConfig).__busy) {
+    const config = response.config as BusyConfig
+    if (config.__busy) {
       endBusy()
+    }
+    if (shouldNotifyDataChanged(config, response.status)) {
+      notifyDataChanged('mutation')
     }
     return response
   },
@@ -74,9 +101,13 @@ api.interceptors.response.use(
       endBusy()
     }
     const path = window.location.pathname
-    if (error.response?.status === 401 && !path.startsWith('/login') && !path.startsWith('/reset-password')) {
+    const status = error.response?.status
+    if (status === 401 && !path.startsWith('/login') && !path.startsWith('/reset-password')) {
       localStorage.removeItem('lhms_token')
       window.location.href = '/login'
+    } else if (status === 403 && localStorage.getItem('lhms_token')) {
+      // Permissions may have been revoked — refresh the session user so the UI hides forbidden actions.
+      notifyPermissionsPossiblyStale()
     }
     return Promise.reject(error)
   },

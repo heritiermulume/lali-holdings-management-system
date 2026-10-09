@@ -232,20 +232,12 @@ class MemberMigrationService
             }
         }
 
-        if (blank($row['trainer_user_id'] ?? null) && filled($row['sponsor_member_code'] ?? null)) {
-            $sponsor = KamsMember::query()
-                ->where('company_id', $companyId)
-                ->where('member_code', $row['sponsor_member_code'])
-                ->first();
-
-            if ($sponsor?->user_id) {
-                $row['trainer_user_id'] = $sponsor->user_id;
-                $row['trainer_name'] = $sponsor->full_name;
-            } else {
-                $row['trainer_unresolved'] = true;
-            }
+        // Legacy "parrain" codes map to the encadreur when no coach is provided.
+        if (blank($row['coach_member_code'] ?? null) && filled($row['sponsor_member_code'] ?? null)) {
+            $row['coach_member_code'] = $row['sponsor_member_code'];
         }
 
+        $coach = null;
         if (filled($row['coach_member_code'] ?? null) || filled($row['coach_name'] ?? null)) {
             $coach = KamsMember::query()
                 ->where('company_id', $companyId)
@@ -261,6 +253,22 @@ class MemberMigrationService
                 $row['coach_name'] = $coach->full_name;
             } else {
                 $row['coach_unresolved'] = true;
+            }
+        }
+
+        // Encadreur = parrain: keep trainer_* in sync for finance/upline.
+        if ($coach) {
+            $row['trainer_user_id'] = $coach->user_id;
+            $row['trainer_name'] = $coach->full_name;
+            unset($row['trainer_unresolved']);
+        } elseif (! empty($row['trainer_user_id']) && blank($row['coach_member_id'] ?? null)) {
+            $coachFromTrainer = KamsMember::query()
+                ->where('company_id', $companyId)
+                ->where('user_id', $row['trainer_user_id'])
+                ->first();
+            if ($coachFromTrainer) {
+                $row['coach_member_id'] = $coachFromTrainer->id;
+                $row['coach_name'] = $coachFromTrainer->full_name;
             }
         }
 

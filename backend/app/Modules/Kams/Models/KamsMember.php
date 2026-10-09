@@ -2,12 +2,14 @@
 
 namespace App\Modules\Kams\Models;
 
+use App\Core\Support\RoleCatalog;
 use App\Models\Company;
 use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -26,7 +28,7 @@ class KamsMember extends Model
 {
     use SoftDeletes;
 
-    protected $appends = ['photo_url', 'account'];
+    protected $appends = ['photo_url', 'account', 'is_certified', 'can_be_certified'];
 
     protected function casts(): array
     {
@@ -45,6 +47,25 @@ class KamsMember extends Model
     protected function photoUrl(): Attribute
     {
         return Attribute::get(fn (): ?string => $this->photo_path ? '/storage/'.$this->photo_path : null);
+    }
+
+    protected function isCertified(): Attribute
+    {
+        return Attribute::get(function (): bool {
+            $user = $this->relationLoaded('user') ? $this->user : ($this->user_id ? $this->user()->first() : null);
+
+            return (bool) ($user?->is_certified);
+        });
+    }
+
+    protected function canBeCertified(): Attribute
+    {
+        return Attribute::get(function (): bool {
+            $this->loadMissing('role:id,slug');
+
+            return $this->role !== null
+                && in_array($this->role->slug, User::CERTIFIABLE_ROLE_SLUGS, true);
+        });
     }
 
     public function company(): BelongsTo
@@ -134,5 +155,32 @@ class KamsMember extends Model
     public function isMigrated(): bool
     {
         return $this->origin === 'migrated';
+    }
+
+    /**
+     * Members who can receive stock from an office depot (excludes platform admins).
+     */
+    public function scopeAssignableForStock(Builder $query): Builder
+    {
+        $excluded = RoleCatalog::kamsStockAssignmentExcludedSlugs();
+
+        return $query
+            ->whereNotNull('office_id')
+            ->where(function (Builder $q) use ($excluded) {
+                $q->whereDoesntHave('role', fn (Builder $role) => $role->whereIn('slug', $excluded))
+                    ->orWhereNull('role_id');
+            });
+    }
+
+    public function canReceiveStockAssignment(): bool
+    {
+        if (! $this->office_id) {
+            return false;
+        }
+
+        $this->loadMissing('role:id,slug');
+        $slug = $this->role?->slug;
+
+        return ! $slug || ! in_array($slug, RoleCatalog::kamsStockAssignmentExcludedSlugs(), true);
     }
 }

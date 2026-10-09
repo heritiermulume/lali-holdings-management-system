@@ -77,6 +77,9 @@ class OfficeHierarchy
 
         return match (true) {
             str_contains($rank, 'divisionnaire') => 'divisionnaire',
+            str_contains($rank, 'vice') && str_contains($rank, 'président') => 'vice_president',
+            str_contains($rank, 'vice') && str_contains($rank, 'president') => 'vice_president',
+            str_contains($rank, 'partner') || str_contains($rank, 'partenaire') => 'partner',
             str_contains($rank, 'assistant') => 'assistant_manager',
             str_contains($rank, 'secrétaire') || str_contains($rank, 'secretary') => 'secretary',
             str_contains($rank, 'manager') => 'manager',
@@ -84,13 +87,63 @@ class OfficeHierarchy
         };
     }
 
+    /**
+     * Roles that receive the local office manager package (product share + opened-office %).
+     */
+    public function isOfficeManagerRole(?string $slug): bool
+    {
+        return in_array($slug, ['manager', 'vice_president', 'partner'], true);
+    }
+
     public function resolveAssistant(KamsMember $seller): ?KamsMember
     {
+        // A member who is already an assistant manager leaves their former AM's direct team
+        // for base remuneration — their own production is not included there.
+        if ($this->roleSlug($seller) === 'assistant_manager') {
+            return null;
+        }
+
         if ($seller->assistant_manager_member_id) {
             return KamsMember::query()->with('role:id,name,slug')->find($seller->assistant_manager_member_id);
         }
-        if ($seller->trainer_user_id) {
-            $trainer = $this->memberForUser((int) $seller->trainer_user_id, (int) $seller->company_id);
+
+        return $this->linkedAssistantManager($seller);
+    }
+
+    /**
+     * Upline assistant manager that "owns" this assistant (former team link).
+     * Used for certified AM surplus: 1/8 of each sub-AM's team production.
+     */
+    public function resolveAssistantSponsor(KamsMember $assistant): ?KamsMember
+    {
+        $sponsor = null;
+        if ($assistant->assistant_manager_member_id) {
+            $linked = KamsMember::query()->with('role:id,name,slug')->find($assistant->assistant_manager_member_id);
+            if ($linked && $this->roleSlug($linked) === 'assistant_manager') {
+                $sponsor = $linked;
+            }
+        }
+        if (! $sponsor) {
+            $sponsor = $this->linkedAssistantManager($assistant);
+        }
+        if (! $sponsor || (int) $sponsor->id === (int) $assistant->id) {
+            return null;
+        }
+
+        return $sponsor;
+    }
+
+    private function linkedAssistantManager(KamsMember $member): ?KamsMember
+    {
+        // Encadreur is the parrain / upline used by finance.
+        if ($member->coach_member_id) {
+            $coach = KamsMember::query()->with('role:id,name,slug')->find($member->coach_member_id);
+            if ($coach && $this->roleSlug($coach) === 'assistant_manager') {
+                return $coach;
+            }
+        }
+        if ($member->trainer_user_id) {
+            $trainer = $this->memberForUser((int) $member->trainer_user_id, (int) $member->company_id);
             if ($trainer && $this->roleSlug($trainer) === 'assistant_manager') {
                 return $trainer;
             }
@@ -140,12 +193,14 @@ class OfficeHierarchy
             ? $this->memberForUser($office->creator_user_id ? (int) $office->creator_user_id : null, (int) $office->company_id)
             : null;
         $assistant = $seller ? $this->resolveAssistant($seller) : null;
+        $certifiedSponsor = $assistant ? $this->resolveAssistantSponsor($assistant) : null;
         $chain = $office ? $this->beneficiaryChain($office, $officeCreator) : ['managers' => [], 'divisionnaires' => []];
         $secretaries = $office ? $this->secretariesForDirectOffice($office) : collect();
 
         return [
             'seller' => $this->memberPayload($seller),
             'assistant_manager' => $this->memberPayload($assistant),
+            'certified_assistant_sponsor' => $this->memberPayload($certifiedSponsor),
             'office' => $office ? [
                 'id' => $office->id,
                 'name' => $office->name,
@@ -164,6 +219,7 @@ class OfficeHierarchy
             'divisionnaires' => array_map(fn (KamsMember $member) => $this->memberPayload($member), $chain['divisionnaires']),
             'secretaries' => $secretaries->map(fn (KamsMember $member) => $this->memberPayload($member))->values()->all(),
             'assistant' => $assistant,
+            'certified_assistant_sponsor_model' => $certifiedSponsor,
             'manager' => $officeManager,
             'creator' => $officeCreator,
             'office_model' => $office,
@@ -191,7 +247,8 @@ class OfficeHierarchy
             if ($slug === 'divisionnaire') {
                 $divisionnaires[] = $member;
             }
-            if ($slug === 'manager') {
+            // VP / partner share the same opened-office remuneration path as managers.
+            if ($this->isOfficeManagerRole($slug)) {
                 $managers[] = ['member' => $member, 'direct' => $direct];
             }
         };
@@ -206,6 +263,10 @@ class OfficeHierarchy
             $upline = $walk->manager_member_id
                 ? KamsMember::query()->with('role:id,name,slug')->find($walk->manager_member_id)
                 : null;
+            // Encadreur is the parrain / upline used by finance.
+            if (! $upline && $walk->coach_member_id) {
+                $upline = KamsMember::query()->with('role:id,name,slug')->find($walk->coach_member_id);
+            }
             if (! $upline && $walk->trainer_user_id) {
                 $upline = $this->memberForUser((int) $walk->trainer_user_id, (int) $walk->company_id);
             }

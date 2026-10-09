@@ -1,10 +1,12 @@
-import { ArrowUpRight, Building2, Crown, Truck, Tv, Wheat } from 'lucide-react'
+import { ArrowUpRight, Building2, Crown, Home, Sprout, Trees, Truck, Tv, Wheat, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { Badge, Card, PageHeader } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
+import { useLiveData } from '../hooks/useLiveData'
 import api from '../lib/api'
+import { trackLoadSpinner } from '../lib/dataSync'
 import type { SystemModule } from '../types'
 
 const icons = {
@@ -13,6 +15,10 @@ const icons = {
   'real-estate': Building2,
   'rice-mills': Wheat,
   'lali-tv': Tv,
+  'machinery-fleet': Wrench,
+  'kibiti-agribusiness': Sprout,
+  'properties-magomeni': Home,
+  'agribusiness-park-kisegese': Trees,
 }
 
 export function ModulesPage() {
@@ -20,9 +26,16 @@ export function ModulesPage() {
   const [modules, setModules] = useState<SystemModule[]>([])
   const [loading, setLoading] = useState(true)
 
+  const load = () => {
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/modules').then((res) => setModules(res.data.data ?? [])).finally(stop)
+  }
+
   useEffect(() => {
-    api.get('/modules').then((res) => setModules(res.data.data ?? [])).finally(() => setLoading(false))
+    void load()
   }, [])
+
+  useLiveData(load)
 
   return (
     <div>

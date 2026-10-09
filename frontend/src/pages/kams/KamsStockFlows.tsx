@@ -3,8 +3,10 @@ import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Info, Package, Search, Trash2, User } from 'lucide-react'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { useOfficeScope } from '../../hooks/useOfficeScope'
@@ -80,14 +82,11 @@ function productsForLine(
   lines: Line[],
   lineIndex: number,
   officeId?: number | null,
-  extraTakenIds: Iterable<string | number> = [],
 ): Product[] {
   const taken = new Set(
-    [...extraTakenIds].map(String).concat(
-      lines.flatMap((line, index) => (
-        index !== lineIndex && line.product_id ? [line.product_id] : []
-      )),
-    ),
+    lines.flatMap((line, index) => (
+      index !== lineIndex && line.product_id ? [line.product_id] : []
+    )),
   )
   const currentId = lines[lineIndex]?.product_id || ''
   return catalog.filter((product) => {
@@ -192,6 +191,8 @@ export function KamsTransfers() {
     void load()
     void loadLookups()
   }, [])
+
+  useLiveData(load)
 
   useEffect(() => {
     const warehouse = warehouses.find((row) => String(row.id) === fromId)
@@ -400,18 +401,12 @@ export function KamsAssignmentsWorkspace() {
   return (
     <div>
       {showOfficeFilter ? (
-        <div className="mb-4 sm:max-w-xs">
-          <Select
-            className="w-full min-w-0"
-            label={t('kams.filterOffice')}
+        <div className="mb-4">
+          <OfficeFilterSelect
             value={officeId}
+            offices={offices}
             onChange={(event) => setOfficeId(event.target.value)}
-          >
-            <option value="">{t('kams.allOffices')}</option>
-            {offices.map((office) => (
-              <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
-            ))}
-          </Select>
+          />
         </div>
       ) : null}
       <KamsWorkspaceTabs
@@ -525,6 +520,7 @@ export function KamsAssignments() {
   const [editLines, setEditLines] = useState<Array<{ id: number; quantity: string }>>([])
   const [settling, setSettling] = useState<Assignment | null>(null)
   const [details, setDetails] = useState<Assignment | null>(null)
+  const [deleting, setDeleting] = useState<Assignment | null>(null)
   const [closeDayOpen, setCloseDayOpen] = useState(false)
   const [dayCounts, setDayCounts] = useState({ open: 0, closed: 0 })
   const [surplusConfirm, setSurplusConfirm] = useState<{ amount: number } | null>(null)
@@ -536,6 +532,7 @@ export function KamsAssignments() {
   const [returns, setReturns] = useState<Record<number, { returned: string; lost: string }>>({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const canDeleteAssignment = hasPermission('kams.stock.assignments.delete')
 
   const load = (term = query) =>
     api.get('/modules/kams/stock/assignments', {
@@ -545,12 +542,41 @@ export function KamsAssignments() {
         ...(term ? { search: term } : {}),
       },
     }).then((res) => {
-      setRows(res.data.data)
+      setRows(res.data.data || [])
       setDayCounts({
         open: Number(res.data.meta?.open_count || 0),
         closed: Number(res.data.meta?.closed_count || 0),
       })
     })
+
+  const mergeAssignment = (updated: Assignment) => {
+    setRows((prev) => {
+      const index = prev.findIndex((row) => row.id === updated.id)
+      if (index === -1) return [updated, ...prev]
+      const current = prev[index]
+      const next = [...prev]
+      next[index] = {
+        ...current,
+        ...updated,
+        member: updated.member
+          ? { ...current.member, ...updated.member }
+          : current.member,
+        office: updated.office ?? current.office,
+        items: updated.items ?? current.items,
+      }
+      return next
+    })
+    setDetails((prev) => {
+      if (!prev || prev.id !== updated.id) return prev
+      return {
+        ...prev,
+        ...updated,
+        member: updated.member ? { ...prev.member, ...updated.member } : prev.member,
+        office: updated.office ?? prev.office,
+        items: updated.items ?? prev.items,
+      }
+    })
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 300)
@@ -560,6 +586,8 @@ export function KamsAssignments() {
   useEffect(() => {
     void load(query)
   }, [query, officeId])
+
+  useLiveData(() => load(query))
 
   const reloadLookups = () =>
     api.get('/modules/kams/stock/lookups', {
@@ -660,16 +688,19 @@ export function KamsAssignments() {
     if (!canAssign) return
     setError('')
     try {
-      await api.post('/modules/kams/stock/assignments', {
+      const res = await api.post('/modules/kams/stock/assignments', {
         member_id: Number(memberId),
         items: lines
           .filter((line) => line.product_id && Number(line.quantity || 0) >= 1)
           .map((line) => ({ product_id: Number(line.product_id), quantity: Number(line.quantity) })),
       })
+      const created = res.data.data as Assignment | undefined
+      if (created?.id) mergeAssignment(created)
       setOpen(false)
       setMemberId('')
       setLines([emptyLine()])
       await Promise.all([load(), reloadLookups()])
+      if (created?.id) mergeAssignment(created)
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -692,14 +723,17 @@ export function KamsAssignments() {
     }
     setSaving(true)
     try {
-      await api.post(`/modules/kams/stock/assignments/${adding.id}/items`, {
+      const res = await api.post(`/modules/kams/stock/assignments/${adding.id}/items`, {
         items,
         collected_amount: Number(prepaid || 0),
       })
+      const updated = res.data.data as Assignment | undefined
+      if (updated?.id) mergeAssignment(updated)
       setAdding(null)
       setAddLines([emptyLine()])
       setPrepaid('')
       await Promise.all([load(), reloadLookups()])
+      if (updated?.id) mergeAssignment(updated)
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -713,7 +747,7 @@ export function KamsAssignments() {
     setError('')
     setSaving(true)
     try {
-      await api.post(`/modules/kams/stock/assignments/${settling.id}/close`, {
+      const res = await api.post(`/modules/kams/stock/assignments/${settling.id}/close`, {
         collected_amount: settleTotals.collectedAmount,
         deposit_surplus: depositSurplus,
         items: (settling.items || []).map((item) => ({
@@ -722,11 +756,14 @@ export function KamsAssignments() {
           quantity_lost: Number(returns[item.id]?.lost || 0),
         })),
       })
+      const updated = res.data.data as Assignment | undefined
+      if (updated?.id) mergeAssignment(updated)
       setSurplusConfirm(null)
       setSettling(null)
       setCollected('')
       setReturns({})
       await Promise.all([load(), reloadLookups()])
+      if (updated?.id) mergeAssignment(updated)
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -793,10 +830,13 @@ export function KamsAssignments() {
     }
     setSaving(true)
     try {
-      await api.put(`/modules/kams/stock/assignments/${editing.id}`, { items })
+      const res = await api.put(`/modules/kams/stock/assignments/${editing.id}`, { items })
+      const updated = res.data.data as Assignment | undefined
+      if (updated?.id) mergeAssignment(updated)
       setEditing(null)
       setEditLines([])
       await Promise.all([load(), reloadLookups()])
+      if (updated?.id) mergeAssignment(updated)
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -832,6 +872,25 @@ export function KamsAssignments() {
     setSurplusConfirm(null)
   }
 
+  const confirmDeleteAssignment = async () => {
+    if (!deleting) return
+    setError('')
+    setSaving(true)
+    try {
+      const deletedId = deleting.id
+      await api.delete(`/modules/kams/stock/assignments/${deletedId}`)
+      setRows((prev) => prev.filter((row) => row.id !== deletedId))
+      if (details?.id === deletedId) setDetails(null)
+      setDeleting(null)
+      await Promise.all([load(), reloadLookups()])
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div>
       <p className="mb-4 text-sm text-muted">{t('kams.assignmentFlowHint')}</p>
@@ -860,14 +919,14 @@ export function KamsAssignments() {
           </>
         ) : null}
       </div>
-      <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="flex flex-wrap gap-3">
         {rows.map((row) => {
           const items = row.items || []
           const itemCount = items.length
           const quantityTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0), 0)
           const valueTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0) * Number(item.unit_price || 0), 0)
           return (
-            <Card key={row.id} className={cn('flex h-48 flex-col overflow-hidden', row.status === 'closed' && 'border-emerald-200 bg-emerald-50')}>
+            <Card key={row.id} className={cn('flex h-48 w-96 max-w-full flex-col overflow-hidden', row.status === 'closed' && 'border-emerald-200 bg-emerald-50')}>
               <div className="flex min-h-0 flex-1 items-start justify-between gap-2 px-4 pb-2 pt-3">
                 <div className="flex min-w-0 items-start gap-3">
                   <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-lhms-soft text-lhms">
@@ -904,6 +963,17 @@ export function KamsAssignments() {
                   >
                     <Info size={20} strokeWidth={2.25} />
                   </Button>
+                  {canDeleteAssignment ? (
+                    <Button
+                      variant="ghost"
+                      className={cn('!h-8 !min-h-0 w-8 !p-0 text-danger hover:bg-danger/10', row.status === 'closed' && 'bg-white hover:bg-danger/10')}
+                      aria-label={t('kams.deleteAssignment')}
+                      title={t('kams.deleteAssignment')}
+                      onClick={() => { setError(''); setDeleting(row) }}
+                    >
+                      <Trash2 size={18} strokeWidth={2.25} />
+                    </Button>
+                  ) : null}
                 </div>
               </div>
               {hasPermission('kams.stock.update') && (row.status === 'open' || row.status === 'closed') ? (
@@ -1014,8 +1084,7 @@ export function KamsAssignments() {
           <p className="text-sm text-muted">{adding?.member?.full_name} · {adding?.reference}</p>
           <p className="text-sm text-muted">{t('kams.addToAssignmentHint')}</p>
           {addLines.map((line, index) => {
-            const takenOnAssignment = (adding?.items || []).map((item) => item.product?.id).filter(Boolean) as number[]
-            const lineProducts = productsForLine(products, addLines, index, addOfficeId, takenOnAssignment)
+            const lineProducts = productsForLine(products, addLines, index, addOfficeId)
             const remaining = remainingStockForLine(line.product_id, index, addLines, addOfficeId)
             const qty = Number(line.quantity || 0)
             const over = Boolean(line.product_id) && Boolean(addOfficeId) && qty > remaining
@@ -1187,9 +1256,22 @@ export function KamsAssignments() {
       </Modal>
 
       <Modal open={Boolean(details)} title={t('kams.assignmentDetails')} onClose={() => setDetails(null)}>
-        {details ? (
-          <AssignmentDetails assignment={details} />
-        ) : null}
+        {details ? <AssignmentDetails assignment={details} /> : null}
+      </Modal>
+
+      <Modal open={Boolean(deleting)} title={t('kams.deleteAssignment')} onClose={() => { if (!saving) { setDeleting(null); setError('') } }}>
+        <div className="space-y-4">
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <p className="text-sm text-muted">
+            {t('kams.deleteAssignmentConfirm', {
+              name: deleting?.member?.full_name || deleting?.reference || '',
+            })}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" disabled={saving} onClick={() => { setDeleting(null); setError('') }}>{t('common.cancel')}</Button>
+            <Button variant="danger" disabled={saving} onClick={() => void confirmDeleteAssignment()}>{t('common.delete')}</Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={Boolean(surplusConfirm)} title={t('kams.surplusConfirmTitle')} onClose={() => { if (!saving) setSurplusConfirm(null) }}>

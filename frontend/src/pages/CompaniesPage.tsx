@@ -7,8 +7,10 @@ import { Badge, Button, Card, Empty, Field, Modal, Select } from '../components/
 import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
 import { useSystemModules } from '../context/ModulesContext'
+import { useLiveData } from '../hooks/useLiveData'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
+import { trackLoadSpinner } from '../lib/dataSync'
 import { businessModuleIcon } from '../modules/registry'
 import type { SystemModule } from '../types'
 
@@ -144,13 +146,14 @@ export function CompaniesPage() {
   const [parentOptions, setParentOptions] = useState<Array<{ id: number; name: string; code: string }>>([])
 
   const load = () => {
-    setLoading(true)
-    api.get('/companies', { params: { business: 1, per_page: 50 } })
+    const stop = trackLoadSpinner(setLoading)
+    return api.get('/companies', { params: { business: 1, per_page: 50 } })
       .then((res) => setRows(res.data.data ?? []))
-      .finally(() => setLoading(false))
+      .finally(stop)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { void load() }, [])
+  useLiveData(load)
 
   useEffect(() => {
     api.get('/countries', { params: { per_page: 100 }, skipBusy: true })

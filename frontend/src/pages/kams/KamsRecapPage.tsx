@@ -15,8 +15,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Card, Empty, Field, Select } from '../../components/ui'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
+import { Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
+import { useLiveData } from '../../hooks/useLiveData'
 import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import { cn } from '../../lib/cn'
 import api from '../../lib/api'
@@ -43,6 +45,20 @@ type SeriesPoint = {
   abandoned: number
   new_members: number
 }
+type PromotionEligibility = {
+  chef: number
+  assistant_manager: number
+  criteria?: {
+    chef?: { daily_units?: number; consecutive_days?: number }
+    assistant_manager?: {
+      team_size?: number
+      chef_coachees?: number
+      daily_units?: number
+      consecutive_days?: number
+    }
+  }
+}
+
 type RecapData = {
   group_by: Period
   range: { from: string; to: string }
@@ -64,6 +80,7 @@ type RecapData = {
   interview_results: CountRow[]
   observation_decisions: CountRow[]
   sources: CountRow[]
+  promotion_eligibility?: PromotionEligibility
 }
 
 const COLORS = ['#043711', '#2d8a5a', '#c9a227', '#1d4ed8', '#c81e1e', '#7c3aed', '#0f766e']
@@ -84,17 +101,15 @@ export function KamsRecruitmentDashboard() {
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
   const [officeId, setOfficeId] = useState('')
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const [data, setData] = useState<(RecapData & {
     can_filter_offices?: boolean
     office_id?: number | null
     filter_offices?: Array<{ id: number; name: string; code?: string }>
   }) | null>(null)
 
-  useEffect(() => {
-    let active = true
-    if (period === 'custom' && (!from || !to)) return () => { active = false }
-    api.get('/modules/kams/recruitment/dashboard', {
+  const load = () => {
+    if (period === 'custom' && (!from || !to)) return
+    return api.get('/modules/kams/recruitment/dashboard', {
       params: {
         group_by: period,
         office_id: officeId || undefined,
@@ -102,13 +117,17 @@ export function KamsRecruitmentDashboard() {
         to: period === 'custom' ? to : undefined,
       },
     }).then((res) => {
-      if (!active) return
       const payload = res.data.data
       setData(payload)
       syncOfficeIdFromPayload(setOfficeId, payload)
     })
-    return () => { active = false }
+  }
+
+  useEffect(() => {
+    void load()
   }, [period, officeId, from, to])
+
+  useLiveData(load, { enabled: !(period === 'custom' && (!from || !to)) })
 
   const chartData = useMemo(() => {
     if (!data) return []
@@ -144,64 +163,47 @@ export function KamsRecruitmentDashboard() {
 
   return (
     <div className="space-y-5">
-      <div className="flex w-full flex-col items-end gap-3">
-        <div className="flex w-full items-center gap-3">
-          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
-            {t('kams.periodRange', {
-              start: parseDate(data.range.from).toLocaleDateString(locale),
-              end: parseDate(data.range.to).toLocaleDateString(locale),
-            })}
-          </p>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((open) => !open)}
-            className={cn('ml-auto shrink-0 rounded-full px-3 py-2 text-xs font-semibold sm:text-sm', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
-          >
-            {filtersOpen ? t('common.hide') : t('common.filter')}
-          </button>
-        </div>
-        {filtersOpen ? <div className="flex w-full flex-col items-end gap-3">
+      <div className="flex w-full flex-col gap-2">
+        <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+          {t('kams.periodRange', {
+            start: parseDate(data.range.from).toLocaleDateString(locale),
+            end: parseDate(data.range.to).toLocaleDateString(locale),
+          })}
+        </p>
+        <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           {data.can_filter_offices ? (
-            <Select
-              className="w-full max-w-xs min-w-0 sm:w-72"
-              label={t('kams.filterOffice')}
+            <OfficeFilterSelect
               value={officeId}
+              offices={data.filter_offices || []}
               onChange={(e) => setOfficeId(e.target.value)}
-            >
-              <option value="">{t('kams.allOffices')}</option>
-              {(data.filter_offices || []).map((office) => (
-                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
-              ))}
-            </Select>
+            />
           ) : null}
-          <div className="flex max-w-full flex-col items-end gap-2">
-            <div className="flex max-w-full overflow-x-auto rounded-full bg-white p-1">
-              {(['day', 'week', 'month'] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setPeriod(item)}
-                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-                >
-                  {t(`kams.period.${item}`)}
-                </button>
-              ))}
+          <div className="flex max-w-full min-w-0 w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto sm:ml-auto">
+            {(['day', 'week', 'month'] as const).map((item) => (
               <button
+                key={item}
                 type="button"
-                onClick={() => setPeriod('custom')}
-                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                onClick={() => setPeriod(item)}
+                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
               >
-                {t('dashboard.customPeriod')}
+                {t(`kams.period.${item}`)}
               </button>
-            </div>
-            {period === 'custom' ? (
-              <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
-                <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
-                <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
-              </div>
-            ) : null}
+            ))}
+            <button
+              type="button"
+              onClick={() => setPeriod('custom')}
+              className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+            >
+              {t('dashboard.customPeriod')}
+            </button>
           </div>
-        </div> : null}
+        </div>
+        {period === 'custom' ? (
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-80 sm:ml-auto">
+            <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
+            <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
+          </div>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
@@ -211,6 +213,41 @@ export function KamsRecruitmentDashboard() {
             <div className={cn('mt-2 text-2xl font-extrabold sm:mt-3 sm:text-3xl', item.accent && 'text-lhms')}>{item.value}</div>
           </Card>
         ))}
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <div className="font-semibold">{t('kams.promotionEligibility')}</div>
+          <p className="mt-1 text-sm text-muted">{t('kams.promotionEligibilityHint')}</p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+          <Card className="min-w-0 p-4 sm:p-5">
+            <div className="text-xs text-muted sm:text-sm">{t('kams.eligibleForChef')}</div>
+            <div className="mt-2 text-2xl font-extrabold text-lhms sm:mt-3 sm:text-3xl">
+              {data.promotion_eligibility?.chef ?? 0}
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              {t('kams.eligibleForChefCriteria', {
+                units: data.promotion_eligibility?.criteria?.chef?.daily_units ?? 15,
+                days: data.promotion_eligibility?.criteria?.chef?.consecutive_days ?? 3,
+              })}
+            </p>
+          </Card>
+          <Card className="min-w-0 p-4 sm:p-5">
+            <div className="text-xs text-muted sm:text-sm">{t('kams.eligibleForAssistantManager')}</div>
+            <div className="mt-2 text-2xl font-extrabold text-lhms sm:mt-3 sm:text-3xl">
+              {data.promotion_eligibility?.assistant_manager ?? 0}
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              {t('kams.eligibleForAssistantManagerCriteria', {
+                team: data.promotion_eligibility?.criteria?.assistant_manager?.team_size ?? 15,
+                chefs: data.promotion_eligibility?.criteria?.assistant_manager?.chef_coachees ?? 5,
+                units: data.promotion_eligibility?.criteria?.assistant_manager?.daily_units ?? 150,
+                days: data.promotion_eligibility?.criteria?.assistant_manager?.consecutive_days ?? 3,
+              })}
+            </p>
+          </Card>
+        </div>
       </div>
 
       <Card className="p-4 sm:p-5">

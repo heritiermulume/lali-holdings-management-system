@@ -7,8 +7,10 @@ import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
+import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { buildBrandedTableHtml, printHtml } from '../../lib/printDocument'
 
@@ -132,14 +134,14 @@ export function KamsWarehouseMovements() {
 
   const load = (term = query) => {
     if (!depotId) return Promise.resolve()
-    setLoading(true)
+    const stop = trackLoadSpinner(setLoading)
     return api.get('/modules/kams/stock/movements', { params: listParams(term) })
       .then((res) => {
         setRows((res.data.data as Movement[]) || [])
         const metaLocation = res.data.meta?.location as Location | undefined
         if (metaLocation) setLocation(metaLocation)
       })
-      .finally(() => setLoading(false))
+      .finally(stop)
   }
 
   useEffect(() => {
@@ -151,6 +153,8 @@ export function KamsWarehouseMovements() {
     void load()
     setPage(1)
   }, [depotId, isDepot, query, type, direction, productId, from, to])
+
+  useLiveData(() => load(query), { enabled: Boolean(depotId) })
 
   useEffect(() => {
     api.get('/modules/kams/stock/lookups').then((res) => {

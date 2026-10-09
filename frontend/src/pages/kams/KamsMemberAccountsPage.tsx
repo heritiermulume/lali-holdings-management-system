@@ -1,17 +1,20 @@
 import { Eye } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
+import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { PaginationButtons } from '../../components/PaginationButtons'
 import { useAuth } from '../../context/AuthContext'
+import { useLiveData } from '../../hooks/useLiveData'
 import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { money, roleLabel } from '../../lib/format'
 import { KamsAgentAccountModal } from './KamsAgentAccountModal'
 
-type AccountKind = 'guy' | 'manager' | 'assistant_manager' | 'secretary' | 'divisionnaire'
+type AccountKind = 'guy' | 'manager' | 'assistant_manager' | 'secretary' | 'divisionnaire' | 'salary' | 'percentage'
 
 type MemberRow = {
   id: number
@@ -35,6 +38,7 @@ type Payload = {
 export function KamsMemberAccountsPage() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [officeId, setOfficeId] = useState('')
   const [search, setSearch] = useState('')
   const [data, setData] = useState<Payload | null>(null)
@@ -43,51 +47,61 @@ export function KamsMemberAccountsPage() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(20)
 
-  useEffect(() => {
-    let active = true
-    api.get('/modules/kams/finance/member-accounts', {
+  const load = () => {
+    return api.get('/modules/kams/finance/member-accounts', {
       params: { office_id: officeId || undefined },
     }).then((res) => {
-      if (!active) return
       const payload = res.data.data
       setData(payload)
       syncOfficeIdFromPayload(setOfficeId, payload)
     })
-    return () => { active = false }
+  }
+
+  useEffect(() => {
+    void load()
   }, [officeId])
+
+  useEffect(() => {
+    const memberParam = searchParams.get('member_id')
+    if (!memberParam) return
+    const memberId = Number(memberParam)
+    if (!Number.isFinite(memberId) || memberId <= 0) return
+    const officeParam = searchParams.get('office_id')
+    const nextOfficeId = officeParam ? Number(officeParam) : null
+    setViewMemberId(memberId)
+    setViewOfficeId(Number.isFinite(nextOfficeId) && nextOfficeId && nextOfficeId > 0 ? nextOfficeId : null)
+    if (officeParam && Number.isFinite(Number(officeParam)) && Number(officeParam) > 0) {
+      setOfficeId(String(Number(officeParam)))
+    }
+  }, [searchParams])
+
+  useLiveData(load)
 
   if (!data) return <LoadingScreen />
 
+  const filterOffices = data.filter_offices || []
+  const canFilterOffices = Boolean(data.can_filter_offices) || filterOffices.length > 1
   const canViewAccount = hasPermission('kams.finance.account.view')
     || hasPermission('kams.finance.dashboard.view')
     || hasPermission('kams.finance.company.view')
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <p className="text-sm text-muted">{t('kams.memberAccountsHint')}</p>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          {data.can_filter_offices ? (
-            <select
-              className="min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:w-72"
-              value={officeId}
-              aria-label={t('kams.filterOffice')}
-              onChange={(e) => { setOfficeId(e.target.value); setPage(1) }}
-            >
-              <option value="">{t('kams.allOffices')}</option>
-              {(data.filter_offices || []).map((office) => (
-                <option key={office.id} value={office.id}>{office.name}{office.code ? ` · ${office.code}` : ''}</option>
-              ))}
-            </select>
-          ) : null}
-          <input
-            className="min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:w-80"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-            placeholder={t('common.search')}
-            aria-label={t('common.search')}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {canFilterOffices ? (
+          <OfficeFilterSelect
+            value={officeId}
+            offices={filterOffices}
+            onChange={(e) => { setOfficeId(e.target.value); setPage(1) }}
           />
-        </div>
+        ) : null}
+        <input
+          className="min-h-10 w-full rounded-full border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4 sm:ml-auto sm:w-80"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+          placeholder={t('common.search')}
+          aria-label={t('common.search')}
+        />
       </div>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -205,6 +219,12 @@ export function KamsMemberAccountsPage() {
         onClose={() => {
           setViewMemberId(null)
           setViewOfficeId(null)
+          if (searchParams.has('member_id') || searchParams.has('office_id')) {
+            const next = new URLSearchParams(searchParams)
+            next.delete('member_id')
+            next.delete('office_id')
+            setSearchParams(next, { replace: true })
+          }
         }}
       />
     </div>
