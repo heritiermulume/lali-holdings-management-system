@@ -15,7 +15,7 @@ trait ResolvesKamsOffices
             ->whereHas('company.module', fn ($q) => $q->where('slug', 'kams'))
             ->when(! $request->user()->isGroupAdmin(), function ($q) use ($request) {
                 $q->whereIn('company_id', $request->user()->accessibleCompanyIds() ?: [0]);
-                if ($request->user()->isOfficeScoped()) {
+                if ($request->user()->isOfficeScoped() || $request->user()->limitsDataToOwnedOffices()) {
                     $q->whereIn('id', $request->user()->accessibleOfficeIds() ?: [0]);
                 }
             });

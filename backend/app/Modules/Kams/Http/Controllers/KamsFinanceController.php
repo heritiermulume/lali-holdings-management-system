@@ -325,7 +325,7 @@ class KamsFinanceController extends Controller
         if (! $companyId) {
             return $this->ok([]);
         }
-        $officeScoped = ! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped();
+        $officeScoped = ! $request->user()->isGroupAdmin() && ($request->user()->isOfficeScoped() || $request->user()->limitsDataToOwnedOffices());
         $officeIds = $officeScoped ? $request->user()->accessibleOfficeIds() : [];
 
         // Principal/central treasury is company-wide only — office-scoped roles
@@ -688,7 +688,7 @@ class KamsFinanceController extends Controller
         if ($officeId) {
             $query->where('office_id', $officeId);
         }
-        if (! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped()) {
+        if (! $request->user()->isGroupAdmin() && ($request->user()->isOfficeScoped() || $request->user()->limitsDataToOwnedOffices())) {
             $accessible = $request->user()->accessibleOfficeIds() ?: [0];
             if ($officeId) {
                 abort_unless(in_array($officeId, $accessible, true), 403);
@@ -817,7 +817,7 @@ class KamsFinanceController extends Controller
         if ($request->user()->isGroupAdmin()) {
             return;
         }
-        if ($request->user()->isOfficeScoped()) {
+        if ($request->user()->isOfficeScoped() || $request->user()->limitsDataToOwnedOffices()) {
             abort_unless(in_array((int) $member->office_id, $request->user()->accessibleOfficeIds(), true), 403);
         }
     }
@@ -826,7 +826,7 @@ class KamsFinanceController extends Controller
     {
         abort_unless($this->canViewCompanyAccounts($request), 403);
         $this->assertCompany($request, (int) $account->company_id);
-        if (! $request->user()->isGroupAdmin() && $request->user()->isOfficeScoped()) {
+        if (! $request->user()->isGroupAdmin() && ($request->user()->isOfficeScoped() || $request->user()->limitsDataToOwnedOffices())) {
             // Office-scoped roles cannot open the company principal account.
             abort_unless(! $account->isCentral(), 403);
             abort_unless($account->office_id && in_array((int) $account->office_id, $request->user()->accessibleOfficeIds(), true), 403);

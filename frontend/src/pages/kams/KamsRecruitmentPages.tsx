@@ -668,6 +668,9 @@ export function KamsAgents() {
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const [printPreviewTitle, setPrintPreviewTitle] = useState('')
   const [coachedOpen, setCoachedOpen] = useState(false)
+  const [coachedQuery, setCoachedQuery] = useState('')
+  const [coachedPage, setCoachedPage] = useState(1)
+  const [coachedPerPage, setCoachedPerPage] = useState(10)
   const [credentials, setCredentials] = useState<Member[]>([])
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
@@ -848,6 +851,17 @@ export function KamsAgents() {
     : '—'
   const coachedMembers = memberDetail?.coached_members || []
   const coachedCount = memberDetail?.coached_members_count ?? coachedMembers.length
+  const coachedTerm = coachedQuery.trim().toLowerCase()
+  const filteredCoached = coachedMembers.filter((item) => {
+    if (!coachedTerm) return true
+    const role = item.role ? roleLabel(t, item.role, item.gender) : memberRankLabel(t, item.rank, item.gender)
+    return [item.full_name, item.member_code, item.phone, item.office?.name, role].join(' ').toLowerCase().includes(coachedTerm)
+  })
+  const coachedLastPage = Math.max(1, Math.ceil(filteredCoached.length / coachedPerPage) || 1)
+  const coachedCurrentPage = Math.min(coachedPage, coachedLastPage)
+  const coachedSlice = filteredCoached.slice((coachedCurrentPage - 1) * coachedPerPage, coachedCurrentPage * coachedPerPage)
+  const coachedFrom = filteredCoached.length === 0 ? 0 : (coachedCurrentPage - 1) * coachedPerPage + 1
+  const coachedTo = Math.min(coachedCurrentPage * coachedPerPage, filteredCoached.length)
 
   const previewServiceCard = () => {
     if (!memberDetail) return
@@ -1594,7 +1608,7 @@ export function KamsAgents() {
                 variant="secondary"
                 className="!min-h-9 h-9 px-3"
                 disabled={coachedCount === 0}
-                onClick={() => setCoachedOpen(true)}
+                onClick={() => { setCoachedQuery(''); setCoachedPage(1); setCoachedOpen(true) }}
               >
                 {t('kams.viewCoachedMembers')}
               </Button>
@@ -1608,8 +1622,17 @@ export function KamsAgents() {
         ) : null}
       </Modal>
       <Modal open={coachedOpen} title={t('kams.coachedMembersList')} onClose={() => setCoachedOpen(false)}>
-        <div className="max-h-[60vh] space-y-2 overflow-auto">
-          {coachedMembers.map((item) => (
+        <div className="mb-3 flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-3">
+          <Search size={16} className="shrink-0 text-muted" />
+          <input
+            value={coachedQuery}
+            onChange={(event) => { setCoachedQuery(event.target.value); setCoachedPage(1) }}
+            placeholder={t('kams.searchAgents')}
+            className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted"
+          />
+        </div>
+        <div className="max-h-[50vh] space-y-2 overflow-auto">
+          {coachedSlice.map((item) => (
             <div key={item.id} className="flex items-center gap-3 rounded-xl border border-line px-3 py-2">
               <PersonPhoto name={item.full_name} url={item.photo_url} className="h-10 w-10 text-xs" />
               <div className="min-w-0 flex-1">
@@ -1620,7 +1643,28 @@ export function KamsAgents() {
               </div>
             </div>
           ))}
-          {coachedMembers.length === 0 ? <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p> : null}
+          {filteredCoached.length === 0 ? <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p> : null}
+        </div>
+        <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted">{t('kams.pageRange', { from: coachedFrom, to: coachedTo, total: filteredCoached.length })}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              {t('kams.rowsPerPage')}
+              <select
+                value={coachedPerPage}
+                onChange={(event) => { setCoachedPerPage(Number(event.target.value)); setCoachedPage(1) }}
+                className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+              >
+                {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            <PaginationButtons
+              page={coachedCurrentPage}
+              lastPage={coachedLastPage}
+              onPrev={() => setCoachedPage((value) => Math.max(1, value - 1))}
+              onNext={() => setCoachedPage((value) => Math.min(coachedLastPage, value + 1))}
+            />
+          </div>
         </div>
         <Button className="mt-4 w-full" variant="secondary" onClick={() => setCoachedOpen(false)}>{t('common.close')}</Button>
       </Modal>

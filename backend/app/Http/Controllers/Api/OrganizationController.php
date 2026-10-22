@@ -462,6 +462,7 @@ class OrganizationController extends Controller
         $data['recorded_by_user_id'] = $request->user()->id;
         $office = Office::query()->create($data);
         $hierarchy->recordHistory($office, [], $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']), $request->user()->id);
+        $hierarchy->assignKamsManager($office);
 
         return $this->created($office->fresh($this->officeRelations()));
     }
@@ -479,6 +480,7 @@ class OrganizationController extends Controller
         $before = $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']);
         $office->fill($data)->save();
         $hierarchy->recordHistory($office->fresh(), $before, $office->only(['parent_office_id', 'creator_user_id', 'manager_user_id']), $request->user()->id);
+        $hierarchy->assignKamsManager($office);
 
         return $this->ok($office->fresh($this->officeRelations()));
     }

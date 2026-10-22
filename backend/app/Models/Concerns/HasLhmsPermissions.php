@@ -158,6 +158,48 @@ trait HasLhmsPermissions
         return $this->roles->contains(fn (Role $role) => $role->pivot->office_id || $role->isOfficeScoped());
     }
 
+    /**
+     * Manager and higher grades filter the offices they created or lead, and the offices under them.
+     */
+    public function limitsDataToOwnedOffices(): bool
+    {
+        if ($this->isGroupAdmin()) {
+            return false;
+        }
+
+        return $this->roles->contains(fn (Role $role) => in_array($role->slug, [
+            'manager',
+            'divisionnaire',
+            'vice_president',
+            'partner',
+        ], true));
+    }
+
+    /**
+     * Offices this user created or leads, plus every descendant (children and grandchildren).
+     *
+     * @return list<int>
+     */
+    public function ownedOfficeIds(): array
+    {
+        $roots = Office::query()
+            ->where(function ($query) {
+                $query->where('creator_user_id', $this->id)
+                    ->orWhere('manager_user_id', $this->id);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($roots === []) {
+            return [];
+        }
+
+        return array_values(array_unique(array_merge($roots, Office::descendantIdsFor($roots))));
+    }
+
     public function accessibleOfficeIds(): array
     {
         if ($this->isGroupAdmin()) {
@@ -184,11 +226,21 @@ trait HasLhmsPermissions
 
         if ($ids->isNotEmpty()) {
             $assigned = $ids->filter()->unique()->values()->all();
+            if ($this->limitsDataToOwnedOffices()) {
+                return $this->ownedOfficeIds();
+            }
             if ($this->isOfficeScoped()) {
                 $assigned = array_values(array_unique(array_merge($assigned, Office::descendantIdsFor($assigned))));
             }
 
             return $assigned;
+        }
+
+        if ($this->limitsDataToOwnedOffices()) {
+            $owned = $this->ownedOfficeIds();
+            if ($owned !== []) {
+                return $owned;
+            }
         }
 
         return Office::query()

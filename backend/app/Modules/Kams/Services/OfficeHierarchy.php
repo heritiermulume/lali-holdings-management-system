@@ -95,6 +95,76 @@ class OfficeHierarchy
         return in_array($slug, ['manager', 'vice_president', 'partner'], true);
     }
 
+    /**
+     * The person chosen as office manager joins that bureau's agents.
+     * A higher grade is kept. They stop being manager of any other bureau.
+     */
+    public function assignKamsManager(Office $office): void
+    {
+        $office->loadMissing('company.module');
+        if ($office->company?->module?->slug !== 'kams' || ! $office->manager_user_id) {
+            return;
+        }
+
+        $member = KamsMember::query()
+            ->with('role:id,slug')
+            ->where('company_id', $office->company_id)
+            ->where('user_id', $office->manager_user_id)
+            ->first();
+
+        if ($member) {
+            $member->office_id = $office->id;
+            $slug = $this->roleSlug($member);
+            $kept = in_array($slug, ['manager', 'divisionnaire', 'vice_president', 'partner'], true);
+            if (! $kept) {
+                $roleId = \App\Models\Role::query()
+                    ->where('module_slug', 'kams')
+                    ->where('slug', 'manager')
+                    ->value('id');
+                if ($roleId) {
+                    $member->role_id = $roleId;
+                    $member->rank = 'Manager';
+                }
+            }
+            $member->save();
+            app(\App\Modules\Kams\Services\AgentAccountService::class)->syncFromMember($member->fresh('role'));
+        }
+
+        Office::query()
+            ->where('company_id', $office->company_id)
+            ->where('manager_user_id', $office->manager_user_id)
+            ->whereKeyNot($office->id)
+            ->update(['manager_user_id' => null]);
+
+        $user = \App\Models\User::query()->find($office->manager_user_id);
+        if (! $user) {
+            return;
+        }
+
+        $allowed = $user->ownedOfficeIds();
+        if ($allowed === []) {
+            $allowed = [(int) $office->id];
+        }
+
+        $user->forceFill([
+            'primary_office_id' => in_array((int) $office->id, $allowed, true) ? $office->id : $allowed[0],
+        ])->save();
+
+        $user->scopes()->where('scope_type', 'office')->whereNotIn('scope_id', $allowed)->delete();
+        foreach ($allowed as $officeId) {
+            $user->scopes()->firstOrCreate([
+                'scope_type' => 'office',
+                'scope_id' => $officeId,
+            ]);
+        }
+
+        $user->roles()->newPivotQuery()
+            ->where('user_id', $user->id)
+            ->whereNotNull('office_id')
+            ->whereNotIn('office_id', $allowed)
+            ->update(['office_id' => $user->primary_office_id]);
+    }
+
     public function resolveAssistant(KamsMember $seller): ?KamsMember
     {
         // A member who is already an assistant manager leaves their former AM's direct team
