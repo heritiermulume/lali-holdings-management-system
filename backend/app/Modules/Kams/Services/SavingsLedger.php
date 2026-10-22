@@ -39,13 +39,18 @@ class SavingsLedger
 
     public function resolveManager(KamsMember $seller): ?KamsMember
     {
+        $hierarchy = app(OfficeHierarchy::class);
+        $seller->loadMissing('role:id,name,slug');
         if ($seller->manager_member_id) {
-            return KamsMember::query()->find($seller->manager_member_id);
+            $linked = KamsMember::query()->find($seller->manager_member_id);
+            if ($linked && ! $hierarchy->excludedFromRemoteEncadreurTeam($seller, $linked)) {
+                return $linked;
+            }
         }
         // Encadreur is the parrain / upline used by finance.
         if ($seller->coach_member_id) {
             $coach = KamsMember::query()->find($seller->coach_member_id);
-            if ($coach) {
+            if ($coach && ! $hierarchy->excludedFromRemoteEncadreurTeam($seller, $coach)) {
                 return $coach;
             }
         }
@@ -54,7 +59,7 @@ class SavingsLedger
                 ->where('company_id', $seller->company_id)
                 ->where('user_id', $seller->trainer_user_id)
                 ->first();
-            if ($byUser) {
+            if ($byUser && ! $hierarchy->excludedFromRemoteEncadreurTeam($seller, $byUser)) {
                 return $byUser;
             }
         }

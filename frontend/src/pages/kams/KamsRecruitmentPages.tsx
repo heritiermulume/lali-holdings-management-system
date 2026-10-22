@@ -52,6 +52,7 @@ function presetRange(period: Exclude<ListPeriod, 'custom'>) {
 }
 
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
+type OfficeLink = { id: number; company_id: number; parent_office_id?: number | null; creator_user_id?: number | null; manager_user_id?: number | null }
 type LookupCompany = { id: number; name: string; code: string }
 type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null; rank?: string | null }
 type LookupRole = { id: number; name: string; slug?: string; offices?: Array<{ id: number; company_id: number }> }
@@ -160,6 +161,51 @@ const CERTIFIABLE_ROLE_SLUGS = new Set(['partner', 'vice_president', 'divisionna
 
 function roleIsCertifiable(role?: { slug?: string } | null) {
   return Boolean(role?.slug && CERTIFIABLE_ROLE_SLUGS.has(role.slug))
+}
+
+const HIERARCHY_ENCADREUR_SLUGS = new Set(['divisionnaire', 'manager'])
+
+function personRoleSlug(person: LookupPerson, roles: LookupRole[]) {
+  const slug = roles.find((role) => String(role.id) === String(person.role_id))?.slug
+  if (slug) return slug
+  const rank = (person.rank || '').toLowerCase()
+  if (rank.includes('divisionnaire')) return 'divisionnaire'
+  if (rank.includes('assistant')) return 'assistant_manager'
+  if (rank.includes('manager')) return 'manager'
+  return ''
+}
+
+function hierarchicalEncadreurs(
+  officeId: string | undefined,
+  companyId: string | undefined,
+  links: OfficeLink[],
+  people: LookupPerson[],
+  roles: LookupRole[],
+) {
+  if (!officeId) return []
+  const byId = new Map(links.map((link) => [String(link.id), link]))
+  const byUser = new Map<string, LookupPerson>()
+  for (const person of people) {
+    if (!person.user_id) continue
+    if (companyId && String(person.company_id) !== companyId) continue
+    byUser.set(String(person.user_id), person)
+  }
+  const ordered: LookupPerson[] = []
+  const seen = new Set<string>()
+  let current = byId.get(String(officeId))
+  let guard = 0
+  while (current && guard++ < 40) {
+    for (const userId of [current.creator_user_id, current.manager_user_id]) {
+      if (!userId) continue
+      const person = byUser.get(String(userId))
+      if (!person || seen.has(String(person.id))) continue
+      if (!HIERARCHY_ENCADREUR_SLUGS.has(personRoleSlug(person, roles))) continue
+      seen.add(String(person.id))
+      ordered.push(person)
+    }
+    current = current.parent_office_id ? byId.get(String(current.parent_office_id)) : undefined
+  }
+  return ordered
 }
 function membersFromImport(data: { rows?: Array<{ member?: Member }> } | undefined): Member[] {
   return (data?.rows || []).map((row) => row.member).filter((member): member is Member => Boolean(member))
@@ -585,6 +631,7 @@ export function KamsAgents() {
   const [perPage, setPerPage] = useState(20)
   const [companies, setCompanies] = useState<LookupCompany[]>([])
   const [offices, setOffices] = useState<LookupOffice[]>([])
+  const [officeLinks, setOfficeLinks] = useState<OfficeLink[]>([])
   const [people, setPeople] = useState<LookupPerson[]>([])
   const [roles, setRoles] = useState<LookupRole[]>([])
   const [memberOrigins, setMemberOrigins] = useState<string[]>([])
@@ -664,6 +711,7 @@ export function KamsAgents() {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
       setCompanies(res.data.data.companies)
       setOffices(res.data.data.offices)
+      setOfficeLinks(res.data.data.office_links ?? [])
       setPeople(res.data.data.members ?? res.data.data.sponsors ?? [])
       setRoles(res.data.data.roles ?? [])
       setMemberOrigins(res.data.data.options?.member_origins ?? [])
@@ -1039,11 +1087,17 @@ export function KamsAgents() {
     (!form.company_id || String(person.company_id) === form.company_id)
     && (!form.office_id || !person.office_id || String(person.office_id) === form.office_id)
   ))
-  const coachOptions = companyPeople
-    .filter((person) => (
+  const hierarchyCoaches = hierarchicalEncadreurs(form.office_id, form.company_id, officeLinks, people, roles)
+    .filter((person) => !editing || String(person.id) !== String(editing.id))
+  const coachPeople = [
+    ...hierarchyCoaches,
+    ...companyPeople.filter((person) => (
       Boolean(person.user_id)
       && (!editing || String(person.id) !== String(editing.id))
-    ))
+      && !hierarchyCoaches.some((coach) => String(coach.id) === String(person.id))
+    )),
+  ]
+  const coachOptions = coachPeople
     .map((person): SearchComboboxItem => ({
       id: String(person.id),
       label: person.full_name,

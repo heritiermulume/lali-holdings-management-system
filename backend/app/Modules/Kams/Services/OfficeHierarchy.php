@@ -103,11 +103,18 @@ class OfficeHierarchy
             return null;
         }
 
-        if ($seller->assistant_manager_member_id) {
-            return KamsMember::query()->with('role:id,name,slug')->find($seller->assistant_manager_member_id);
+        $assistant = $seller->assistant_manager_member_id
+            ? KamsMember::query()->with('role:id,name,slug')->find($seller->assistant_manager_member_id)
+            : $this->linkedAssistantManager($seller);
+
+        // A manager paid on their own office production is not part of an encadreur's
+        // team when that encadreur sits in another office. The opener's percentage
+        // already applies to the whole office.
+        if ($assistant && $this->excludedFromRemoteEncadreurTeam($seller, $assistant)) {
+            return null;
         }
 
-        return $this->linkedAssistantManager($seller);
+        return $assistant;
     }
 
     /**
@@ -131,6 +138,20 @@ class OfficeHierarchy
         }
 
         return $sponsor;
+    }
+
+    /**
+     * Office leaders are remunerated on their bureau. They stay out of a remote encadreur's team.
+     */
+    public function excludedFromRemoteEncadreurTeam(KamsMember $member, KamsMember $encadreur): bool
+    {
+        $slug = $this->roleSlug($member);
+        $paidOnOffice = $slug === 'divisionnaire' || $this->isOfficeManagerRole($slug);
+        if (! $paidOnOffice || ! $member->office_id || ! $encadreur->office_id) {
+            return false;
+        }
+
+        return (int) $member->office_id !== (int) $encadreur->office_id;
     }
 
     private function linkedAssistantManager(KamsMember $member): ?KamsMember
@@ -306,7 +327,7 @@ class OfficeHierarchy
             if (! $upline && $walk->trainer_user_id) {
                 $upline = $this->memberForUser((int) $walk->trainer_user_id, (int) $walk->company_id);
             }
-            if (! $upline) {
+            if (! $upline || $this->excludedFromRemoteEncadreurTeam($walk, $upline)) {
                 break;
             }
             $push($upline, false);

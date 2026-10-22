@@ -25,6 +25,7 @@ use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\KamsIdentityService;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\MemberRegistrationService;
+use App\Modules\Kams\Services\OfficeHierarchy;
 use App\Modules\Kams\Services\PeoplePhotoStorage;
 use App\Modules\Kams\Services\PromotionEligibilityService;
 use App\Modules\Kams\Services\RecruitmentCommunicationService;
@@ -68,12 +69,15 @@ class KamsRecruitmentController extends Controller
 
         $officeState = $this->resolveOfficeFilterState($request, null);
         $offices = $officeState['offices'];
+        $office_links = $this->officeHierarchyLinks($offices);
 
         $members = $this->scopedMembers($request)
             ->whereIn('status', ['active', 'verified', 'pending_verification'])
             ->orderBy('full_name')
             ->limit(500)
             ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id', 'rank']);
+
+        $members = $this->mergeHierarchyEncadreurs($members, $office_links);
 
         $users = User::query()
             ->where('is_active', true)
@@ -104,7 +108,7 @@ class KamsRecruitmentController extends Controller
         ];
 
         return $this->ok(array_merge(
-            compact('companies', 'offices', 'members', 'users', 'roles', 'options', 'settings'),
+            compact('companies', 'offices', 'office_links', 'members', 'users', 'roles', 'options', 'settings'),
             $this->officeFilterPayload($officeState),
             ['can_choose_office' => $officeState['can_filter']],
         ));
@@ -871,6 +875,96 @@ class KamsRecruitmentController extends Controller
             'candidate_id' => $candidate->candidate_id,
             'status' => $candidate->status,
         ]);
+    }
+
+    /**
+     * Accessible offices plus each ancestor, so a child bureau can list the
+     * divisionnaire or manager who opened the offices above it.
+     *
+     * @param  \Illuminate\Support\Collection<int, Office>  $offices
+     * @return list<array{id:int,company_id:int,parent_office_id:?int,creator_user_id:?int,manager_user_id:?int}>
+     */
+    private function officeHierarchyLinks($offices): array
+    {
+        $companyIds = $offices->pluck('company_id')->map(fn ($id) => (int) $id)->unique()->filter()->values();
+        if ($companyIds->isEmpty()) {
+            return [];
+        }
+
+        $rows = Office::query()
+            ->whereIn('company_id', $companyIds)
+            ->get(['id', 'company_id', 'parent_office_id', 'creator_user_id', 'manager_user_id'])
+            ->keyBy(fn (Office $office) => (int) $office->id);
+
+        $links = [];
+        $queue = $offices->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $guard = 0;
+        while ($queue !== [] && $guard++ < 5000) {
+            $id = array_shift($queue);
+            if (isset($links[$id]) || ! $id) {
+                continue;
+            }
+            $office = $rows->get($id);
+            if (! $office) {
+                continue;
+            }
+            $links[$id] = [
+                'id' => (int) $office->id,
+                'company_id' => (int) $office->company_id,
+                'parent_office_id' => $office->parent_office_id ? (int) $office->parent_office_id : null,
+                'creator_user_id' => $office->creator_user_id ? (int) $office->creator_user_id : null,
+                'manager_user_id' => $office->manager_user_id ? (int) $office->manager_user_id : null,
+            ];
+            if ($office->parent_office_id) {
+                $queue[] = (int) $office->parent_office_id;
+            }
+        }
+
+        return array_values($links);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, KamsMember>  $members
+     * @param  list<array{id:int,company_id:int,parent_office_id:?int,creator_user_id:?int,manager_user_id:?int}>  $links
+     * @return \Illuminate\Support\Collection<int, KamsMember>
+     */
+    private function mergeHierarchyEncadreurs($members, array $links)
+    {
+        $userIds = [];
+        foreach ($links as $link) {
+            if (! empty($link['creator_user_id'])) {
+                $userIds[] = (int) $link['creator_user_id'];
+            }
+            if (! empty($link['manager_user_id'])) {
+                $userIds[] = (int) $link['manager_user_id'];
+            }
+        }
+        $userIds = array_values(array_unique($userIds));
+        if ($userIds === []) {
+            return $members;
+        }
+
+        $known = $members->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $extra = KamsMember::query()
+            ->with('role:id,slug')
+            ->whereIn('user_id', $userIds)
+            ->whereIn('status', ['active', 'verified', 'pending_verification'])
+            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id', 'rank']);
+
+        $hierarchy = app(OfficeHierarchy::class);
+        foreach ($extra as $member) {
+            if (! in_array($hierarchy->roleSlug($member), ['manager', 'divisionnaire'], true)) {
+                continue;
+            }
+            if (in_array((int) $member->id, $known, true)) {
+                continue;
+            }
+            $member->unsetRelation('role');
+            $members->push($member);
+            $known[] = (int) $member->id;
+        }
+
+        return $members;
     }
 
     private function scopedCandidates(Request $request): Builder
