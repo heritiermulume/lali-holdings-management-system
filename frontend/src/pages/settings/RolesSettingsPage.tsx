@@ -6,7 +6,7 @@ import {
   Shield,
   ShieldCheck,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
@@ -154,18 +154,6 @@ export function RolesSettingsPage() {
   }
 
   useEffect(() => { void load() }, [])
-  useLiveData(load)
-
-  useEffect(() => {
-    const role = roles.find((entry) => entry.id === selectedId)
-    if (!role) return
-    setPermissionIds(role.permissions.map((permission) => permission.id))
-    const group = isPlatformRole(role) ? 'system' : role.module_slug
-    if (group) {
-      setOpenModules((current) => current.includes(group) ? current : [...current, group])
-    }
-    setQuery('')
-  }, [selectedId, roles])
 
   const moduleSections = useMemo(() => {
     const known = [...modules].sort((a, b) => a.sort_order - b.sort_order)
@@ -197,8 +185,11 @@ export function RolesSettingsPage() {
     return buildPermissionTree(relevantPermissionGroups, selected.module_slug, canSeePermission)
   }, [relevantPermissionGroups, selected, canGrantAll, user?.permissions])
 
+  const sectionsOpenedForRole = useRef<number | null>(null)
   useEffect(() => {
-    if (permissionTree.length === 0) return
+    if (!selectedId || permissionTree.length === 0) return
+    if (sectionsOpenedForRole.current === selectedId) return
+    sectionsOpenedForRole.current = selectedId
     const keys: string[] = []
     for (const root of permissionTree) {
       keys.push(root.key)
@@ -235,6 +226,16 @@ export function RolesSettingsPage() {
       .join(',')
     return currentVisible !== savedVisible
   }, [selected, permissionIds, allVisiblePermissions])
+
+  useEffect(() => {
+    const role = roles.find((entry) => entry.id === selectedId)
+    if (!role || dirty) return
+    setPermissionIds(role.permissions.map((permission) => permission.id))
+    const group = isPlatformRole(role) ? 'system' : role.module_slug
+    if (group) {
+      setOpenModules((current) => current.includes(group) ? current : [...current, group])
+    }
+  }, [selectedId, roles, dirty])
 
   const grantedCount = useMemo(
     () => allVisiblePermissions.filter((permission) => isPermissionEnabled(permissionIds, permission, allVisiblePermissions)).length,
@@ -279,7 +280,10 @@ export function RolesSettingsPage() {
   const selectRole = (role: RoleRow) => {
     setSelectedId(role.id)
     setPermissionIds(role.permissions.map((permission) => permission.id))
+    setQuery('')
   }
+
+  useLiveData(load, { enabled: !dirty && !saving })
 
   const save = async () => {
     if (!selected || !dirty) return
