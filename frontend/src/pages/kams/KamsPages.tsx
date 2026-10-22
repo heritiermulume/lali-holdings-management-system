@@ -58,6 +58,7 @@ export function KamsDashboard() {
   const locale = intlLocale(i18n.language)
   const today = isoDate(new Date())
   const [period, setPeriod] = useState<DashboardPeriod>('week')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
   const { officeId, setOfficeId, syncFromPayload } = usePayloadOfficeFilter()
@@ -116,7 +117,16 @@ export function KamsDashboard() {
               onChange={(e) => setOfficeId(e.target.value)}
             />
           ) : <span />}
-          <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-white p-1">
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('ml-auto shrink-0 rounded-full px-3 py-2 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
+        </div>
+        {filtersOpen ? (
+          <div className="ml-auto inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-white p-1">
             {(['day', 'week', 'month'] as const).map((item) => (
               <button
                 key={item}
@@ -135,8 +145,8 @@ export function KamsDashboard() {
               {t('dashboard.customPeriod')}
             </button>
           </div>
-        </div>
-        {period === 'custom' ? (
+        ) : null}
+        {filtersOpen && period === 'custom' ? (
           <div className="ml-auto grid w-full max-w-80 grid-cols-2 gap-2">
             <Field
               className="min-w-0 max-w-full"

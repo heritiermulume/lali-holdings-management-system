@@ -177,6 +177,7 @@ export function KamsCompanyAccountPage() {
   const initialRange = useMemo(() => presetRange('week'), [])
   const today = useMemo(() => isoDate(new Date()), [])
   const [period, setPeriod] = useState<Period>('week')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [from, setFrom] = useState(initialRange.from)
   const [to, setTo] = useState(initialRange.to)
   const [action, setAction] = useState<Action | null>(null)
@@ -620,8 +621,18 @@ export function KamsCompanyAccountPage() {
       {data ? (
         <>
           <div className="space-y-3">
-            <div className="flex w-full min-w-0 flex-col items-end gap-2">
-              <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
+            <div className="flex w-full min-w-0 items-center justify-between gap-2">
+              <p className="text-sm text-muted">{t('kams.cashPeriodHint')}</p>
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                className={cn('shrink-0 rounded-full px-3 py-2 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-surface text-lhms')}
+              >
+                {filtersOpen ? t('common.hide') : t('common.filter')}
+              </button>
+            </div>
+            {filtersOpen ? (
+              <div className="ml-auto inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
                 {(['day', 'week', 'month'] as const).map((item) => (
                   <button
                     key={item}
@@ -646,9 +657,8 @@ export function KamsCompanyAccountPage() {
                   {t('dashboard.customPeriod')}
                 </button>
               </div>
-              <p className="self-start text-sm text-muted">{t('kams.cashPeriodHint')}</p>
-            </div>
-            {period === 'custom' ? (
+            ) : null}
+            {filtersOpen && period === 'custom' ? (
               <div className="ml-auto grid w-full max-w-80 grid-cols-2 gap-2">
                 <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
                 <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />

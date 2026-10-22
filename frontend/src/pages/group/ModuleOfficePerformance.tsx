@@ -100,10 +100,10 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
   const initial = useMemo(() => presetRange('week'), [])
   const today = useMemo(() => isoDate(new Date()), [])
   const [period, setPeriod] = useState<Period>('week')
-  const [lastPreset, setLastPreset] = useState<Exclude<Period, 'custom'>>('week')
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
   const [data, setData] = useState<Payload | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   const load = () => {
     if (!from || !to) return
@@ -124,7 +124,6 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
 
   const applyPreset = (item: Exclude<Period, 'custom'>) => {
     const next = presetRange(item)
-    setLastPreset(item)
     setPeriod(item)
     setFrom(next.from)
     setTo(next.to)
@@ -137,7 +136,7 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
 
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden">
-      <div className="flex flex-col items-end gap-3">
+      <div className="flex flex-col gap-3">
         <div className="flex w-full items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-semibold">{t('dashboard.officePerformance')}</div>
@@ -145,46 +144,56 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
           </div>
           <button
             type="button"
-            onClick={() => period === 'custom' ? applyPreset(lastPreset) : setPeriod('custom')}
-            className="min-h-10 shrink-0 rounded-full bg-white px-3 py-2 text-xs font-semibold text-lhms sm:text-sm"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('shrink-0 rounded-full px-3 py-2 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
           >
-            {period === 'custom' ? t('dashboard.presetPeriod') : t('dashboard.customPeriod')}
+            {filtersOpen ? t('common.hide') : t('common.filter')}
           </button>
         </div>
-        {period === 'custom' ? (
-          <div className="grid w-full max-w-80 grid-cols-2 gap-2">
-            <Field
-              className="min-w-0 max-w-full"
-              label={t('dashboard.dateFrom')}
-              type="date"
-              value={from}
-              max={to || today}
-              onChange={(event) => setFrom(event.target.value)}
-            />
-            <Field
-              className="min-w-0 max-w-full"
-              label={t('dashboard.dateTo')}
-              type="date"
-              value={to}
-              min={from}
-              max={today}
-              onChange={(event) => setTo(event.target.value)}
-            />
-          </div>
-        ) : (
-          <div className="inline-flex w-fit max-w-full shrink-0 rounded-full bg-white p-1">
-            {(['day', 'week', 'month'] as const).map((item) => (
+        {filtersOpen ? (
+          <div className="flex flex-col items-end gap-2">
+            <div className="inline-flex w-fit max-w-full shrink-0 rounded-full bg-white p-1">
+              {(['day', 'week', 'month'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => applyPreset(item)}
+                  className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                >
+                  {t(`dashboard.period.${item}`)}
+                </button>
+              ))}
               <button
-                key={item}
                 type="button"
-                onClick={() => applyPreset(item)}
-                className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                onClick={() => setPeriod('custom')}
+                className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold sm:px-4', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
               >
-                {t(`dashboard.period.${item}`)}
+                {t('dashboard.customPeriod')}
               </button>
-            ))}
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full max-w-80 grid-cols-2 gap-2">
+                <Field
+                  className="min-w-0 max-w-full"
+                  label={t('dashboard.dateFrom')}
+                  type="date"
+                  value={from}
+                  max={to || today}
+                  onChange={(event) => setFrom(event.target.value)}
+                />
+                <Field
+                  className="min-w-0 max-w-full"
+                  label={t('dashboard.dateTo')}
+                  type="date"
+                  value={to}
+                  min={from}
+                  max={today}
+                  onChange={(event) => setTo(event.target.value)}
+                />
+              </div>
+            ) : null}
           </div>
-        )}
+        ) : null}
       </div>
 
       {modules.length === 0 ? <Empty>{t('common.empty')}</Empty> : (

@@ -343,7 +343,6 @@ function ScopeFilters({
   today,
   companyId,
   officeId,
-  lastPreset,
   applyPreset,
   setPeriod,
   setFrom,
@@ -352,10 +351,11 @@ function ScopeFilters({
   setOfficeId,
 }: ReturnType<typeof useGroupDashboard> & { data: DashboardData }) {
   const { t } = useTranslation()
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   return (
     <Card className="p-3 sm:p-5">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between xl:gap-4">
+      <div className="flex w-full items-end justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-end gap-2">
           <div className="min-w-0 sm:max-w-xs">
           <label className="block text-sm">
@@ -384,16 +384,37 @@ function ScopeFilters({
             />
           ) : null}
         </div>
-        <div className="ml-auto flex w-fit max-w-full min-w-0 flex-nowrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => (period === 'custom' ? applyPreset(lastPreset) : setPeriod('custom'))}
-            className="min-h-10 shrink-0 rounded-full bg-surface px-3 py-2 text-xs font-semibold text-lhms sm:text-sm"
-          >
-            {period === 'custom' ? t('dashboard.presetPeriod') : t('dashboard.customPeriod')}
-          </button>
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((open) => !open)}
+          className={cn('ml-auto shrink-0 rounded-full px-3 py-2 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-surface text-lhms')}
+        >
+          {filtersOpen ? t('common.hide') : t('common.filter')}
+        </button>
+      </div>
+      {filtersOpen ? (
+        <div className="mt-3 flex flex-col items-end gap-2">
+          <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
+            {(['day', 'week', 'month'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => applyPreset(item)}
+                className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold whitespace-nowrap sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t(`dashboard.period.${item}`)}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setPeriod('custom')}
+              className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold whitespace-nowrap sm:px-4', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+            >
+              {t('dashboard.customPeriod')}
+            </button>
+          </div>
           {period === 'custom' ? (
-            <div className="grid w-72 max-w-full shrink-0 grid-cols-2 gap-2">
+            <div className="grid w-full max-w-80 grid-cols-2 gap-2">
               <Field
                 className="min-w-0 max-w-full"
                 label={t('dashboard.dateFrom')}
@@ -412,22 +433,9 @@ function ScopeFilters({
                 onChange={(event) => setTo(event.target.value)}
               />
             </div>
-          ) : (
-            <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
-              {(['day', 'week', 'month'] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => applyPreset(item)}
-                  className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold whitespace-nowrap sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-                >
-                  {t(`dashboard.period.${item}`)}
-                </button>
-              ))}
-            </div>
-          )}
+          ) : null}
         </div>
-      </div>
+      ) : null}
       <div className="mt-3 flex flex-col gap-2 text-xs text-muted sm:flex-row sm:flex-wrap sm:items-center">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="green">{t(`groupDash.level.${data.scope.level}`)}</Badge>
