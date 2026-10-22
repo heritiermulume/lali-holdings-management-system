@@ -9,7 +9,7 @@ import { showAlert } from '../../lib/alert'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
-import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
+import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
 import { compact, money } from '../../lib/format'
 import { moduleRegistry } from '../../modules/registry'
 import api from '../../lib/api'
@@ -59,7 +59,7 @@ export function KamsDashboard() {
   const [period, setPeriod] = useState<DashboardPeriod>('week')
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, syncFromPayload } = usePayloadOfficeFilter()
   const [data, setData] = useState<{
     range: { from: string; to: string }
     can_filter_offices?: boolean
@@ -86,7 +86,7 @@ export function KamsDashboard() {
     }).then((res) => {
       const payload = res.data.data
       setData(payload)
-      syncOfficeIdFromPayload(setOfficeId, payload)
+      syncFromPayload(payload)
     })
   }
 
@@ -173,11 +173,16 @@ export function KamsDashboard() {
       ) : null}
       {canFinance && data.finance ? (
       <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        {(['revenue', 'expenses', 'profit', 'receivables'] as const).map((key) => {
+        {([
+          ['revenue', t('dashboard.revenue')],
+          ['expenses', t('dashboard.expenses')],
+          ['profit', t('dashboard.profit')],
+          ['fixed_charges', t('kams.fixedCharges')],
+        ] as const).map(([key, label]) => {
           const finance = data.finance
           return (
           <Card key={key} className="min-w-0 p-4 sm:p-5">
-            <div className="text-xs text-muted sm:text-sm">{t(`dashboard.${key}`)}</div>
+            <div className="text-xs text-muted sm:text-sm">{label}</div>
             <div className="mt-2 break-words text-lg font-bold text-lhms sm:mt-3 sm:text-2xl">{money(finance?.[key])}</div>
           </Card>
           )

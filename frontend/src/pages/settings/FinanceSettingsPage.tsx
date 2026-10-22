@@ -16,11 +16,13 @@ type CountryTax = {
   name_fr: string
   iso_code: string
   currency_code: string
+  fx_rate: number | null
   tax_name: string
   tax_rate: number
 }
 
 type CatalogItem = { code: string; name: string; name_fr: string; symbol: string; enabled: boolean }
+type EnabledCurrency = { id: number; code: string; name: string; name_fr: string; is_default: boolean; is_active: boolean }
 
 type RevenueRule = {
   id: number
@@ -35,6 +37,7 @@ type RevenueRule = {
 
 function countryCurrencyDirty(saved: CountryTax, draft: CountryTax) {
   return saved.currency_code !== draft.currency_code
+    || Number(saved.fx_rate || 0) !== Number(draft.fx_rate || 0)
 }
 
 function countryTaxDirty(saved: CountryTax, draft: CountryTax) {
@@ -49,6 +52,10 @@ export function FinanceSettingsPage() {
   const [countries, setCountries] = useState<CountryTax[]>([])
   const [drafts, setDrafts] = useState<Record<number, CountryTax>>({})
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
+  const [currencies, setCurrencies] = useState<EnabledCurrency[]>([])
+  const [defaultCurrency, setDefaultCurrency] = useState('')
+  const [defaultDraft, setDefaultDraft] = useState('')
+  const [savingDefault, setSavingDefault] = useState(false)
   const [savingCountry, setSavingCountry] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [rules, setRules] = useState<RevenueRule[]>([])
@@ -65,8 +72,13 @@ export function FinanceSettingsPage() {
     ])
     const data = finance.data.data
     const countryRows = (data.countries ?? []) as CountryTax[]
+    const currencyRows = ((data.currencies ?? []) as EnabledCurrency[]).filter((row) => row.is_active)
     setCountries(countryRows)
     setDrafts(Object.fromEntries(countryRows.map((row) => [row.id, row])))
+    setCurrencies(currencyRows)
+    const savedDefault = currencyRows.find((row) => row.is_default)?.code || data.default || ''
+    setDefaultCurrency(savedDefault)
+    setDefaultDraft(savedDefault)
     setCatalog(list.data.data ?? [])
   }
 
@@ -125,6 +137,7 @@ export function FinanceSettingsPage() {
     try {
       await api.put(`/countries/${id}`, {
         currency_code: draft.currency_code,
+        fx_rate: draft.currency_code === defaultCurrency ? null : (draft.fx_rate ? Number(draft.fx_rate) : null),
         tax_name: draft.tax_name,
         tax_rate: Number(draft.tax_rate),
       })
@@ -137,6 +150,22 @@ export function FinanceSettingsPage() {
     }
   }
 
+  const saveDefaultCurrency = async () => {
+    const currency = currencies.find((row) => row.code === defaultDraft)
+    if (!currency || defaultDraft === defaultCurrency) return
+    setSavingDefault(true)
+    setError('')
+    try {
+      await api.put(`/finance/currencies/${currency.id}`, { is_default: true })
+      await load()
+      await refresh()
+    } catch {
+      setError(t('org.saveError'))
+    } finally {
+      setSavingDefault(false)
+    }
+  }
+
   const label = (item: { code?: string; name: string; name_fr: string }) =>
     localeFr ? item.name_fr : item.name
 
@@ -145,6 +174,28 @@ export function FinanceSettingsPage() {
   return (
     <div className="space-y-6">
       <SettingsForm group="finance" fields={settingGroups.finance} />
+
+      <Card className="p-4 sm:p-6">
+        <h2 className="text-base font-bold">{t('settings.fx.defaultTitle')}</h2>
+        <p className="mt-1 text-sm text-muted">{t('settings.fx.defaultHelp')}</p>
+        <div className="mt-4 flex max-w-md flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <Select
+              label={t('settings.fx.setDefault')}
+              value={defaultDraft}
+              disabled={savingDefault || currencies.length === 0}
+              onChange={(e) => setDefaultDraft(e.target.value)}
+            >
+              {currencies.map((item) => (
+                <option key={item.code} value={item.code}>{item.code} — {label(item)}</option>
+              ))}
+            </Select>
+          </div>
+          <Button disabled={defaultDraft === defaultCurrency || savingDefault} onClick={() => void saveDefaultCurrency()}>
+            {savingDefault ? t('common.loading') : defaultDraft !== defaultCurrency ? t('common.save') : t('common.saved')}
+          </Button>
+        </div>
+      </Card>
 
       <Card className="p-4 sm:p-6">
         <div className="mb-4">
@@ -177,6 +228,20 @@ export function FinanceSettingsPage() {
                           <option key={item.code} value={item.code}>{item.code} — {label(item)}</option>
                         ))}
                       </Select>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <Field
+                        label={t('settings.fx.conversion', { from: defaultCurrency || '—', to: draft.currency_code || '—' })}
+                        type="number"
+                        min="0"
+                        step="any"
+                        disabled={!defaultCurrency || draft.currency_code === defaultCurrency}
+                        value={draft.currency_code === defaultCurrency ? '1' : (draft.fx_rate == null ? '' : String(draft.fx_rate))}
+                        onChange={(e) => setDrafts((current) => ({
+                          ...current,
+                          [country.id]: { ...draft, fx_rate: e.target.value === '' ? null : Number(e.target.value) },
+                        }))}
+                      />
                     </div>
                     <Button disabled={!dirty || saving} onClick={() => void saveCountry(country.id)}>
                       {saving ? t('common.loading') : dirty ? t('common.save') : t('common.saved')}

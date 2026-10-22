@@ -1,5 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { notifyPermissionsPossiblyStale } from './authSync'
+import { setActiveCurrency } from './format'
 import { beginBusy, endBusy, type BusyKind } from './busy'
 import { isSoftRefresh, notifyDataChanged } from './dataSync'
 
@@ -93,6 +94,11 @@ api.interceptors.response.use(
     }
     if (shouldNotifyDataChanged(config, response.status)) {
       notifyDataChanged('mutation')
+    }
+    const url = String(config.url || '')
+    const payload = response.data?.data
+    if (/\/modules\/kams\//.test(url) && payload && typeof payload === 'object' && payload.currency && payload.money_rate != null) {
+      setActiveCurrency(String(payload.currency), Number(payload.money_rate))
     }
     return response
   },

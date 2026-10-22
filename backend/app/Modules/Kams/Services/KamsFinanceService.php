@@ -37,6 +37,7 @@ class KamsFinanceService
     {
         $sales = $this->sales($companyId, $officeIds, $from, $to);
         $revenue = round((float) (clone $sales)->sum('subtotal') - $this->returnedRevenue($companyId, $officeIds, $from, $to), 2);
+        $fixedCharges = app(FixedChargeService::class)->total($companyId, $officeIds, $from, $to);
         $expenses = $this->expenses($companyId, $officeIds, $from, $to);
         $margin = round((float) (clone $sales)->sum('margin') - $this->returnedMargin($companyId, $officeIds, $from, $to), 2);
         $receivables = round((float) (clone $sales)
@@ -52,6 +53,7 @@ class KamsFinanceService
         return [
             'revenue' => $revenue,
             'expenses' => $expenses,
+            'fixed_charges' => $fixedCharges,
             'profit' => $margin,
             'cash' => $cash,
             'assets' => round($inventory + $cash + max(0, $receivables) + $patrimoine, 2),

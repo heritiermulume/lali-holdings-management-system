@@ -123,10 +123,6 @@ return new class extends Migration
             ?? City::query()->where('country_id', $fallbackCountry?->id)->orderBy('id')->first()
             ?? City::query()->orderBy('id')->first();
 
-        if (! $fallbackCountry) {
-            throw new \RuntimeException('At least one country is required to seed business modules.');
-        }
-
         foreach ($definitions as $definition) {
             $companyDef = $definition['company'];
             unset($definition['company']);
@@ -135,6 +131,10 @@ return new class extends Migration
                 ['slug' => $definition['slug']],
                 $definition + ['version' => '0.1.0'],
             );
+
+            if (! $fallbackCountry) {
+                continue;
+            }
 
             $preferTz = $companyDef['geo'] === 'tz';
             $country = ($preferTz && $tz) ? $tz : ($fallbackCountry);

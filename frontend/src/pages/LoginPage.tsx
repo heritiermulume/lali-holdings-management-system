@@ -15,8 +15,8 @@ export function LoginPage() {
   const [email, setEmail] = useState(() => localStorage.getItem('lhms_remember_login') || '')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(() => Boolean(localStorage.getItem('lhms_remember_login')))
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const [errorKey, setErrorKey] = useState('')
+  const [successKey, setSuccessKey] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -70,8 +70,8 @@ export function LoginPage() {
               className="w-full max-w-md space-y-4 lg:space-y-5"
               onSubmit={async (event) => {
                 event.preventDefault()
-                setError('')
-                setSuccess('')
+                setErrorKey('')
+                setSuccessKey('')
                 setLoading(true)
                 try {
                   await login(email, password)
@@ -82,7 +82,7 @@ export function LoginPage() {
                   }
                   navigate('/')
                 } catch {
-                  setError(t('auth.error'))
+                  setErrorKey('auth.error')
                 } finally {
                   setLoading(false)
                 }
@@ -103,8 +103,8 @@ export function LoginPage() {
                       className="text-sm font-medium text-lhms hover:underline"
                       onClick={() => {
                         setMode('forgot')
-                        setError('')
-                        setSuccess('')
+                        setErrorKey('')
+                        setSuccessKey('')
                       }}
                     >
                       {t('auth.forgotPassword')}
@@ -120,7 +120,7 @@ export function LoginPage() {
                     </label>
                   </div>
                 </div>
-                {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
+                {errorKey ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{t(errorKey)}</div> : null}
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? t('common.loading') : t('auth.submit')}
                 </Button>
@@ -136,14 +136,17 @@ export function LoginPage() {
               className="w-full max-w-md space-y-5"
               onSubmit={async (event) => {
                 event.preventDefault()
-                setError('')
-                setSuccess('')
+                setErrorKey('')
+                setSuccessKey('')
                 setLoading(true)
                 try {
                   await api.post('/auth/forgot-password', { email })
-                  setSuccess(t('auth.forgotSent'))
-                } catch {
-                  setError(t('auth.forgotError'))
+                  setSuccessKey('auth.forgotSent')
+                } catch (err) {
+                  const status = (err as { response?: { status?: number } }).response?.status
+                  if (status === 404) setErrorKey('auth.forgotUnknown')
+                  else if (status === 403) setErrorKey('auth.forgotInactive')
+                  else setErrorKey('auth.forgotError')
                 } finally {
                   setLoading(false)
                 }
@@ -157,8 +160,8 @@ export function LoginPage() {
               </div>
               <div className="space-y-5 rounded-3xl border border-white/80 bg-white/90 p-5 shadow-[0_18px_50px_rgba(4,55,17,0.10)] ring-1 ring-lhms/5 backdrop-blur-sm lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:ring-0 lg:backdrop-blur-none">
                 <Field label={t('auth.email')} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-                {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
-                {success ? <div className="rounded-xl bg-lhms-soft px-3 py-2 text-sm text-lhms">{success}</div> : null}
+                {errorKey ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{t(errorKey)}</div> : null}
+                {successKey ? <div className="rounded-xl bg-lhms-soft px-3 py-2 text-sm text-lhms">{t(successKey)}</div> : null}
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? t('common.loading') : t('auth.forgotSubmit')}
                 </Button>
@@ -169,8 +172,8 @@ export function LoginPage() {
                   className="font-medium text-lhms hover:underline"
                   onClick={() => {
                     setMode('login')
-                    setError('')
-                    setSuccess('')
+                    setErrorKey('')
+                    setSuccessKey('')
                   }}
                 >
                   {t('auth.backToLogin')}

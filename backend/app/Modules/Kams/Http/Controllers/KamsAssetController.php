@@ -6,9 +6,9 @@ use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsAsset;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class KamsAssetController extends Controller
 {
@@ -148,13 +148,10 @@ class KamsAssetController extends Controller
             $data['unit_value'] = round((float) $data['unit_value'], 2);
         }
 
-        if ($path = $this->storeImage($request)) {
-            if ($asset->image_path) {
-                Storage::disk('public')->delete($asset->image_path);
-            }
+        if ($path = $this->storeImage($request, $asset->image_path)) {
             $data['image_path'] = $path;
         } elseif ($removeImage && $asset->image_path) {
-            Storage::disk('public')->delete($asset->image_path);
+            app(PeoplePhotoStorage::class)->delete($asset->image_path);
             $data['image_path'] = null;
         }
 
@@ -171,7 +168,7 @@ class KamsAssetController extends Controller
         }
 
         if ($asset->image_path) {
-            Storage::disk('public')->delete($asset->image_path);
+            app(PeoplePhotoStorage::class)->delete($asset->image_path);
         }
 
         $asset->delete();
@@ -200,11 +197,14 @@ class KamsAssetController extends Controller
         ]);
     }
 
-    private function storeImage(Request $request): ?string
+    private function storeImage(Request $request, ?string $currentPath = null): ?string
     {
         $image = $request->file('image');
+        if (! $image) {
+            return null;
+        }
 
-        return $image?->store('kams/assets', 'public');
+        return app(PeoplePhotoStorage::class)->storeReplacing($currentPath, $image, 'kams/assets');
     }
 
     /**

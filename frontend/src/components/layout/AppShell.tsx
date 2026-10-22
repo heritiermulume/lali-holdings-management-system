@@ -86,6 +86,7 @@ export function AppShell() {
   }, [location.pathname])
 
   useEffect(() => {
+    if (location.pathname.startsWith('/modules/kams')) return
     setActiveCurrency(workspaceCurrencyCode(location.pathname, user))
   }, [location.pathname, user?.id, user?.primary_company?.id, user?.accessible_companies])
 

@@ -34,16 +34,30 @@ class CurrencyConverter
             return 1.0;
         }
 
+        $rate = $this->storedUsdRate($code);
+        if ($rate === null) {
+            try {
+                $this->syncFromMarket();
+            } catch (\Throwable) {
+            }
+            $rate = $this->storedUsdRate($code);
+        }
+
+        if ($rate && $rate > 0) {
+            return $rate;
+        }
+
+        throw new RuntimeException("No exchange rate found for {$code}. Sync market rates first.");
+    }
+
+    private function storedUsdRate(string $code): ?float
+    {
         $rate = ExchangeRate::query()
             ->where('base_code', 'USD')
             ->where('quote_code', $code)
             ->value('mid_rate');
 
-        if ($rate && (float) $rate > 0) {
-            return (float) $rate;
-        }
-
-        throw new RuntimeException("No exchange rate found for {$code}. Sync market rates first.");
+        return $rate && (float) $rate > 0 ? (float) $rate : null;
     }
 
     /** How many units of $to equal 1 unit of $from (mid market). */

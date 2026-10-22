@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\PreventsReplies;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -11,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 class FinanceRequestDecisionMail extends Mailable
 {
-    use Queueable, SerializesModels;
+    use PreventsReplies, Queueable, SerializesModels;
 
     /**
      * @param  array{decision: string, type: string, amount: float, notes?: string|null, reason?: string|null, member_name?: string|null}  $payload
@@ -26,11 +27,9 @@ class FinanceRequestDecisionMail extends Mailable
         $locale = $this->user->locale === 'en' ? 'en' : 'fr';
         $approved = ($this->payload['decision'] ?? '') === 'approve';
 
-        return new Envelope(
-            subject: $locale === 'en'
-                ? ($approved ? 'Your finance request was approved' : 'Your finance request was rejected')
-                : ($approved ? 'Votre demande financière a été acceptée' : 'Votre demande financière a été refusée'),
-        );
+        return $this->automaticEnvelope($locale === 'en'
+            ? ($approved ? 'Your finance request was approved' : 'Your finance request was rejected')
+            : ($approved ? 'Votre demande financière a été acceptée' : 'Votre demande financière a été refusée'));
     }
 
     public function content(): Content

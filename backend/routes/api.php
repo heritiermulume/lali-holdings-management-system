@@ -48,6 +48,7 @@ Route::prefix('v1')->group(function () {
         Route::post('users/import', [UserController::class, 'import'])->middleware(EnsurePermission::class.':users.import');
         Route::get('users/{user}', [UserController::class, 'show'])->middleware(EnsurePermission::class.':users.view');
         Route::match(['put', 'post'], 'users/{user}', [UserController::class, 'update'])->middleware(EnsurePermission::class.':users.update');
+        Route::post('users/{user}/password', [UserController::class, 'updatePassword'])->middleware(EnsurePermission::class.':users.update');
         Route::delete('users/{user}', [UserController::class, 'destroy'])->middleware(EnsurePermission::class.':users.delete');
 
         Route::get('roles', [RoleController::class, 'index'])->middleware(EnsurePermission::class.':roles.view');

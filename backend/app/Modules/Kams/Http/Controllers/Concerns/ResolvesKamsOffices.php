@@ -4,6 +4,7 @@ namespace App\Modules\Kams\Http\Controllers\Concerns;
 
 use App\Models\Company;
 use App\Models\Office;
+use App\Modules\Kams\Services\KamsDisplayCurrency;
 use Illuminate\Http\Request;
 
 trait ResolvesKamsOffices
@@ -105,7 +106,7 @@ trait ResolvesKamsOffices
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->where('is_active', true)
             ->orderBy('name')
-            ->get(['id', 'name', 'code']);
+            ->get(['id', 'name', 'code', 'company_id']);
 
         $accessibleIds = $offices->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
         $canFilter = count($accessibleIds) > 1;
@@ -134,9 +135,9 @@ trait ResolvesKamsOffices
 
     /**
      * @param  array{offices: \Illuminate\Support\Collection, can_filter: bool, office_ids: list<int>, selected_office_id: int|null}  $state
-     * @return array{can_filter_offices: bool, office_id: int|null, filter_offices: list<array{id:int,name:string,code:?string}>}
+     * @return array{can_filter_offices: bool, office_id: int|null, filter_offices: list<array{id:int,name:string,code:?string}>, currency: string, source_currency: string, money_rate: float}
      */
-    private function officeFilterPayload(array $state): array
+    private function officeFilterPayload(array $state, ?int $companyId = null): array
     {
         return [
             'can_filter_offices' => $state['can_filter'],
@@ -146,6 +147,7 @@ trait ResolvesKamsOffices
                 'name' => $office->name,
                 'code' => $office->code,
             ])->values()->all(),
+            ...app(KamsDisplayCurrency::class)->forState($state, $companyId),
         ];
     }
 

@@ -153,16 +153,12 @@ class OfficeHierarchy
     }
 
     /**
-     * Secretaries attached to the manager who directly opened this office.
+     * Secretaries attached to an office.
      *
      * @return Collection<int, KamsMember>
      */
     public function secretariesForDirectOffice(Office $office): Collection
     {
-        if (! $office->creator_user_id) {
-            return collect();
-        }
-
         return KamsMember::query()
             ->with('role:id,name,slug')
             ->where('company_id', $office->company_id)
@@ -174,6 +170,46 @@ class OfficeHierarchy
                     ->orWhere('rank', 'like', '%Secretaire%');
             })
             ->get();
+    }
+
+    /**
+     * Secretary is paid only on a direct child office of her manager's office, never on grandchildren.
+     *
+     * @return Collection<int, KamsMember>
+     */
+    public function secretariesOfParentOffice(Office $office): Collection
+    {
+        if (! $office->parent_office_id) {
+            return collect();
+        }
+        $parent = Office::query()->find($office->parent_office_id);
+        if (! $parent) {
+            return collect();
+        }
+
+        return $this->secretariesForDirectOffice($parent);
+    }
+
+    /**
+     * People who opened each ancestor office, from the parent upward.
+     *
+     * @return list<KamsMember>
+     */
+    public function ancestorOpeners(Office $office): array
+    {
+        $openers = [];
+        $current = $office->parent_office_id ? Office::query()->find($office->parent_office_id) : null;
+        $guard = 0;
+        while ($current && $guard++ < 20) {
+            $userId = $current->creator_user_id ?: $current->manager_user_id;
+            $opener = $this->memberForUser($userId ? (int) $userId : null, (int) $current->company_id);
+            if ($opener) {
+                $openers[] = $opener;
+            }
+            $current = $current->parent_office_id ? Office::query()->find($current->parent_office_id) : null;
+        }
+
+        return $openers;
     }
 
     /**
@@ -195,7 +231,7 @@ class OfficeHierarchy
         $assistant = $seller ? $this->resolveAssistant($seller) : null;
         $certifiedSponsor = $assistant ? $this->resolveAssistantSponsor($assistant) : null;
         $chain = $office ? $this->beneficiaryChain($office, $officeCreator) : ['managers' => [], 'divisionnaires' => []];
-        $secretaries = $office ? $this->secretariesForDirectOffice($office) : collect();
+        $secretaries = $office ? $this->secretariesOfParentOffice($office) : collect();
 
         return [
             'seller' => $this->memberPayload($seller),

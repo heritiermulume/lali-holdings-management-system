@@ -9,6 +9,7 @@ class RevenueRuleCatalog
     public const MANAGER_CERTIFIED_OFFICE = 'manager_certified_office';
     public const MANAGER_DESCENDANT_OFFICE = 'manager_descendant_office';
     public const DIVISIONNAIRE_OFFICE = 'divisionnaire_office';
+    public const DIVISIONNAIRE_CERTIFIED_OFFICE = 'divisionnaire_certified_office';
     public const SECRETARY_OFFICE = 'secretary_office';
     public const ASSISTANT_MANAGER = 'assistant_manager';
     public const ASSISTANT_MANAGER_CERTIFIED = 'assistant_manager_certified';
@@ -110,30 +111,49 @@ class RevenueRuleCatalog
             self::ASSISTANT_MANAGER, self::ASSISTANT_MANAGER_CERTIFIED => 'assistant_manager',
             self::SECRETARY_OFFICE => 'secretary',
             self::DIVISIONNAIRE_OFFICE => 'divisionnaire',
-            self::MANAGER_CERTIFIED_OFFICE => 'percentage',
+            self::MANAGER_CERTIFIED_OFFICE, self::DIVISIONNAIRE_CERTIFIED_OFFICE => 'percentage',
             default => 'manager',
         };
     }
 
     /**
-     * Office-opening % held as payable commissions (not auto-credited on day close).
-     * Manager / divisionnaire who opened (or oversees) the office.
+     * Remuneration that can stay payable on the selling office.
+     * On the beneficiary's own office it is credited at day close.
+     * On any other office it is credited only after a manual transfer.
      *
      * @return list<string>
      */
     public static function heldOfficeCommissionCodes(): array
     {
         return [
+            self::MANAGER_SALE,
             self::MANAGER_OFFICE,
             self::MANAGER_DESCENDANT_OFFICE,
             self::MANAGER_CERTIFIED_OFFICE,
             self::DIVISIONNAIRE_OFFICE,
+            self::DIVISIONNAIRE_CERTIFIED_OFFICE,
+            self::SECRETARY_OFFICE,
         ];
     }
 
     public static function isHeldOfficeCommission(string $ruleCode): bool
     {
         return in_array($ruleCode, self::heldOfficeCommissionCodes(), true);
+    }
+
+    /**
+     * Own-office pay (salary and certified Compte Overed) is credited at day close.
+     * The same rules on another office wait for a manual transfer.
+     */
+    public static function creditsOnDayClose(string $ruleCode, ?int $shareOfficeId, ?int $memberOfficeId): bool
+    {
+        if (! self::isHeldOfficeCommission($ruleCode)) {
+            return true;
+        }
+
+        return $shareOfficeId !== null
+            && $memberOfficeId !== null
+            && (int) $shareOfficeId === (int) $memberOfficeId;
     }
 
     /**
@@ -162,14 +182,15 @@ class RevenueRuleCatalog
         ?int $memberOfficeId,
     ): string {
         // Certified surplus always credits Compte Overed (percentage), never salary.
-        if ($ruleCode === self::MANAGER_CERTIFIED_OFFICE) {
+        if (in_array($ruleCode, [self::MANAGER_CERTIFIED_OFFICE, self::DIVISIONNAIRE_CERTIFIED_OFFICE], true)) {
             return 'percentage';
         }
 
-        if (
-            in_array($ruleCode, [self::ASSISTANT_MANAGER, self::ASSISTANT_MANAGER_CERTIFIED], true)
-            || ! self::usesSplitCompensationAccounts($roleSlug)
-        ) {
+        if (in_array($ruleCode, [self::ASSISTANT_MANAGER, self::ASSISTANT_MANAGER_CERTIFIED], true)) {
+            return 'guy';
+        }
+
+        if (! self::usesSplitCompensationAccounts($roleSlug)) {
             return self::savingsKind($ruleCode);
         }
 
@@ -184,9 +205,31 @@ class RevenueRuleCatalog
         return 'percentage';
     }
 
+    /**
+     * Configured percent, divided by the rule divisor when one is set.
+     * (base ÷ divisor) × percent, otherwise base × percent.
+     */
+    public static function scaledShare(float $base, float $percent, ?float $divisor = null): float
+    {
+        if ($divisor !== null && $divisor > 0) {
+            return self::assistantShare($base, $divisor, $percent);
+        }
+
+        return self::percentOf($base, $percent);
+    }
+
     public static function percentOf(float $base, float $percent): float
     {
         return round($base * ($percent / 100), 2);
+    }
+
+    /**
+     * Office turnover remaining after the local manager or divisionnaire share,
+     * taken before that leader pays their assistant managers.
+     */
+    public static function officeSalesAfterLeaderShare(float $officeSales, float $leaderShareBeforeAssistants): float
+    {
+        return max(0.0, round($officeSales - max(0.0, $leaderShareBeforeAssistants), 2));
     }
 
     /**
@@ -194,7 +237,7 @@ class RevenueRuleCatalog
      */
     public static function officeSalesAfterManagerShare(float $officeSales, float $managerPercent): float
     {
-        return max(0.0, round($officeSales - self::percentOf($officeSales, $managerPercent), 2));
+        return self::officeSalesAfterLeaderShare($officeSales, self::percentOf($officeSales, $managerPercent));
     }
 
     /**
@@ -221,7 +264,16 @@ class RevenueRuleCatalog
         return round($subAssistantTeamSales / $divisor, 2);
     }
 
-    public static function formula(string $code, float $base, float $percent, ?float $divisor = null, ?float $grossBase = null, ?float $managerPercent = null): string
+    public static function formula(
+        string $code,
+        float $base,
+        float $percent,
+        ?float $divisor = null,
+        ?float $grossBase = null,
+        ?float $managerPercent = null,
+        ?float $leaderGross = null,
+        string $leaderLabel = 'manager',
+    ): string
     {
         if ($code === self::ASSISTANT_MANAGER) {
             $div = $divisor && $divisor > 0 ? $divisor : 0;
@@ -241,15 +293,55 @@ class RevenueRuleCatalog
                 self::MANAGER_CERTIFIED_OFFICE,
                 self::MANAGER_DESCENDANT_OFFICE,
                 self::DIVISIONNAIRE_OFFICE,
+                self::DIVISIONNAIRE_CERTIFIED_OFFICE,
+                self::SECRETARY_OFFICE,
+            ], true)
+            && $grossBase !== null
+            && $leaderGross !== null
+        ) {
+            $suffix = $code === self::MANAGER_CERTIFIED_OFFICE || $code === self::DIVISIONNAIRE_CERTIFIED_OFFICE
+                ? ' · certified'
+                : '';
+            $core = sprintf(
+                '(%s − %s part %s avant AM)',
+                self::number($grossBase),
+                self::number($leaderGross),
+                $leaderLabel
+            );
+            if ($divisor !== null && $divisor > 0) {
+                return sprintf('(%s / %s) × %s%%%s', $core, self::number($divisor), self::number($percent), $suffix);
+            }
+
+            return sprintf('%s × %s%%%s', $core, self::number($percent), $suffix);
+        }
+
+        if (
+            in_array($code, [self::DIVISIONNAIRE_OFFICE, self::DIVISIONNAIRE_CERTIFIED_OFFICE], true)
+            && $divisor !== null
+            && $divisor > 0
+        ) {
+            $suffix = $code === self::DIVISIONNAIRE_CERTIFIED_OFFICE ? ' · certified' : '';
+
+            return sprintf('(%s / %s) × %s%%%s', self::number($base), self::number($divisor), self::number($percent), $suffix);
+        }
+
+        if (
+            in_array($code, [
+                self::MANAGER_OFFICE,
+                self::MANAGER_CERTIFIED_OFFICE,
+                self::MANAGER_DESCENDANT_OFFICE,
+                self::DIVISIONNAIRE_OFFICE,
+                self::DIVISIONNAIRE_CERTIFIED_OFFICE,
                 self::SECRETARY_OFFICE,
             ], true)
             && $grossBase !== null
             && $managerPercent !== null
         ) {
             return sprintf(
-                '(%s − %s%% manager) × %s%%',
+                '(%s − %s%% %s avant AM) × %s%%',
                 self::number($grossBase),
                 self::number($managerPercent),
+                $leaderLabel,
                 self::number($percent)
             );
         }

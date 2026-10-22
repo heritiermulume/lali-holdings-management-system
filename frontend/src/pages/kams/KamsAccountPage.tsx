@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
+import { Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
@@ -56,6 +56,7 @@ type CompensationSummary = {
     divisionnaire_office: number
     secretary_office: number
     salary_paid: number
+    has_opened_offices?: boolean
   }
   by_rule?: Array<{ code: string; amount: number }>
   shares: Share[]
@@ -88,6 +89,7 @@ type Account = {
   entries: Entry[]
   can_deposit: boolean
   can_withdraw: boolean
+  can_direct?: boolean
   can_decide_incoming?: boolean
 }
 
@@ -142,6 +144,13 @@ function profileCompensationKpis(
     value: totals.manager_certified_office ?? 0,
     label: t('kams.rule.manager_certified_office'),
   }
+  const openedOffices: CompensationKpi[] = totals.has_opened_offices
+    ? [{
+        key: 'managerOpenedOffices',
+        value: roundMoney((totals.manager_office || 0) + (totals.manager_descendant_office || 0) + (totals.divisionnaire_office || 0)),
+        label: t('kams.rule.manager_opened_offices'),
+      }]
+    : []
 
   switch (roleSlug) {
     case 'manager':
@@ -149,8 +158,7 @@ function profileCompensationKpis(
         ...overview,
         { key: 'managerSaleShare', value: totals.manager_sale, label: t('kams.rule.manager_sale') },
         certifiedSurplus,
-        { key: 'managerOfficeShare', value: totals.manager_office, label: t('kams.rule.manager_office') },
-        { key: 'managerDescendantShare', value: totals.manager_descendant_office, label: t('kams.rule.manager_descendant_office') },
+        ...openedOffices,
         { key: 'assistantDistributed', value: totals.distributed_to_assistants },
         { key: 'managerRemaining', value: walletsTotal ?? totals.manager_remaining },
       ]
@@ -160,8 +168,7 @@ function profileCompensationKpis(
         ...overview,
         { key: 'managerSaleShare', value: totals.manager_sale, label: t('kams.rule.manager_sale') },
         certifiedSurplus,
-        { key: 'managerOfficeShare', value: totals.manager_office, label: t('kams.rule.manager_office') },
-        { key: 'managerDescendantShare', value: totals.manager_descendant_office, label: t('kams.rule.manager_descendant_office') },
+        ...openedOffices,
       ]
     case 'secretary':
       return [
@@ -316,13 +323,10 @@ export function KamsAccountPage() {
   }
 
   const titles: Record<Action, string> = {
-    deposit: t('kams.requestDeposit'),
-    withdraw: t('kams.requestWithdrawal'),
+    deposit: data.can_direct ? t('kams.makeDeposit') : t('kams.requestDeposit'),
+    withdraw: data.can_direct ? t('kams.makeWithdrawal') : t('kams.requestWithdrawal'),
   }
 
-  const compensationEntries = (data.entries || []).filter((entry) => (
-    entry.type === 'revenue_share' || entry.type === 'salary' || entry.type === 'assistant_payout'
-  ))
   const walletsTotal = splitAccounts
     ? roundMoney(wallets.reduce((sum, wallet) => sum + (wallet.balance || 0), 0))
     : null
@@ -362,11 +366,11 @@ export function KamsAccountPage() {
               />
               <div className="flex flex-wrap items-center gap-2">
                 {data.can_deposit && hasPermission('kams.finance.account.deposit') ? (
-                  <Button onClick={() => openAction('deposit', wallet.kind)}>{t('kams.requestDeposit')}</Button>
+                  <Button onClick={() => openAction('deposit', wallet.kind)}>{data.can_direct ? t('kams.makeDeposit') : t('kams.requestDeposit')}</Button>
                 ) : null}
                 {data.can_withdraw && hasPermission('kams.finance.account.withdraw') ? (
                   <Button variant="secondary" disabled={walletAvailable <= 0.001} onClick={() => openAction('withdraw', wallet.kind)}>
-                    {t('kams.requestWithdrawal')}
+                    {data.can_direct ? t('kams.makeWithdrawal') : t('kams.requestWithdrawal')}
                   </Button>
                 ) : null}
               </div>
@@ -375,59 +379,33 @@ export function KamsAccountPage() {
         })}
       </div>
 
-      {showCompensation && (compensation || compensationEntries.length > 0) ? (
+      {showCompensation && compensation ? (
         <Card className="p-5">
           <div className="mb-1 font-semibold">{t('kams.myCompensation')}</div>
           <p className="mb-4 text-sm text-muted">{t('kams.myCompensationHint')}</p>
-          {compensation ? (
-            <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {profileCompensationKpis(
-                compensation.totals,
-                compensation.member.role?.slug || data.member.role?.slug,
-                t,
-                walletsTotal,
-              ).map((item) => (
-                <div key={item.key} className="rounded-xl bg-surface p-3">
-                  <div className="text-xs text-muted">{item.label ?? t(`kams.${item.key}`)}</div>
-                  <div className="mt-1 text-xl font-extrabold">{money(item.value)}</div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {compensation?.member.role?.slug === 'secretary' && compensation.member.fixed_salary > 0 ? (
-            <p className="mb-4 text-sm text-muted">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {profileCompensationKpis(
+              compensation.totals,
+              compensation.member.role?.slug || data.member.role?.slug,
+              t,
+              walletsTotal,
+            ).concat([
+              { key: 'deposits', value: data.deposits || 0 },
+              { key: 'expenses', value: data.expenses || 0 },
+              { key: 'withdrawals', value: data.withdrawals || 0 },
+              { key: 'balance', value: walletsTotal ?? data.balance ?? 0 },
+            ]).map((item) => (
+              <div key={item.key} className="rounded-xl bg-surface p-3">
+                <div className="text-xs text-muted">{item.label ?? t(`kams.${item.key}`)}</div>
+                <div className="mt-1 text-xl font-extrabold">{money(item.value)}</div>
+              </div>
+            ))}
+          </div>
+          {compensation.member.role?.slug === 'secretary' && compensation.member.fixed_salary > 0 ? (
+            <p className="mt-4 text-sm text-muted">
               {t('kams.fixedSalary')}: {money(compensation.member.fixed_salary)}
             </p>
           ) : null}
-          <div className="space-y-2">
-            {(compensation?.shares?.length ? compensation.shares : compensationEntries).length === 0 ? (
-              <Empty>{t('common.empty')}</Empty>
-            ) : compensation?.shares?.length ? (
-              compensation.shares.map((share) => (
-                <div key={share.id} className="rounded-xl border border-line px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-semibold">{t(`kams.rule.${share.rule_code}`, { defaultValue: share.rule_code })}</div>
-                    <Badge>{money(share.amount)}</Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-muted">
-                    {[share.sale?.reference, share.product?.name || share.snapshot?.product?.name, share.office?.name, share.formula, share.status].filter(Boolean).join(' · ')}
-                  </div>
-                </div>
-              ))
-            ) : (
-              compensationEntries.map((entry) => (
-                <div key={entry.id} className="rounded-xl border border-line px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-semibold">{t(`kams.ledger.${entry.type}`, { defaultValue: entry.type })}</div>
-                    <Badge>{money(entry.amount)}</Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-muted">
-                    {[entry.kind ? walletLabel(entry.kind, t) : null, entry.occurred_on, entry.notes, entry.status].filter(Boolean).join(' · ')}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
         </Card>
       ) : null}
 

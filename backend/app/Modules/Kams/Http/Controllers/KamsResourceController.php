@@ -13,6 +13,7 @@ use App\Modules\Kams\Models\KamsOrder;
 use App\Modules\Kams\Models\KamsOrderItem;
 use App\Modules\Kams\Models\KamsProduct;
 use App\Modules\Kams\Models\KamsStockBalance;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Services\StockJournal;
 use App\Modules\Kams\Support\DomainOptions;
@@ -22,7 +23,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 
 class KamsResourceController extends Controller
 {
@@ -450,13 +452,10 @@ class KamsResourceController extends Controller
             }
         }
 
-        if ($path = $this->storeProductImage($request)) {
-            if ($product->image_path) {
-                Storage::disk('public')->delete($product->image_path);
-            }
+        if ($path = $this->storeProductImage($request, $product->image_path)) {
             $data['image_path'] = $path;
         } elseif ($removeImage && $product->image_path) {
-            Storage::disk('public')->delete($product->image_path);
+            app(PeoplePhotoStorage::class)->delete($product->image_path);
             $data['image_path'] = null;
         }
 
@@ -482,17 +481,20 @@ class KamsResourceController extends Controller
     {
         $this->assertCompany($request, (int) $product->company_id);
         if ($product->image_path) {
-            Storage::disk('public')->delete($product->image_path);
+            app(PeoplePhotoStorage::class)->delete($product->image_path);
         }
 
         return $this->destroy($product, $request);
     }
 
-    private function storeProductImage(Request $request): ?string
+    private function storeProductImage(Request $request, ?string $currentPath = null): ?string
     {
         $image = $request->file('image');
+        if (! $image) {
+            return null;
+        }
 
-        return $image?->store('kams/products', 'public');
+        return app(PeoplePhotoStorage::class)->storeReplacing($currentPath, $image, 'kams/products');
     }
 
     /**
@@ -610,7 +612,7 @@ class KamsResourceController extends Controller
         $terms = (int) SettingsCatalog::number('kams', 'default_payment_terms_days');
         $notes = $data['notes'] ?? null;
         if ($terms > 0) {
-            $due = \Illuminate\Support\Carbon::parse($data['ordered_at'])->addDays($terms)->toDateString();
+            $due = Carbon::parse($data['ordered_at'])->addDays($terms)->toDateString();
             $termsNote = 'Payment terms: '.$terms.' days (due '.$due.')';
             $notes = $notes ? $notes."\n".$termsNote : $termsNote;
         }
@@ -757,7 +759,7 @@ class KamsResourceController extends Controller
         return $this->ok(null, __('Deleted.'));
     }
 
-    private function resolveSupplierWarehouses(Request $request, mixed $warehouseIds, bool $assignAll = false): \Illuminate\Support\Collection
+    private function resolveSupplierWarehouses(Request $request, mixed $warehouseIds, bool $assignAll = false): Collection
     {
         $companyId = $this->kamsCompanyId($request) ?? $request->user()->primary_company_id;
         $warehouses = KamsDepot::query()

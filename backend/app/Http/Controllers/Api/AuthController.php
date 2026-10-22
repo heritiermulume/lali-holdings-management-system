@@ -8,13 +8,14 @@ use App\Models\Company;
 use App\Models\Currency;
 use App\Models\User;
 use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Services\AgentAccountService;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use App\Support\SecuritySettings;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password as PasswordBroker;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
@@ -83,20 +84,21 @@ class AuthController extends Controller
 
         unset($data['avatar'], $data['remove_avatar']);
 
-        $disk = Storage::disk('public');
+        $photos = app(PeoplePhotoStorage::class);
+        $agents = app(AgentAccountService::class);
+        $current = $user->avatar_path
+            ?: KamsMember::query()->where('user_id', $user->id)->whereNotNull('photo_path')->value('photo_path');
         if ($request->hasFile('avatar')) {
-            if ($user->avatar_path) {
-                $disk->delete($user->avatar_path);
-            }
-            $data['avatar_path'] = $request->file('avatar')->store('avatars', 'public');
+            $data['avatar_path'] = $photos->storeReplacing($current, $request->file('avatar'), 'avatars');
         } elseif ($request->boolean('remove_avatar')) {
-            if ($user->avatar_path) {
-                $disk->delete($user->avatar_path);
-            }
+            $photos->delete($current);
             $data['avatar_path'] = null;
         }
 
         $user->fill($data)->save();
+        if ($request->hasFile('avatar') || $request->boolean('remove_avatar')) {
+            $agents->syncPhotoFromUser($user);
+        }
 
         return $this->ok($this->presentUser($user->fresh()), __('Profile updated.'));
     }
@@ -108,14 +110,15 @@ class AuthController extends Controller
         ]);
 
         $user = $request->user();
-        $disk = Storage::disk('public');
-
-        if ($user->avatar_path) {
-            $disk->delete($user->avatar_path);
-        }
-
-        $path = $request->file('avatar')->store('avatars', 'public');
+        $current = $user->avatar_path
+            ?: KamsMember::query()->where('user_id', $user->id)->whereNotNull('photo_path')->value('photo_path');
+        $path = app(PeoplePhotoStorage::class)->storeReplacing(
+            $current,
+            $request->file('avatar'),
+            'avatars',
+        );
         $user->forceFill(['avatar_path' => $path])->save();
+        app(AgentAccountService::class)->syncPhotoFromUser($user);
 
         return $this->ok($this->presentUser($user->fresh()), __('Profile photo updated.'));
     }
@@ -123,12 +126,13 @@ class AuthController extends Controller
     public function destroyAvatar(Request $request): JsonResponse
     {
         $user = $request->user();
-        $disk = Storage::disk('public');
 
-        if ($user->avatar_path) {
-            $oldPath = $user->avatar_path;
-            $disk->delete($oldPath);
+        $current = $user->avatar_path
+            ?: KamsMember::query()->where('user_id', $user->id)->whereNotNull('photo_path')->value('photo_path');
+        if ($current) {
+            app(PeoplePhotoStorage::class)->delete($current);
             $user->forceFill(['avatar_path' => null])->save();
+            app(AgentAccountService::class)->syncPhotoFromUser($user);
         }
 
         return $this->ok($this->presentUser($user->fresh()), __('Profile photo removed.'));
@@ -159,17 +163,36 @@ class AuthController extends Controller
         ]);
 
         $user = User::query()->where('email', $data['email'])->first();
-        if ($user && $user->is_active) {
-            try {
-                PasswordBroker::sendResetLink(['email' => $user->email]);
-            } catch (\Throwable $exception) {
-                report($exception);
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => __('No account matches this email address.'),
+            ], 404);
+        }
 
-                return response()->json([
-                    'success' => false,
-                    'message' => __('Unable to send the reset link.'),
-                ], 500);
-            }
+        if (! $user->is_active) {
+            return response()->json([
+                'success' => false,
+                'message' => __('This account is inactive.'),
+            ], 403);
+        }
+
+        try {
+            $status = PasswordBroker::sendResetLink(['email' => $user->email]);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'success' => false,
+                'message' => __('Unable to send the reset link.'),
+            ], 500);
+        }
+
+        if ($status !== PasswordBroker::RESET_LINK_SENT) {
+            return response()->json([
+                'success' => false,
+                'message' => __($status),
+            ], 422);
         }
 
         return $this->ok(null, __('A password reset email has been sent to you.'));
@@ -182,6 +205,14 @@ class AuthController extends Controller
             'email' => ['required', 'email'],
             'password' => ['required', 'confirmed', Password::defaults()],
         ]);
+
+        $account = User::query()->where('email', $data['email'])->first();
+        if ($account && ! $account->is_active) {
+            return response()->json([
+                'success' => false,
+                'message' => __('This account is inactive.'),
+            ], 403);
+        }
 
         $status = PasswordBroker::reset(
             $data,
@@ -262,7 +293,10 @@ class AuthController extends Controller
             'email' => $user->email,
             'phone' => $user->phone,
             'gender' => in_array($gender, ['male', 'female'], true) ? $gender : null,
-            'avatar_url' => $user->avatar_path ? '/storage/'.$user->avatar_path : null,
+            'avatar_url' => app(PeoplePhotoStorage::class)->urlFromPaths(
+                $user->avatar_path,
+                KamsMember::query()->where('user_id', $user->id)->whereNotNull('photo_path')->value('photo_path'),
+            ),
             'locale' => $user->locale,
             'timezone' => $user->timezone,
             'is_active' => $user->is_active,

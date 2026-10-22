@@ -25,8 +25,10 @@ use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\KamsIdentityService;
 use App\Modules\Kams\Services\MemberMigrationService;
 use App\Modules\Kams\Services\MemberRegistrationService;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use App\Modules\Kams\Services\PromotionEligibilityService;
 use App\Modules\Kams\Services\RecruitmentCommunicationService;
+use Illuminate\Validation\Rules\Password;
 use App\Modules\Kams\Services\RecruitmentMetrics;
 use App\Modules\Kams\Support\DomainOptions;
 use App\Modules\Kams\Support\PersonName;
@@ -51,6 +53,7 @@ class KamsRecruitmentController extends Controller
         private readonly PromotionEligibilityService $promotionEligibility,
         private readonly AgentAccountService $accounts,
         private readonly KamsAccountProvisioner $wallets,
+        private readonly PeoplePhotoStorage $peoplePhotos,
     ) {}
 
     public function lookups(Request $request): JsonResponse
@@ -182,13 +185,13 @@ class KamsRecruitmentController extends Controller
     {
         $data = $request->validate([
             'company_id' => ['required', 'exists:companies,id'],
-            'office_id' => ['nullable', 'exists:offices,id'],
+            'office_id' => ['required', 'exists:offices,id'],
             'first_name' => ['required', 'string', 'max:120'],
             'last_name' => ['required', 'string', 'max:120'],
             'gender' => ['required', 'in:male,female'],
-            'birth_date' => ['nullable', 'date', 'before:today'],
+            'birth_date' => ['required', 'date', 'before:today'],
             'phone' => ['required', 'string', 'max:64'],
-            'email' => ['nullable', 'email'],
+            'email' => ['required', 'email'],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'address' => ['nullable', 'string'],
             'guardian_name' => ['nullable', 'string', 'max:255'],
@@ -245,15 +248,16 @@ class KamsRecruitmentController extends Controller
 
         $data = $request->validate([
             'company_id' => ['sometimes', 'exists:companies,id'],
-            'office_id' => ['nullable', 'exists:offices,id'],
+            'office_id' => ['required', 'exists:offices,id'],
             'first_name' => ['sometimes', 'string', 'max:120'],
             'last_name' => ['sometimes', 'string', 'max:120'],
             'full_name' => ['sometimes', 'string', 'max:255'],
             'gender' => ['nullable', 'in:male,female'],
-            'birth_date' => ['nullable', 'date', 'before:today'],
+            'birth_date' => ['required', 'date', 'before:today'],
             'phone' => ['nullable', 'string', 'max:64'],
-            'email' => ['nullable', 'email'],
+            'email' => ['required', 'email'],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
+            'remove_photo' => ['sometimes', 'boolean'],
             'address' => ['nullable', 'string'],
             'guardian_name' => ['nullable', 'string'],
             'guardian_phone' => ['nullable', 'string'],
@@ -266,7 +270,7 @@ class KamsRecruitmentController extends Controller
         $companyId = (int) ($data['company_id'] ?? $candidate->company_id);
         $this->assertCompany($request, $companyId);
         $this->assertOfficeCompany($data['office_id'] ?? $candidate->office_id, $companyId);
-        unset($data['photo']);
+        unset($data['photo'], $data['remove_photo']);
         $data = $this->hydrateLinkedPeople($data);
 
         if (array_key_exists('first_name', $data) || array_key_exists('last_name', $data)) {
@@ -278,10 +282,11 @@ class KamsRecruitmentController extends Controller
             $data = array_merge($data, PersonName::fromFullName($data['full_name']));
         }
 
-        $photoPath = $this->storePeoplePhoto($request);
+        $photoPath = $this->storePeoplePhoto($request, $candidate->photo_path);
         if ($photoPath) {
             $data['photo_path'] = $photoPath;
         } elseif ($request->boolean('remove_photo')) {
+            $this->peoplePhotos->delete($candidate->photo_path);
             $data['photo_path'] = null;
         }
 
@@ -323,7 +328,7 @@ class KamsRecruitmentController extends Controller
         abort_unless(in_array($candidate->status, ['received', 'under_review', 'shortlisted', 'on_hold'], true), 422, 'Interview is not available for this application.');
 
         $interviewer = User::query()->where('is_active', true)->findOrFail($data['interviewer_user_id']);
-        abort_if($this->isDistributorAgent((int) $interviewer->id), 422, 'Distributors cannot be selected as interviewers.');
+        abort_if($this->hasDistributorRole((int) $interviewer->id), 422, 'Distributors cannot be selected as interviewers.');
         $started = Carbon::parse($data['interview_starts_at']);
         $ended = now();
         if ($ended->lt($started)) {
@@ -653,10 +658,11 @@ class KamsRecruitmentController extends Controller
             $data = $this->withCoachMember($data, (int) $member->company_id);
         }
 
-        $photoPath = $this->storePeoplePhoto($request);
+        $photoPath = $this->storePeoplePhoto($request, $member->photo_path);
         if ($photoPath) {
             $data['photo_path'] = $photoPath;
         } elseif ($request->boolean('remove_photo')) {
+            $this->peoplePhotos->delete($member->photo_path);
             $data['photo_path'] = null;
         }
 
@@ -684,6 +690,18 @@ class KamsRecruitmentController extends Controller
         $member->delete();
 
         return $this->ok(null, __('Deleted.'));
+    }
+
+    public function setMemberPassword(Request $request, KamsMember $member): JsonResponse
+    {
+        $this->assertCompany($request, (int) $member->company_id);
+        $data = $request->validate([
+            'password' => ['required', 'confirmed', Password::defaults()],
+        ]);
+
+        $this->accounts->setPassword($member, $data['password']);
+
+        return $this->ok(null, __('Password updated.'));
     }
 
     public function setMemberAccount(Request $request, KamsMember $member): JsonResponse
@@ -997,19 +1015,22 @@ class KamsRecruitmentController extends Controller
         return $data;
     }
 
-    private function storePeoplePhoto(Request $request): ?string
+    private function storePeoplePhoto(Request $request, ?string $currentPath = null): ?string
     {
         $photo = $request->file('photo');
+        if (! $photo) {
+            return null;
+        }
 
-        return $photo?->store('kams/photos', 'public');
+        return $this->peoplePhotos->storeReplacing($currentPath, $photo);
     }
 
-    private function isDistributorAgent(int $userId): bool
+    private function hasDistributorRole(int $userId): bool
     {
         return KamsMember::query()
             ->where('user_id', $userId)
-            ->get()
-            ->contains(fn (KamsMember $member) => $this->isDistributorMember($member));
+            ->whereHas('role', fn ($query) => $query->where('module_slug', 'kams')->where('slug', 'distributor'))
+            ->exists();
     }
 
     private function isDistributorMember(KamsMember $member): bool

@@ -26,6 +26,16 @@ class RevenueRuleCatalogTest extends TestCase
         $this->assertSame(1000.0, RevenueRuleCatalog::certifiedAssistantShare(8000));
     }
 
+    public function test_divisionnaire_share_uses_percent_and_divisor(): void
+    {
+        $this->assertSame(4.0, RevenueRuleCatalog::scaledShare(100, 4, null));
+        $this->assertSame(20.0, RevenueRuleCatalog::scaledShare(400, 20, 4));
+        $this->assertSame(
+            '(4500 / 4) × 4% · certified',
+            RevenueRuleCatalog::formula(RevenueRuleCatalog::DIVISIONNAIRE_CERTIFIED_OFFICE, 4500, 4, 4)
+        );
+    }
+
     public function test_office_percentages(): void
     {
         $this->assertSame(3.0, RevenueRuleCatalog::percentOf(100, 3));
@@ -51,20 +61,21 @@ class RevenueRuleCatalogTest extends TestCase
         );
         $this->assertSame('100 × 20%', RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_SALE, 100, 20));
         $this->assertSame(
-            '(100 − 20% manager) × 3%',
-            RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_OFFICE, 80, 3, null, 100, 20)
+            '(100 − 20 part manager avant AM) × 3%',
+            RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_OFFICE, 80, 3, null, 100, 20, 20)
         );
         $this->assertSame(
-            '(100 − 20% manager) × 3%',
-            RevenueRuleCatalog::formula(RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE, 80, 3, null, 100, 20)
+            '(100 − 20 part divisionnaire avant AM) × 4%',
+            RevenueRuleCatalog::formula(RevenueRuleCatalog::DIVISIONNAIRE_OFFICE, 80, 4, null, 100, null, 20, 'divisionnaire')
         );
         $this->assertSame(
-            '(100 − 20% manager) × 4%',
-            RevenueRuleCatalog::formula(RevenueRuleCatalog::DIVISIONNAIRE_OFFICE, 80, 4, null, 100, 20)
+            '((100 − 20 part manager avant AM) / 4) × 4%',
+            RevenueRuleCatalog::formula(RevenueRuleCatalog::DIVISIONNAIRE_OFFICE, 80, 4, 4, 100, null, 20, 'manager')
         );
+        $this->assertSame(80.0, RevenueRuleCatalog::officeSalesAfterLeaderShare(100, 20));
         $this->assertSame(
-            '(100 − 20% manager) × 1%',
-            RevenueRuleCatalog::formula(RevenueRuleCatalog::SECRETARY_OFFICE, 80, 1, null, 100, 20)
+            '(100 − 20 part manager avant AM) × 1%',
+            RevenueRuleCatalog::formula(RevenueRuleCatalog::SECRETARY_OFFICE, 80, 1, null, 100, 20, 20)
         );
     }
 
@@ -117,11 +128,11 @@ class RevenueRuleCatalogTest extends TestCase
             RevenueRuleCatalog::compensationAccountKind(RevenueRuleCatalog::DIVISIONNAIRE_OFFICE, 'divisionnaire', 5, 1)
         );
         $this->assertSame(
-            'assistant_manager',
+            'guy',
             RevenueRuleCatalog::compensationAccountKind(RevenueRuleCatalog::ASSISTANT_MANAGER, 'assistant_manager', 10, 10)
         );
         $this->assertSame(
-            'assistant_manager',
+            'guy',
             RevenueRuleCatalog::compensationAccountKind(RevenueRuleCatalog::ASSISTANT_MANAGER_CERTIFIED, 'assistant_manager', 10, 10)
         );
         $this->assertSame(
@@ -132,6 +143,22 @@ class RevenueRuleCatalogTest extends TestCase
             'percentage',
             RevenueRuleCatalog::compensationAccountKind(RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE, 'partner', 10, 10)
         );
+        $this->assertSame(
+            'percentage',
+            RevenueRuleCatalog::compensationAccountKind(RevenueRuleCatalog::DIVISIONNAIRE_CERTIFIED_OFFICE, 'divisionnaire', 10, 10)
+        );
+        $this->assertTrue(RevenueRuleCatalog::isHeldOfficeCommission(RevenueRuleCatalog::MANAGER_SALE));
+        $this->assertFalse(RevenueRuleCatalog::isHeldOfficeCommission(RevenueRuleCatalog::ASSISTANT_MANAGER));
+        $this->assertTrue(RevenueRuleCatalog::isHeldOfficeCommission(RevenueRuleCatalog::SECRETARY_OFFICE));
+        $this->assertTrue(RevenueRuleCatalog::isHeldOfficeCommission(RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE));
+        $this->assertTrue(RevenueRuleCatalog::isHeldOfficeCommission(RevenueRuleCatalog::DIVISIONNAIRE_CERTIFIED_OFFICE));
+        $this->assertTrue(RevenueRuleCatalog::isHeldOfficeCommission(RevenueRuleCatalog::DIVISIONNAIRE_OFFICE));
+        $this->assertTrue(RevenueRuleCatalog::creditsOnDayClose(RevenueRuleCatalog::DIVISIONNAIRE_CERTIFIED_OFFICE, 4, 4));
+        $this->assertTrue(RevenueRuleCatalog::creditsOnDayClose(RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE, 2, 2));
+        $this->assertTrue(RevenueRuleCatalog::creditsOnDayClose(RevenueRuleCatalog::MANAGER_SALE, 2, 2));
+        $this->assertFalse(RevenueRuleCatalog::creditsOnDayClose(RevenueRuleCatalog::DIVISIONNAIRE_CERTIFIED_OFFICE, 8, 4));
+        $this->assertFalse(RevenueRuleCatalog::creditsOnDayClose(RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE, 8, 2));
+        $this->assertTrue(RevenueRuleCatalog::creditsOnDayClose(RevenueRuleCatalog::ASSISTANT_MANAGER, 8, 2));
         $this->assertSame(4500.0, RevenueRuleCatalog::officeSalesAfterManagerShare(6000, 25));
     }
 };

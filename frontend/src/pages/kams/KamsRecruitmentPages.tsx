@@ -1,7 +1,8 @@
-import { BadgeCheck, Camera, Check, CheckCircle2, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { BadgeCheck, Building2, Camera, Check, CheckCircle2, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Outlet, Navigate, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { PhotoSourcePicker } from '../../components/PhotoSourcePicker'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
@@ -53,7 +54,6 @@ function presetRange(period: Exclude<ListPeriod, 'custom'>) {
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
 type LookupCompany = { id: number; name: string; code: string }
 type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null; rank?: string | null }
-type LookupUser = { id: number; name: string; email?: string | null; primary_company_id?: number | null }
 type LookupRole = { id: number; name: string; slug?: string; offices?: Array<{ id: number; company_id: number }> }
 type Candidate = {
   id: number
@@ -597,6 +597,10 @@ export function KamsAgents() {
   const [photoRemoved, setPhotoRemoved] = useState(false)
   const [photoError, setPhotoError] = useState('')
   const [formError, setFormError] = useState('')
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [passwordForm, setPasswordForm] = useState({ password: '', confirmation: '' })
+  const [pendingPassword, setPendingPassword] = useState<string | null>(null)
+  const [passwordError, setPasswordError] = useState('')
   const [saving, setSaving] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
   const [printMenuOpen, setPrintMenuOpen] = useState(false)
@@ -604,7 +608,6 @@ export function KamsAgents() {
   const [printPreviewTitle, setPrintPreviewTitle] = useState('')
   const [coachedOpen, setCoachedOpen] = useState(false)
   const [credentials, setCredentials] = useState<Member[]>([])
-  const photoInput = useRef<HTMLInputElement>(null)
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
   const filtersActive = Boolean(origin || promotionEligibility)
@@ -677,6 +680,8 @@ export function KamsAgents() {
     setPhotoRemoved(false)
     setPhotoError('')
     setFormError('')
+    setPendingPassword(null)
+    setPasswordOpen(false)
     setPhotoPreview((current) => {
       if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
       return null
@@ -831,6 +836,12 @@ export function KamsAgents() {
       if (editing) {
         payload.append('_method', 'PUT')
         await api.post(`/modules/kams/members/${editing.id}`, payload)
+        if (pendingPassword) {
+          await api.post(`/modules/kams/members/${editing.id}/password`, {
+            password: pendingPassword,
+            password_confirmation: pendingPassword,
+          })
+        }
         setFormOpen(false)
         resetForm()
       } else {
@@ -1014,14 +1025,9 @@ export function KamsAgents() {
     (!form.company_id || String(person.company_id) === form.company_id)
     && (!form.office_id || !person.office_id || String(person.office_id) === form.office_id)
   ))
-  const distributorRoleIds = new Set(
-    roles.filter((role) => role.slug === 'distributor').map((role) => role.id),
-  )
   const coachOptions = companyPeople
     .filter((person) => (
       Boolean(person.user_id)
-      && person.rank !== 'Distributor'
-      && !(person.role_id != null && distributorRoleIds.has(person.role_id))
       && (!editing || String(person.id) !== String(editing.id))
     ))
     .map((person): SearchComboboxItem => ({
@@ -1316,50 +1322,44 @@ export function KamsAgents() {
       <Modal open={formOpen} title={editing ? t('kams.editAgent') : t('kams.addAgent')} onClose={() => { setFormOpen(false); resetForm() }}>
         <form className="space-y-3" onSubmit={(e) => void submitAgent(e)}>
           <div className="flex flex-col items-center gap-2 pb-1">
-            <div className="relative h-24 w-24">
-              <button
-                type="button"
-                onClick={() => photoInput.current?.click()}
-                aria-label={t('kams.photo')}
-                className="block h-24 w-24 overflow-hidden rounded-full p-0"
-              >
-                {photoPreview || form.first_name || form.last_name ? (
-                  <PersonPhoto name={personName({ first_name: form.first_name, last_name: form.last_name })} url={photoPreview} className="h-24 w-24 text-2xl" />
-                ) : (
-                  <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white">
-                    <Camera size={28} />
-                  </span>
-                )}
-              </button>
-              {photoPreview ? (
-                <button
-                  type="button"
-                  aria-label={t('kams.removePhoto')}
-                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                  onClick={clearPhoto}
-                >
-                  <Trash2 size={14} />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                aria-label={t('kams.photo')}
-                className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                onClick={() => photoInput.current?.click()}
-              >
-                <Camera size={14} />
-              </button>
-            </div>
-            <input
-              ref={photoInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(event) => {
-                pickPhoto(event.target.files?.[0])
-                event.target.value = ''
-              }}
-            />
+            <PhotoSourcePicker onFile={pickPhoto}>
+              {(openPhotoMenu) => (
+                <div className="relative h-24 w-24">
+                  <button
+                    type="button"
+                    onClick={openPhotoMenu}
+                    aria-label={t('kams.photo')}
+                    className="block h-24 w-24 overflow-hidden rounded-full p-0"
+                  >
+                    {photoPreview || form.first_name || form.last_name ? (
+                      <PersonPhoto name={personName({ first_name: form.first_name, last_name: form.last_name })} url={photoPreview} className="h-24 w-24 text-2xl" />
+                    ) : (
+                      <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white">
+                        <Camera size={28} />
+                      </span>
+                    )}
+                  </button>
+                  {photoPreview ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.removePhoto')}
+                      className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                      onClick={clearPhoto}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={t('kams.photo')}
+                    className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                    onClick={openPhotoMenu}
+                  >
+                    <Camera size={14} />
+                  </button>
+                </div>
+              )}
+            </PhotoSourcePicker>
             <p className="text-center text-xs text-muted">{t('kams.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
@@ -1418,7 +1418,33 @@ export function KamsAgents() {
           />
           <Field label={t('kams.joinedOn')} type="date" value={form.joined_on || ''} onChange={(e) => setForm({ ...form, joined_on: e.target.value })} />
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
+          {editing ? (
+            <Button type="button" variant="secondary" className="w-full" onClick={() => { setPasswordForm({ password: pendingPassword || '', confirmation: pendingPassword || '' }); setPasswordError(''); setPasswordOpen(true) }}>
+              {t('common.changePassword')}
+            </Button>
+          ) : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
+        </form>
+      </Modal>
+
+      <Modal open={passwordOpen} title={t('common.changePassword')} onClose={() => setPasswordOpen(false)}>
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (passwordForm.password !== passwordForm.confirmation) {
+              setPasswordError(t('auth.passwordMismatch'))
+              return
+            }
+            setPendingPassword(passwordForm.password)
+            setPasswordError('')
+            setPasswordOpen(false)
+          }}
+        >
+          <Field label={t('auth.newPassword')} type="password" required value={passwordForm.password} onChange={(e) => setPasswordForm({ ...passwordForm, password: e.target.value })} autoComplete="new-password" />
+          <Field label={t('auth.confirmPassword')} type="password" required value={passwordForm.confirmation} onChange={(e) => setPasswordForm({ ...passwordForm, confirmation: e.target.value })} autoComplete="new-password" />
+          {passwordError ? <p className="text-sm text-danger">{passwordError}</p> : null}
+          <Button type="submit" className="w-full">{t('common.validate')}</Button>
         </form>
       </Modal>
 
@@ -1574,7 +1600,6 @@ export function KamsCandidates() {
   const [companies, setCompanies] = useState<LookupCompany[]>([])
   const [offices, setOffices] = useState<LookupOffice[]>([])
   const [people, setPeople] = useState<LookupPerson[]>([])
-  const [users, setUsers] = useState<LookupUser[]>([])
   const [roles, setRoles] = useState<LookupRole[]>([])
   const [candidateSources, setCandidateSources] = useState<string[]>([])
   const [interviewResults, setInterviewResults] = useState<string[]>([])
@@ -1597,7 +1622,6 @@ export function KamsCandidates() {
   const [formError, setFormError] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
-  const photoInput = useRef<HTMLInputElement>(null)
   const [action, setAction] = useState<'interview' | 'observation' | null>(null)
   const [pickingSupervisor, setPickingSupervisor] = useState(false)
   const [credentials, setCredentials] = useState<Member[]>([])
@@ -1632,7 +1656,6 @@ export function KamsCandidates() {
       setCompanies(res.data.data.companies)
       setOffices(res.data.data.offices)
       setPeople(res.data.data.members ?? res.data.data.sponsors ?? [])
-      setUsers(res.data.data.users ?? [])
       setRoles(res.data.data.roles ?? [])
       setCandidateSources(res.data.data.options?.candidate_sources ?? [])
       setInterviewResults(res.data.data.options?.interview_results ?? [])
@@ -1653,15 +1676,8 @@ export function KamsCandidates() {
   const distributorRoleIds = new Set(
     roles.filter((role) => role.slug === 'distributor').map((role) => role.id),
   )
-  const distributorUserIds = new Set(
-    people
-      .filter((person) => (
-        person.rank === 'Distributor'
-        || (person.role_id != null && distributorRoleIds.has(person.role_id))
-      ))
-      .map((person) => person.user_id)
-      .filter((id): id is number => Boolean(id))
-      .map(String),
+  const isDistributorRole = (person: LookupPerson) => (
+    person.role_id != null && distributorRoleIds.has(person.role_id)
   )
 
   const resetCandidateForm = () => {
@@ -1739,21 +1755,31 @@ export function KamsCandidates() {
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     const companyId = form.company_id || resolveKamsCompanyId()
-    if (!form.first_name?.trim() || !form.last_name?.trim() || !form.gender || !form.phone?.trim() || !form.source || !companyId) {
+    if (
+      !form.first_name?.trim()
+      || !form.last_name?.trim()
+      || !form.gender
+      || !form.phone?.trim()
+      || !form.source
+      || !companyId
+      || !form.office_id
+      || !form.birth_date
+      || !form.email?.trim()
+    ) {
       setFormError(t('kams.requiredFields'))
       return
     }
 
     const payload = new FormData()
     payload.append('company_id', companyId)
-    if (form.office_id) payload.append('office_id', form.office_id)
+    payload.append('office_id', form.office_id)
     payload.append('first_name', form.first_name.trim())
     payload.append('last_name', form.last_name.trim())
     payload.append('gender', form.gender)
     payload.append('phone', form.phone.trim())
     payload.append('source', form.source)
-    if (form.birth_date) payload.append('birth_date', form.birth_date)
-    if (form.email) payload.append('email', form.email)
+    payload.append('birth_date', form.birth_date)
+    payload.append('email', form.email.trim())
     if (form.address) payload.append('address', form.address)
     if (photo) payload.append('photo', photo)
     if (editingId && photoRemoved && !photo) payload.append('remove_photo', '1')
@@ -1893,6 +1919,7 @@ export function KamsCandidates() {
       id: String(office.id),
       label: office.name,
       hint: office.code,
+      icon: Building2,
     }))
   const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
   const companyPeople = people.filter((person) => !detail?.company_id || String(person.company_id) === String(detail.company_id))
@@ -1914,12 +1941,16 @@ export function KamsCandidates() {
     if (!supervisorQuery) return true
     return [item.label, item.hint ?? ''].join(' ').toLowerCase().includes(supervisorQuery)
   })
-  const interviewerOptions = users
-    .filter((item) => !distributorUserIds.has(String(item.id)))
-    .map((item): SearchComboboxItem => ({
-      id: String(item.id),
-      label: item.name,
-      hint: item.email || undefined,
+  const interviewerOptions = people
+    .filter((person) => (
+      Boolean(person.user_id)
+      && !isDistributorRole(person)
+      && (!detail?.office_id || !person.office_id || String(person.office_id) === String(detail.office_id))
+    ))
+    .map((person): SearchComboboxItem => ({
+      id: String(person.user_id),
+      label: person.full_name,
+      hint: [person.member_code, person.phone].filter(Boolean).join(' · ') || undefined,
     }))
   const selectedInterviewer = interviewerOptions.find((item) => item.id === form.interviewer_user_id) ?? null
   const companySelected = Boolean(form.company_id)
@@ -1953,7 +1984,12 @@ export function KamsCandidates() {
           const interviewState = interviewStepState(row)
           const observationState = observationStepState(row)
           const openInterview = () => {
-            const defaultInterviewerId = user?.id && !distributorUserIds.has(String(user.id)) ? String(user.id) : ''
+            const bureau = people.filter((person) => (
+              Boolean(person.user_id)
+              && !isDistributorRole(person)
+              && (!row.office_id || !person.office_id || String(person.office_id) === String(row.office_id))
+            ))
+            const defaultInterviewerId = bureau.some((person) => person.user_id === user?.id) ? String(user?.id) : ''
             setDetail(row)
             setAction('interview')
             setForm({
@@ -2092,56 +2128,51 @@ export function KamsCandidates() {
       <Modal open={open} title={editingId ? t('kams.editCandidate') : t('kams.newCandidate')} onClose={() => { setOpen(false); resetCandidateForm() }}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           <div className="flex flex-col items-center gap-2 pb-1">
-            <div className="relative h-24 w-24">
-              <button
-                type="button"
-                onClick={() => photoInput.current?.click()}
-                aria-label={t('kams.photo')}
-                className="block h-24 w-24 overflow-hidden rounded-full p-0"
-              >
-                {photoPreview || form.first_name || form.last_name ? (
-                  <PersonPhoto name={personName({ first_name: form.first_name, last_name: form.last_name })} url={photoPreview} className="h-24 w-24 text-2xl" />
-                ) : (
-                  <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white">
-                    <Camera size={28} />
-                  </span>
-                )}
-              </button>
-              {photoPreview ? (
-                <button
-                  type="button"
-                  aria-label={t('kams.removePhoto')}
-                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                  onClick={clearPhoto}
-                >
-                  <Trash2 size={14} />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                aria-label={t('kams.photo')}
-                className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                onClick={() => photoInput.current?.click()}
-              >
-                <Camera size={14} />
-              </button>
-            </div>
-            <input
-              ref={photoInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(event) => {
-                pickPhoto(event.target.files?.[0])
-                event.target.value = ''
-              }}
-            />
+            <PhotoSourcePicker onFile={pickPhoto}>
+              {(openPhotoMenu) => (
+                <div className="relative h-24 w-24">
+                  <button
+                    type="button"
+                    onClick={openPhotoMenu}
+                    aria-label={t('kams.photo')}
+                    className="block h-24 w-24 overflow-hidden rounded-full p-0"
+                  >
+                    {photoPreview || form.first_name || form.last_name ? (
+                      <PersonPhoto name={personName({ first_name: form.first_name, last_name: form.last_name })} url={photoPreview} className="h-24 w-24 text-2xl" />
+                    ) : (
+                      <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white">
+                        <Camera size={28} />
+                      </span>
+                    )}
+                  </button>
+                  {photoPreview ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.removePhoto')}
+                      className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                      onClick={clearPhoto}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={t('kams.photo')}
+                    className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                    onClick={openPhotoMenu}
+                  >
+                    <Camera size={14} />
+                  </button>
+                </div>
+              )}
+            </PhotoSourcePicker>
             <p className="text-center text-xs text-muted">{t('kams.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
           {offices.length > 1 ? (
             <SearchCombobox
               label={t('kams.office')}
+              required
               value={selectedOffice}
               items={officeOptions}
               disabled={!companySelected}
@@ -2160,10 +2191,10 @@ export function KamsCandidates() {
               <option value="male">{t('kams.genderMale')}</option>
               <option value="female">{t('kams.genderFemale')}</option>
             </Select>
-            <Field label={t('kams.birthDate')} type="date" value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
+            <Field label={t('kams.birthDate')} type="date" required value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
           </div>
           <Field label={t('kams.phoneWhatsapp')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
-          <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <Field label={t('kams.email')} type="email" required value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <Field label={t('kams.address')} value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           <Select label={t('kams.recruitmentSource')} required value={form.source || ''} onChange={(e) => setForm({ ...form, source: e.target.value })}>
             <option value="">—</option>

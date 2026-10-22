@@ -9,14 +9,16 @@ use App\Models\Company;
 use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
+use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Services\AgentAccountService;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use App\Modules\Kams\Support\SpreadsheetRows;
 use App\Services\UserCredentialsService;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 
@@ -27,11 +29,12 @@ class UserController extends Controller
     public function __construct(
         private readonly KamsAccountProvisioner $kamsAccounts,
         private readonly UserCredentialsService $credentials,
+        private readonly AgentAccountService $agentAccounts,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $query = User::query()->with(['roles', 'primaryCompany', 'primaryOffice', 'scopes']);
+        $query = User::query()->with(['roles', 'primaryCompany', 'primaryOffice', 'scopes', 'kamsMembers:id,user_id,photo_path']);
 
         if ($search = $request->string('search')->toString()) {
             $query->where(function ($q) use ($search) {
@@ -104,6 +107,8 @@ class UserController extends Controller
 
     public function show(User $user): JsonResponse
     {
+        $user->load(['kamsMembers:id,user_id,photo_path']);
+
         return $this->ok($this->present($user));
     }
 
@@ -148,6 +153,26 @@ class UserController extends Controller
         });
 
         return $this->ok($this->present($user), __('User updated.'));
+    }
+
+    public function updatePassword(Request $request, User $user): JsonResponse
+    {
+        $this->assertCannotAffectSuperAdmin($request->user(), $user, $request);
+        $data = $request->validate([
+            'password' => ['required', 'confirmed', Password::defaults()],
+        ]);
+
+        $user->forceFill([
+            'password' => $data['password'],
+            'login_password' => $data['password'],
+        ])->save();
+
+        KamsMember::query()
+            ->where('user_id', $user->id)
+            ->get()
+            ->each(fn (KamsMember $member) => $member->forceFill(['login_password' => $data['password']])->save());
+
+        return $this->ok(null, __('Password updated.'));
     }
 
     public function destroy(Request $request, User $user): JsonResponse
@@ -439,25 +464,33 @@ class UserController extends Controller
 
     private function syncAvatar(Request $request, User $user): void
     {
-        $disk = Storage::disk('public');
+        $photos = app(PeoplePhotoStorage::class);
+        $current = $user->avatar_path
+            ?: $user->kamsMembers()->whereNotNull('photo_path')->value('photo_path');
 
         if ($request->hasFile('avatar')) {
-            if ($user->avatar_path) {
-                $disk->delete($user->avatar_path);
-            }
             $user->forceFill([
-                'avatar_path' => $request->file('avatar')->store('avatars', 'public'),
+                'avatar_path' => $photos->storeReplacing($current, $request->file('avatar'), 'avatars'),
             ])->save();
+            $this->agentAccounts->syncPhotoFromUser($user);
 
             return;
         }
 
         if ($request->boolean('remove_avatar')) {
-            if ($user->avatar_path) {
-                $disk->delete($user->avatar_path);
-            }
+            $photos->delete($current);
             $user->forceFill(['avatar_path' => null])->save();
+            $this->agentAccounts->syncPhotoFromUser($user);
         }
+    }
+
+    private function avatarUrl(User $user): ?string
+    {
+        $memberPaths = $user->relationLoaded('kamsMembers')
+            ? $user->kamsMembers->pluck('photo_path')->all()
+            : $user->kamsMembers()->pluck('photo_path')->all();
+
+        return app(PeoplePhotoStorage::class)->urlFromPaths($user->avatar_path, ...$memberPaths);
     }
 
     private function syncScopes(User $user, array $scopes): void
@@ -505,7 +538,7 @@ class UserController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $user->phone,
-            'avatar_url' => $user->avatar_path ? '/storage/'.$user->avatar_path : null,
+            'avatar_url' => $this->avatarUrl($user),
             'is_active' => $user->is_active,
             'is_certified' => (bool) $user->is_certified,
             'can_be_certified' => $user->isCertifiable(),

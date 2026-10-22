@@ -4,6 +4,8 @@ type DisplayPrefs = {
   timeZone: string
   /** Active currency used by money() when no override is passed. */
   currency: string
+  /** Multiply unscoped money() amounts (KAMS books → display currency). */
+  moneyRate: number
   /** Group reporting currency from finance settings / default FX currency. */
   reportingCurrency: string
   groupName: string
@@ -14,6 +16,7 @@ const displayPrefs: DisplayPrefs = {
   dateFormat: 'DD/MM/YYYY',
   timeZone: 'UTC',
   currency: '',
+  moneyRate: 1,
   reportingCurrency: '',
   groupName: '',
 }
@@ -39,9 +42,15 @@ export function applyDisplayPrefs(input?: {
 }
 
 /** Override money() currency for the current workspace (company module vs group reporting). */
-export function setActiveCurrency(code?: string | null) {
+export function setActiveCurrency(code?: string | null, moneyRate?: number | null) {
   const next = (code || displayPrefs.reportingCurrency || '').toUpperCase()
   displayPrefs.currency = next
+  if (moneyRate == null) {
+    displayPrefs.moneyRate = 1
+  } else {
+    const rate = Number(moneyRate)
+    displayPrefs.moneyRate = Number.isFinite(rate) && rate > 0 ? rate : 1
+  }
 }
 
 export function reportingCurrency() {
@@ -73,8 +82,9 @@ function formatDay(date: Date) {
 export function money(value?: number | null, currency?: string, digits?: number) {
   const places = digits ?? displayPrefs.decimalPlaces
   const code = (currency || displayPrefs.currency || displayPrefs.reportingCurrency || '').toUpperCase()
+  const amount = (value ?? 0) * (currency ? 1 : displayPrefs.moneyRate || 1)
   if (!code) {
-    return (value ?? 0).toLocaleString(undefined, {
+    return amount.toLocaleString(undefined, {
       minimumFractionDigits: places,
       maximumFractionDigits: places,
     })
@@ -85,9 +95,9 @@ export function money(value?: number | null, currency?: string, digits?: number)
       currency: code,
       minimumFractionDigits: places,
       maximumFractionDigits: places,
-    }).format(value ?? 0)
+    }).format(amount)
   } catch {
-    return `${(value ?? 0).toFixed(places)} ${code}`
+    return `${amount.toFixed(places)} ${code}`
   }
 }
 

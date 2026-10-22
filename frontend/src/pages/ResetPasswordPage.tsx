@@ -11,8 +11,8 @@ export function ResetPasswordPage() {
   const [email, setEmail] = useState(params.get('email') || '')
   const [password, setPassword] = useState('')
   const [passwordConfirmation, setPasswordConfirmation] = useState('')
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const [errorKey, setErrorKey] = useState('')
+  const [successKey, setSuccessKey] = useState('')
   const [loading, setLoading] = useState(false)
   const token = params.get('token') || ''
 
@@ -55,14 +55,14 @@ export function ResetPasswordPage() {
           className="w-full max-w-md space-y-5"
           onSubmit={async (event) => {
             event.preventDefault()
-            setError('')
-            setSuccess('')
+            setErrorKey('')
+            setSuccessKey('')
             if (!token) {
-              setError(t('auth.resetInvalid'))
+              setErrorKey('auth.resetInvalid')
               return
             }
             if (password !== passwordConfirmation) {
-              setError(t('auth.passwordMismatch'))
+              setErrorKey('auth.passwordMismatch')
               return
             }
             setLoading(true)
@@ -73,12 +73,11 @@ export function ResetPasswordPage() {
                 password,
                 password_confirmation: passwordConfirmation,
               })
-              setSuccess(t('auth.resetSuccess'))
+              setSuccessKey('auth.resetSuccess')
               setTimeout(() => navigate('/login'), 1500)
             } catch (err: unknown) {
-              const response = (err as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } })?.response?.data
-              const fieldErrors = response?.errors ? Object.values(response.errors).flat() : []
-              setError(fieldErrors[0] || response?.message || t('auth.resetError'))
+              const status = (err as { response?: { status?: number } }).response?.status
+              setErrorKey(status === 403 ? 'auth.forgotInactive' : 'auth.resetError')
             } finally {
               setLoading(false)
             }
@@ -113,8 +112,8 @@ export function ResetPasswordPage() {
             onChange={(e) => setPasswordConfirmation(e.target.value)}
             required
           />
-          {error ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div> : null}
-          {success ? <div className="rounded-xl bg-lhms-soft px-3 py-2 text-sm text-lhms">{success}</div> : null}
+          {errorKey ? <div className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">{t(errorKey)}</div> : null}
+          {successKey ? <div className="rounded-xl bg-lhms-soft px-3 py-2 text-sm text-lhms">{t(successKey)}</div> : null}
           <Button type="submit" className="w-full" disabled={loading || !token}>
             {loading ? t('common.loading') : t('auth.resetSubmit')}
           </Button>

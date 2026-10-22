@@ -4,8 +4,8 @@ namespace App\Modules\Kams\Http\Controllers;
 
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Models\City;
 use App\Models\Company;
-use App\Models\Currency;
 use App\Models\Province;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsClient;
@@ -70,9 +70,7 @@ class KamsStockController extends Controller
             : null;
 
         return $this->ok([
-            'currency' => $company?->currency_code
-                ? strtoupper((string) $company->currency_code)
-                : Currency::defaultCode(),
+            ...app(\App\Modules\Kams\Services\KamsDisplayCurrency::class)->forState($officeState, $companyId),
             'company_id' => $company?->id,
             'offices' => $offices,
             'can_choose_office' => $officeState['can_filter'],
@@ -80,6 +78,7 @@ class KamsStockController extends Controller
             'office_id' => $officeState['selected_office_id'],
             'can_manage_warehouses' => $this->canManageWarehouses($request),
             'provinces' => Province::query()->orderBy('name')->get(['id', 'name', 'name_fr', 'code']),
+            'cities' => City::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'name_fr', 'province_id']),
             'warehouses' => $locations->where('kind', 'warehouse')->values(),
             'depots' => $locations->where('kind', 'depot')->values(),
             'sellers' => $locations->where('kind', 'seller')->values(),

@@ -19,7 +19,7 @@ import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useLiveData } from '../../hooks/useLiveData'
-import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
+import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
 import { cn } from '../../lib/cn'
 import api from '../../lib/api'
 
@@ -100,7 +100,7 @@ export function KamsRecruitmentDashboard() {
   const [period, setPeriod] = useState<Period>('week')
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, syncFromPayload } = usePayloadOfficeFilter()
   const [data, setData] = useState<(RecapData & {
     can_filter_offices?: boolean
     office_id?: number | null
@@ -119,7 +119,7 @@ export function KamsRecruitmentDashboard() {
     }).then((res) => {
       const payload = res.data.data
       setData(payload)
-      syncOfficeIdFromPayload(setOfficeId, payload)
+      syncFromPayload(payload)
     })
   }
 

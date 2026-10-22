@@ -4,6 +4,7 @@ namespace App\Modules\Kams\Models;
 
 use App\Models\Company;
 use App\Models\Office;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
@@ -36,7 +37,7 @@ class KamsCandidate extends Model
 
     protected function photoUrl(): Attribute
     {
-        return Attribute::get(fn (): ?string => $this->photo_path ? '/storage/'.$this->photo_path : null);
+        return Attribute::get(fn (): ?string => app(PeoplePhotoStorage::class)->url($this->photo_path));
     }
 
     public function company(): BelongsTo

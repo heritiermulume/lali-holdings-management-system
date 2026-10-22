@@ -220,6 +220,7 @@ class FinanceController extends Controller
                 'iso_code' => $country->iso_code,
                 'currency_code' => $country->currency_code,
                 'currency_symbol' => $country->currency_symbol,
+                'fx_rate' => $country->fx_rate,
                 'tax_name' => $country->tax_name,
                 'tax_rate' => $country->tax_rate,
             ])->values()->all(),

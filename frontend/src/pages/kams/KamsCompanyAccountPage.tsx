@@ -1,4 +1,4 @@
-import { ArrowRightLeft, ChevronLeft, ChevronRight, Info, User } from 'lucide-react'
+import { ArrowRightLeft, ChevronLeft, ChevronRight, Info, Pencil, Plus, Trash2, User } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, Card, Empty, Field, Modal } from '../../components/ui'
@@ -102,7 +102,14 @@ type Statement = {
 }
 
 type Action = 'deposit' | 'withdraw' | 'expense'
-type OfficeTab = 'transactions' | 'commissions'
+type OfficeTab = 'transactions' | 'commissions' | 'charges'
+
+type FixedCharge = {
+  id: number
+  name: string
+  amount: number
+  notes?: string | null
+}
 
 type CommissionMember = {
   id: number
@@ -156,10 +163,17 @@ export function KamsCompanyAccountPage() {
   const [selected, setSelected] = useState<number | null>(null)
   const [officeTab, setOfficeTab] = useState<OfficeTab>('transactions')
   const [commissions, setCommissions] = useState<CommissionsPayload | null>(null)
+  const [charges, setCharges] = useState<FixedCharge[]>([])
+  const [chargesMonthly, setChargesMonthly] = useState(0)
+  const [canManageCharges, setCanManageCharges] = useState(false)
+  const [chargeForm, setChargeForm] = useState<FixedCharge | null>(null)
   const [detailMember, setDetailMember] = useState<CommissionMember | null>(null)
   const [detailEntries, setDetailEntries] = useState<CommissionEntry[]>([])
   const [detailAmount, setDetailAmount] = useState(0)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [transferTarget, setTransferTarget] = useState<CommissionMember | null>(null)
+  const [transferAmount, setTransferAmount] = useState('')
+  const [transferAvailable, setTransferAvailable] = useState(0)
   const initialRange = useMemo(() => presetRange('week'), [])
   const today = useMemo(() => isoDate(new Date()), [])
   const [period, setPeriod] = useState<Period>('week')
@@ -219,11 +233,29 @@ export function KamsCompanyAccountPage() {
   useEffect(() => {
     if (!selected || !isOfficeAccount) {
       setCommissions(null)
-      setOfficeTab('transactions')
+      if (!isOfficeAccount && officeTab === 'commissions') setOfficeTab('transactions')
       return
     }
     void reloadCommissions()
   }, [selected, isOfficeAccount])
+
+  const reloadCharges = () => {
+    if (!selected) return
+    return api.get(`/modules/kams/finance/company-accounts/${selected}/fixed-charges`)
+      .then((res) => {
+        setCharges(res.data.data?.charges || [])
+        setChargesMonthly(Number(res.data.data?.monthly_total || 0))
+        setCanManageCharges(Boolean(res.data.data?.can_manage))
+      })
+      .catch(() => {
+        setCharges([])
+        setChargesMonthly(0)
+      })
+  }
+
+  useEffect(() => {
+    void reloadCharges()
+  }, [selected])
 
   useEffect(() => {
     if (period === 'custom') return
@@ -257,16 +289,76 @@ export function KamsCompanyAccountPage() {
       .finally(() => setDetailLoading(false))
   }
 
-  const transferCommission = async (member: CommissionMember) => {
+  const openTransfer = (member: CommissionMember, available: number) => {
+    setError('')
+    setTransferTarget(member)
+    setTransferAvailable(available)
+    setTransferAmount(available > 0 ? available.toFixed(2) : '')
+  }
+
+  const saveCharge = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!selected || !chargeForm) return
+    setSaving(true)
+    setError('')
+    try {
+      const payload = {
+        name: chargeForm.name,
+        amount: Number(chargeForm.amount),
+        notes: chargeForm.notes || null,
+      }
+      const url = `/modules/kams/finance/company-accounts/${selected}/fixed-charges`
+      await (chargeForm.id
+        ? api.put(`${url}/${chargeForm.id}`, payload)
+        : api.post(url, payload))
+      setChargeForm(null)
+      void reloadCharges()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const removeCharge = async (charge: FixedCharge) => {
     if (!selected) return
+    setSaving(true)
+    setError('')
+    try {
+      await api.delete(`/modules/kams/finance/company-accounts/${selected}/fixed-charges/${charge.id}`)
+      void reloadCharges()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const transferCommission = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!selected || !transferTarget) return
+    const value = Number(transferAmount)
+    if (!Number.isFinite(value) || value <= 0) {
+      setError(t('kams.amount'))
+      return
+    }
+    if (value > transferAvailable + 0.001) {
+      setError(t('kams.commissionTransferExceeds', { balance: money(transferAvailable) }))
+      return
+    }
     setError('')
     setSaving(true)
     try {
-      const res = await api.post(`/modules/kams/finance/company-accounts/${selected}/commissions/${member.id}/transfer`)
+      const res = await api.post(`/modules/kams/finance/company-accounts/${selected}/commissions/${transferTarget.id}/transfer`, {
+        amount: value,
+      })
       if (res.data.data?.statement) setData(res.data.data.statement)
       if (res.data.data?.commissions) setCommissions(res.data.data.commissions)
       else reloadCommissions()
       loadList()
+      setTransferTarget(null)
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setError(response?.message || t('kams.saveError'))
@@ -344,16 +436,10 @@ export function KamsCompanyAccountPage() {
       const status = entry.status || 'posted'
       if (status === 'rejected' || status === 'void') continue
 
-      // Posted credits / debits
+      // Posted credits / debits. A commission transfer is posted, and deducted, only when the beneficiary accepts it.
       if (status === 'posted') {
         if (amount > 0) cashIn += amount
         else if (amount < 0) cashOut += Math.abs(amount)
-        continue
-      }
-
-      // Pending commission transfers already reserve cash leaving the office.
-      if (status === 'pending' && (entry.type === 'commission_transfer') && amount > 0) {
-        cashOut += amount
       }
     }
 
@@ -587,22 +673,18 @@ export function KamsCompanyAccountPage() {
                 </div>
               </Card>
               <Card className="p-3 sm:p-4">
-                <div className="text-xs text-muted sm:text-sm">{t('kams.principalBalance')}</div>
-                <div className={cn(
-                  'mt-1 text-lg font-extrabold tabular-nums sm:mt-2 sm:text-2xl',
-                  ledgerBalance >= 0 ? 'text-lhms' : 'text-danger',
-                )}>
-                  {money(ledgerBalance)}
-                </div>
+                <div className="text-xs text-muted sm:text-sm">{t('kams.fixedCharges')}</div>
+                <div className="mt-1 text-lg font-extrabold tabular-nums sm:mt-2 sm:text-2xl">{money(chargesMonthly)}</div>
               </Card>
             </div>
           </div>
 
-          {isOfficeAccount ? (
+          {selected ? (
             <nav className="flex flex-wrap gap-2">
               {([
                 { id: 'transactions' as const, label: t('kams.transactions') },
-                { id: 'commissions' as const, label: t('kams.officeCommissions') },
+                ...(isOfficeAccount ? [{ id: 'commissions' as const, label: t('kams.officeCommissions') }] : []),
+                { id: 'charges' as const, label: t('kams.fixedCharges') },
               ]).map((tab) => (
                 <button
                   key={tab.id}
@@ -619,7 +701,60 @@ export function KamsCompanyAccountPage() {
             </nav>
           ) : null}
 
-          {(!isOfficeAccount || officeTab === 'transactions') ? (
+          {officeTab === 'charges' ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-ink">{t('kams.fixedCharges')}</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  {canManageCharges ? (
+                    <Button onClick={() => { setError(''); setChargeForm({ id: 0, name: '', amount: 0, notes: '' }) }}>
+                      <Plus size={16} /> {t('kams.fixedChargeAdd')}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              {error && !action && !chargeForm ? <p className="text-sm text-red-600">{error}</p> : null}
+              {charges.length === 0 ? (
+                <Empty>{t('kams.fixedChargesEmpty')}</Empty>
+              ) : (
+                <div className="overflow-hidden rounded-2xl border border-line bg-white">
+                  <table className="w-full text-sm">
+                    <thead className="bg-emerald-50/80 text-left text-xs uppercase tracking-wide text-muted">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">{t('kams.fixedChargeName')}</th>
+                        <th className="px-4 py-3 text-right font-semibold">{t('kams.amount')}</th>
+                        <th className="px-4 py-3 font-semibold">{t('kams.notes')}</th>
+                        <th className="px-4 py-3 text-right font-semibold">{t('common.actions')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {charges.map((charge) => (
+                        <tr key={charge.id} className="border-t border-line">
+                          <td className="px-4 py-3 font-semibold">{charge.name}</td>
+                          <td className="px-4 py-3 text-right tabular-nums">{money(charge.amount)}</td>
+                          <td className="px-4 py-3 text-muted">{charge.notes || '—'}</td>
+                          <td className="px-4 py-3">
+                            {canManageCharges ? (
+                              <div className="flex justify-end gap-1">
+                                <Button variant="ghost" className="!h-8 !min-h-0 w-8 !p-0" aria-label={t('common.edit')} onClick={() => { setError(''); setChargeForm(charge) }}>
+                                  <Pencil size={16} />
+                                </Button>
+                                <Button variant="ghost" className="!h-8 !min-h-0 w-8 !p-0 text-danger" aria-label={t('common.delete')} onClick={() => void removeCharge(charge)} disabled={saving}>
+                                  <Trash2 size={16} />
+                                </Button>
+                              </div>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (!isOfficeAccount || officeTab === 'transactions') ? (
             <>
               <div className="flex flex-wrap items-center gap-2">
                 {data.can_deposit && hasPermission('kams.finance.company.deposit') ? (
@@ -670,7 +805,7 @@ export function KamsCompanyAccountPage() {
                   { label: t('kams.cashIn'), value: money(cashSummary.cashIn) },
                   { label: t('kams.cashOut'), value: money(cashSummary.cashOut) },
                   { label: t('kams.balance'), value: money(cashSummary.balance) },
-                  { label: t('kams.principalBalance'), value: money(ledgerBalance) },
+                  { label: t('kams.fixedCharges'), value: money(chargesMonthly) },
                 ]}
                 onDecide={data.can_decide && hasPermission('kams.finance.company.approve') ? (id, decision, notesValue) => void decide(id, decision, notesValue) : undefined}
                 canDecideEntry={(entry) => {
@@ -746,8 +881,8 @@ export function KamsCompanyAccountPage() {
                                     variant="secondary"
                                     className="!h-8 !min-h-0 gap-1.5 !px-2.5"
                                     disabled={!row.can_transfer || saving}
-                                    title={row.pending_transfer ? t('kams.commissionTransferPending') : t('kams.commissionTransferHint')}
-                                    onClick={() => void transferCommission(row.member)}
+                                    title={row.pending_transfer ? t('kams.commissionTransferPending') : t('kams.commissionTransfer')}
+                                    onClick={() => openTransfer(row.member, row.amount)}
                                   >
                                     <ArrowRightLeft size={16} />
                                     <span className="hidden sm:inline">{row.pending_transfer ? t('kams.commissionTransferPending') : t('kams.commissionTransfer')}</span>
@@ -898,6 +1033,59 @@ export function KamsCompanyAccountPage() {
             )}
           </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(transferTarget)}
+        title={t('kams.commissionTransfer')}
+        onClose={() => { if (!saving) setTransferTarget(null) }}
+      >
+        <form className="space-y-3" onSubmit={(event) => void transferCommission(event)}>
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <p className="text-sm text-muted">
+            {t('kams.commissionTransferHint', { name: transferTarget?.full_name || '' })}
+          </p>
+          <Field
+            label={t('kams.amount')}
+            type="number"
+            min="0.01"
+            step="0.01"
+            max={Math.max(0, transferAvailable).toFixed(2)}
+            value={transferAmount}
+            onChange={(e) => {
+              const next = e.target.value
+              setTransferAmount(next)
+              if (next !== '' && Number(next) > transferAvailable + 0.001) {
+                setError(t('kams.commissionTransferExceeds', { balance: money(transferAvailable) }))
+              } else {
+                setError('')
+              }
+            }}
+            required
+          />
+          <p className="text-xs text-muted">{t('kams.commissionTransferAvailable', { balance: money(transferAvailable) })}</p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" disabled={saving} onClick={() => setTransferTarget(null)}>{t('common.cancel')}</Button>
+            <Button type="submit" disabled={saving || transferAvailable <= 0.001}>{t('kams.commissionTransfer')}</Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(chargeForm)}
+        title={chargeForm?.id ? t('kams.fixedChargeEdit') : t('kams.fixedChargeAdd')}
+        onClose={() => { if (!saving) setChargeForm(null) }}
+      >
+        <form className="space-y-3" onSubmit={(event) => void saveCharge(event)}>
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <Field label={t('kams.fixedChargeName')} value={chargeForm?.name || ''} onChange={(e) => setChargeForm((current) => current ? { ...current, name: e.target.value } : current)} required />
+          <Field label={t('kams.amount')} type="number" min="0" step="0.01" value={chargeForm ? String(chargeForm.amount) : ''} onChange={(e) => setChargeForm((current) => current ? { ...current, amount: Number(e.target.value) } : current)} required />
+          <Field label={t('kams.notes')} value={chargeForm?.notes || ''} onChange={(e) => setChargeForm((current) => current ? { ...current, notes: e.target.value } : current)} />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" disabled={saving} onClick={() => setChargeForm(null)}>{t('common.cancel')}</Button>
+            <Button type="submit" disabled={saving}>{t('common.save')}</Button>
+          </div>
+        </form>
       </Modal>
     </div>
   )

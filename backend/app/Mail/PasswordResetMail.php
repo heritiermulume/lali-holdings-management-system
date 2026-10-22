@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\PreventsReplies;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -11,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 class PasswordResetMail extends Mailable
 {
-    use Queueable, SerializesModels;
+    use PreventsReplies, Queueable, SerializesModels;
 
     public function __construct(
         public User $user,
@@ -22,11 +23,9 @@ class PasswordResetMail extends Mailable
     {
         $locale = $this->user->locale === 'en' ? 'en' : 'fr';
 
-        return new Envelope(
-            subject: $locale === 'en'
-                ? 'Reset your LHMS password'
-                : 'Réinitialisation de votre mot de passe LHMS',
-        );
+        return $this->automaticEnvelope($locale === 'en'
+            ? 'Reset your LHMS password'
+            : 'Réinitialisation de votre mot de passe LHMS');
     }
 
     public function content(): Content

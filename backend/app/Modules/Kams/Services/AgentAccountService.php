@@ -74,6 +74,21 @@ class AgentAccountService
     /**
      * @return array{email: string, password: ?string, is_active: bool}
      */
+    public function setPassword(KamsMember $member, string $password): void
+    {
+        if (! $member->user_id) {
+            $this->provision($member);
+            $member->refresh();
+        }
+
+        $user = $member->user()->firstOrFail();
+        $user->forceFill([
+            'password' => $password,
+            'login_password' => $password,
+        ])->save();
+        $member->forceFill(['login_password' => $password])->save();
+    }
+
     public function setActive(KamsMember $member, bool $active): array
     {
         $this->provision($member);
@@ -100,6 +115,21 @@ class AgentAccountService
         }
 
         $this->syncUser($member, $user);
+    }
+
+    public function syncPhotoFromUser(User $user): void
+    {
+        $photos = app(PeoplePhotoStorage::class);
+        $path = $user->avatar_path;
+
+        KamsMember::query()->where('user_id', $user->id)->get()->each(function (KamsMember $member) use ($photos, $path) {
+            if ($member->photo_path && $member->photo_path !== $path) {
+                $photos->delete($member->photo_path);
+            }
+            if ($member->photo_path !== $path) {
+                $member->forceFill(['photo_path' => $path])->save();
+            }
+        });
     }
 
     public function setCertified(KamsMember $member, bool $certified): void
@@ -227,15 +257,22 @@ class AgentAccountService
             $email = $preferred;
         }
 
+        $photoPath = $member->photo_path ?: $user->avatar_path;
+
         $user->forceFill([
             'first_name' => $member->first_name ?: $user->first_name,
             'last_name' => $member->last_name ?: $user->last_name,
             'gender' => $member->gender ?: $user->gender,
             'email' => $email,
             'phone' => $member->phone ?: $user->phone,
+            'avatar_path' => $photoPath,
             'primary_company_id' => $member->company_id,
             'primary_office_id' => $member->office_id,
         ])->save();
+
+        if ($member->photo_path !== $photoPath) {
+            $member->forceFill(['photo_path' => $photoPath])->save();
+        }
 
         $this->syncRoles($member, $user);
         $this->syncScopes($member, $user);

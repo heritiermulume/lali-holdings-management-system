@@ -40,8 +40,9 @@ class OfficeCommissionService
             if (! $member) {
                 return null;
             }
+            $openShares = $shares->filter(fn (KamsRevenueShare $share) => $share->transfer_entry_id === null);
             $pendingTransfer = $shares->contains(fn (KamsRevenueShare $share) => $share->transfer_entry_id !== null);
-            $amount = round((float) $shares->sum('amount'), 2);
+            $amount = round((float) $openShares->sum('amount'), 2);
 
             return [
                 'member' => [
@@ -58,9 +59,9 @@ class OfficeCommissionService
                     'office' => $member->office?->only(['id', 'name', 'code']),
                 ],
                 'amount' => $amount,
-                'share_count' => $shares->count(),
+                'share_count' => $openShares->count(),
                 'pending_transfer' => $pendingTransfer,
-                'can_transfer' => $amount > 0.001 && ! $pendingTransfer,
+                'can_transfer' => $amount > 0.001,
             ];
         })
             ->filter()
@@ -79,6 +80,7 @@ class OfficeCommissionService
 
         $shares = $this->payableQuery((int) $account->company_id, (int) $account->office_id)
             ->where('beneficiary_member_id', $member->id)
+            ->whereNull('transfer_entry_id')
             ->with([
                 'sale:id,reference,sold_at',
                 'product:id,name,sku',
@@ -132,36 +134,30 @@ class OfficeCommissionService
     }
 
     /**
-     * Create a deposit request for the beneficiary covering all payable office commissions.
+     * Create a transfer for all or part of the beneficiary's payable commissions.
+     * The office balance drops when the beneficiary accepts the credit in My account.
      */
-    public function transfer(KamsTreasuryAccount $account, KamsMember $member, int $userId, ?string $notes = null): KamsTreasuryEntry
+    public function transfer(KamsTreasuryAccount $account, KamsMember $member, int $userId, float $amount, ?string $notes = null): KamsTreasuryEntry
     {
         abort_unless($account->office_id, 422, __('Commissions are only available on office accounts.'));
         abort_unless((int) $member->company_id === (int) $account->company_id, 422, __('This member does not belong to this account.'));
+        abort_unless($amount > 0, 422, __('The amount must be greater than zero.'));
 
-        return DB::transaction(function () use ($account, $member, $userId, $notes) {
+        return DB::transaction(function () use ($account, $member, $userId, $amount, $notes) {
             $shares = $this->payableQuery((int) $account->company_id, (int) $account->office_id)
                 ->where('beneficiary_member_id', $member->id)
+                ->whereNull('transfer_entry_id')
+                ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
 
-            abort_if($shares->isEmpty(), 422, __('No payable commissions for this beneficiary.'));
-            abort_if(
-                $shares->contains(fn (KamsRevenueShare $share) => $share->transfer_entry_id !== null),
-                422,
-                __('A transfer request is already pending for this beneficiary.'),
-            );
+            $available = round((float) $shares->sum('amount'), 2);
+            abort_if($shares->isEmpty() || $available <= 0.001, 422, __('No payable commissions for this beneficiary.'));
+            abort_if($amount > $available + 0.001, 422, __('The amount exceeds the available commission.'));
 
-            $amount = round((float) $shares->sum('amount'), 2);
-            abort_unless($amount > 0.001, 422, __('No payable commissions for this beneficiary.'));
+            $amount = round(min($amount, $available), 2);
 
-            $member->loadMissing('role:id,slug');
-            // Office-opening commissions always credit Compte Overed (percentage), never salary.
-            $wallet = RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug)
-                ? 'percentage'
-                : RevenueRuleCatalog::savingsKind((string) $shares->first()->rule_code);
-
-            $label = __('Office commission transfer (:count lines)', ['count' => $shares->count()]);
+            $label = __('Office commission transfer');
             $motif = trim(($notes ?: '').($notes ? ' · ' : '').$label);
 
             $entry = $this->treasury->requestCommissionTransfer(
@@ -170,12 +166,33 @@ class OfficeCommissionService
                 $amount,
                 $motif,
                 $userId,
-                $wallet,
+                'percentage',
             );
 
-            KamsRevenueShare::query()
-                ->whereIn('id', $shares->pluck('id')->all())
-                ->update(['transfer_entry_id' => $entry->id]);
+            $remaining = $amount;
+            foreach ($shares as $share) {
+                if ($remaining <= 0.001) {
+                    break;
+                }
+                $shareAmount = round((float) $share->amount, 2);
+                if ($shareAmount <= $remaining + 0.001) {
+                    $share->forceFill(['transfer_entry_id' => $entry->id])->save();
+                    $remaining = round($remaining - $shareAmount, 2);
+                    continue;
+                }
+
+                $snapshot = is_array($share->snapshot) ? $share->snapshot : [];
+                $part = $share->replicate();
+                $part->amount = $remaining;
+                $part->transfer_entry_id = $entry->id;
+                $part->snapshot = array_merge($snapshot, ['partial_of' => $share->id]);
+                $part->save();
+
+                $share->forceFill([
+                    'amount' => round($shareAmount - $remaining, 2),
+                ])->save();
+                $remaining = 0;
+            }
 
             return $entry;
         });
@@ -194,10 +211,30 @@ class OfficeCommissionService
 
     public function markTransferRejected(KamsTreasuryEntry $entry): void
     {
-        KamsRevenueShare::query()
+        $shares = KamsRevenueShare::query()
             ->where('transfer_entry_id', $entry->id)
             ->where('status', 'payable')
-            ->update(['transfer_entry_id' => null]);
+            ->get();
+
+        foreach ($shares as $share) {
+            $snapshot = is_array($share->snapshot) ? $share->snapshot : [];
+            $originId = isset($snapshot['partial_of']) ? (int) $snapshot['partial_of'] : 0;
+            $origin = $originId > 0 ? KamsRevenueShare::query()->find($originId) : null;
+            if (
+                $origin
+                && $origin->status === 'payable'
+                && $origin->transfer_entry_id === null
+                && (int) $origin->beneficiary_member_id === (int) $share->beneficiary_member_id
+            ) {
+                $origin->forceFill([
+                    'amount' => round((float) $origin->amount + (float) $share->amount, 2),
+                ])->save();
+                $share->delete();
+                continue;
+            }
+
+            $share->forceFill(['transfer_entry_id' => null])->save();
+        }
     }
 
     /**

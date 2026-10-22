@@ -17,7 +17,7 @@ import { Card, Empty, Field } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
-import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
+import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
@@ -51,6 +51,7 @@ type StockData = {
     inventory_value: number
     open_assignments: number
     sold_units: number
+    lost_units?: number
     active_sellers: number
     commissions_payable: number
     guy_savings?: number
@@ -62,7 +63,7 @@ type StockData = {
   }
   series: SeriesPoint[]
   alerts: Array<{ tone: string; key: string; count: number }>
-  recommendations: Array<{ key: string; product?: string; from?: string; to?: string; quantity?: number; agent?: string }>
+  recommendations: Array<{ key: string; product?: string; from?: string; to?: string; quantity?: number; sold?: number; agent?: string }>
   low_stock: Array<{ product?: string; sku?: string; location?: string; kind?: string; quantity: number }>
   can_filter_offices?: boolean
   office_id?: number | null
@@ -125,7 +126,7 @@ export function KamsStockStats() {
   const [period, setPeriod] = useState<Period>('week')
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, syncFromPayload } = usePayloadOfficeFilter()
   const [data, setData] = useState<StockData | null>(null)
 
   const load = () => {
@@ -140,7 +141,7 @@ export function KamsStockStats() {
     }).then((res) => {
       const payload = res.data.data
       setData(payload)
-      syncOfficeIdFromPayload(setOfficeId, payload)
+      syncFromPayload(payload)
     })
   }
 
@@ -165,9 +166,10 @@ export function KamsStockStats() {
   const kpis = [
     { key: 'availableStock', value: data.totals.units },
     { key: 'soldUnits', value: data.totals.sold_units },
+    { key: 'lostProducts', value: data.totals.lost_units || 0 },
+    { key: 'inTransit', value: data.totals.in_transit, hint: `${t('kams.quarantine')}: ${data.totals.quarantine}` },
     { key: 'openAssignments', value: data.totals.open_assignments },
     { key: 'withAgents', value: data.totals.with_agents },
-    { key: 'inTransit', value: data.totals.in_transit, hint: `${t('kams.quarantine')}: ${data.totals.quarantine}` },
   ]
 
   return (
@@ -246,13 +248,14 @@ export function KamsStockStats() {
           <div className="mb-4 font-semibold">{t('kams.recommendations')}</div>
           {data.recommendations.length === 0 ? <Empty>{t('kams.noRecommendations')}</Empty> : (
             <div className="space-y-3">
-              {data.recommendations.map((row, index) => (
+              {data.recommendations.slice(0, 10).map((row, index) => (
                 <div key={`${row.key}-${index}`} className="rounded-xl bg-surface p-3 text-sm">
                   {t(`kams.recommend.${row.key}`, {
                     product: row.product || '—',
                     from: row.from || '—',
                     to: row.to || '—',
                     quantity: row.quantity || 0,
+                    sold: row.sold || 0,
                     agent: row.agent || '—',
                   })}
                 </div>

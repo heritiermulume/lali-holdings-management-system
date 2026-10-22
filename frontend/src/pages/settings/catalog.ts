@@ -96,19 +96,4 @@ export const moduleSettingFields: Record<string, SettingField[]> = {
     { key: 'default_service_interval_km', type: 'number' },
     { key: 'require_driver_license', type: 'boolean' },
   ],
-  'kibiti-agribusiness': [
-    { key: 'planting_season_start_month', type: 'number' },
-    { key: 'harvest_alert_days', type: 'number' },
-    { key: 'default_plot_hectares', type: 'number' },
-  ],
-  'properties-magomeni': [
-    { key: 'default_lease_months', type: 'number' },
-    { key: 'occupancy_alert_percent', type: 'number' },
-    { key: 'late_rent_grace_days', type: 'number' },
-  ],
-  'agribusiness-park-kisegese': [
-    { key: 'park_plot_count', type: 'number' },
-    { key: 'irrigation_check_days', type: 'number' },
-    { key: 'tenant_lease_months', type: 'number' },
-  ],
 }

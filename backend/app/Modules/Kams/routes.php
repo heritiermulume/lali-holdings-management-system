@@ -83,6 +83,10 @@ Route::get('finance/company-accounts/{treasuryAccount}', [KamsFinanceController:
 Route::get('finance/company-accounts/{treasuryAccount}/commissions', [KamsFinanceController::class, 'companyCommissions'])->middleware(EnsurePermission::class.':kams.finance.company.view');
 Route::get('finance/company-accounts/{treasuryAccount}/commissions/{member}', [KamsFinanceController::class, 'companyCommissionDetail'])->middleware(EnsurePermission::class.':kams.finance.company.view');
 Route::post('finance/company-accounts/{treasuryAccount}/commissions/{member}/transfer', [KamsFinanceController::class, 'companyCommissionTransfer'])->middleware(EnsurePermission::class.':kams.finance.company.deposit');
+Route::get('finance/company-accounts/{treasuryAccount}/fixed-charges', [KamsFinanceController::class, 'fixedCharges'])->middleware(EnsurePermission::class.':kams.finance.company.view');
+Route::post('finance/company-accounts/{treasuryAccount}/fixed-charges', [KamsFinanceController::class, 'storeFixedCharge'])->middleware(EnsurePermission::class.':kams.finance.company.expense');
+Route::put('finance/company-accounts/{treasuryAccount}/fixed-charges/{fixedCharge}', [KamsFinanceController::class, 'updateFixedCharge'])->middleware(EnsurePermission::class.':kams.finance.company.expense');
+Route::delete('finance/company-accounts/{treasuryAccount}/fixed-charges/{fixedCharge}', [KamsFinanceController::class, 'destroyFixedCharge'])->middleware(EnsurePermission::class.':kams.finance.company.expense');
 Route::post('finance/company-accounts/{treasuryAccount}/deposit', [KamsFinanceController::class, 'companyDeposit'])->middleware(EnsurePermission::class.':kams.finance.company.deposit');
 Route::post('finance/company-accounts/{treasuryAccount}/withdraw', [KamsFinanceController::class, 'companyWithdraw'])->middleware(EnsurePermission::class.':kams.finance.company.withdraw');
 Route::post('finance/company-accounts/{treasuryAccount}/expense', [KamsFinanceController::class, 'companyExpense'])->middleware(EnsurePermission::class.':kams.finance.company.expense');
@@ -118,6 +122,7 @@ Route::post('members', [KamsRecruitmentController::class, 'storeMember'])->middl
 Route::get('members/{member}', [KamsRecruitmentController::class, 'showMember'])->middleware(EnsurePermission::class.':kams.members.agents.view');
 Route::match(['put', 'post'], 'members/{member}', [KamsRecruitmentController::class, 'updateMember'])->middleware(EnsurePermission::class.':kams.members.update');
 Route::post('members/{member}/account', [KamsRecruitmentController::class, 'setMemberAccount'])->middleware(EnsurePermission::class.':kams.members.activate');
+Route::post('members/{member}/password', [KamsRecruitmentController::class, 'setMemberPassword'])->middleware(EnsurePermission::class.':kams.members.update');
 Route::delete('members/{member}', [KamsRecruitmentController::class, 'destroyMember'])->middleware(EnsurePermission::class.':kams.members.delete');
 Route::post('members/{member}/first-week', [KamsRecruitmentController::class, 'completeFirstWeek'])->middleware(EnsurePermission::class.':kams.members.update');
 Route::post('members/{member}/opening-positions', [KamsRecruitmentController::class, 'storeOpeningPosition'])->middleware(EnsurePermission::class.':kams.members.create');

@@ -1,4 +1,4 @@
-import { ArrowUpRight, Building2, Crown, Home, Sprout, Trees, Truck, Tv, Wheat, Wrench } from 'lucide-react'
+import { ArrowUpRight, Building2, Crown, Truck, Tv, Wheat, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -16,9 +16,6 @@ const icons = {
   'rice-mills': Wheat,
   'lali-tv': Tv,
   'machinery-fleet': Wrench,
-  'kibiti-agribusiness': Sprout,
-  'properties-magomeni': Home,
-  'agribusiness-park-kisegese': Trees,
 }
 
 export function ModulesPage() {

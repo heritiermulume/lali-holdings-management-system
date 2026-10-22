@@ -26,7 +26,7 @@ class SavingsLedger
 
         return KamsSavingsAccount::query()->firstOrCreate(
             ['member_id' => $member->id, 'kind' => $kind],
-            ['company_id' => $member->company_id, 'balance' => 0]
+            ['company_id' => $this->companyId($member), 'balance' => 0]
         );
     }
 
@@ -245,7 +245,10 @@ class SavingsLedger
             ])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->when($officeIds !== [], fn ($q) => $q->whereIn('office_id', $officeIds))
-            ->when($excludeMemberId, fn ($q) => $q->where('id', '!=', $excludeMemberId))
+            ->where(function ($query) {
+                $query->whereDoesntHave('role', fn ($role) => $role->where('slug', 'super_administrator'))
+                    ->whereDoesntHave('user.roles', fn ($role) => $role->where('roles.slug', 'super_administrator'));
+            })
             ->whereIn('status', ['active', 'verified'])
             ->orderBy('full_name')
             ->get(['id', 'full_name', 'member_code', 'status', 'office_id', 'role_id']);
@@ -283,6 +286,17 @@ class SavingsLedger
         return [
             'members' => $rows,
             'totals' => $totals,
+            'profiles' => collect(['distributor', 'assistant_manager', 'manager', 'divisionnaire'])
+                ->map(function (string $slug) use ($rows) {
+                    $group = collect($rows)->filter(fn (array $row) => ($row['role']['slug'] ?? null) === $slug);
+
+                    return [
+                        'slug' => $slug,
+                        'name' => (string) ($group->first()['role']['name'] ?? $slug),
+                        'total' => round((float) $group->sum('total_balance'), 2),
+                    ];
+                })
+                ->all(),
         ];
     }
 
@@ -320,7 +334,7 @@ class SavingsLedger
         }
         $account = $this->account($member, $kind);
         $entry = KamsSavingsEntry::query()->create([
-            'company_id' => $member->company_id,
+            'company_id' => $this->companyId($member, $source),
             'account_id' => $account->id,
             'member_id' => $member->id,
             'kind' => $kind,
@@ -462,7 +476,18 @@ class SavingsLedger
             'balance' => $balance,
             'pending_withdrawals' => round(abs((float) $pendingWithdrawals->sum('amount')), 2),
             'pending_deposits' => round((float) $pendingDeposits->sum('amount'), 2),
-            'deposits' => round((float) (clone $posted)->where('type', 'deposit')->sum('amount'), 2),
+            'deposits' => round((float) (clone $posted)
+                ->where('type', 'deposit')
+                ->where(function ($query) {
+                    $query->where('source_type', '!=', KamsTreasuryEntry::class)
+                        ->orWhereNull('source_type')
+                        ->orWhereIn('source_id', function ($sub) {
+                            $sub->select('id')
+                                ->from('kams_treasury_entries')
+                                ->where('type', '!=', 'commission_transfer');
+                        });
+                })
+                ->sum('amount'), 2),
             'withdrawals' => round(abs((float) (clone $posted)->whereIn('type', ['withdrawal', 'withdrawal_request'])->sum('amount')), 2),
             'expenses' => round(abs((float) (clone $posted)->where('type', 'expense')->sum('amount')), 2),
             'split_accounts' => $splitAccounts,
@@ -578,6 +603,7 @@ class SavingsLedger
         if ($fresh->source_type !== KamsTreasuryEntry::class) {
             app(TreasuryLedger::class)->mirrorSavingsToOffice($fresh, $userId);
         }
+        $this->notifyAccountHolder($fresh);
 
         return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source']);
     }
@@ -701,7 +727,7 @@ class SavingsLedger
         $account = $this->account($member, $wallet);
         $requester = $requestedBy ?: ($member->user_id ?: $userId);
         $entry = KamsSavingsEntry::query()->create([
-            'company_id' => $member->company_id,
+            'company_id' => $this->companyId($member, $source),
             'account_id' => $account->id,
             'member_id' => $member->id,
             'kind' => $account->kind,
@@ -722,6 +748,7 @@ class SavingsLedger
             if (! $source instanceof KamsTreasuryEntry) {
                 app(TreasuryLedger::class)->mirrorSavingsToOffice($entry->fresh(), $userId);
             }
+            $this->notifyAccountHolder($entry);
         }
 
         return $entry->fresh(['member', 'createdBy', 'requestedBy', 'performedBy', 'source']);
@@ -732,6 +759,66 @@ class SavingsLedger
         $entries = KamsSavingsEntry::query()->orderBy('created_at')->orderBy('id')->get();
         foreach ($entries as $entry) {
             $this->recordBalanceAfter($entry);
+        }
+    }
+
+    /**
+     * Partial member selects omit company_id, which must still be stored on ledger rows.
+     */
+    private function companyId(KamsMember $member, ?object $source = null): int
+    {
+        $companyId = $member->getAttributes()['company_id'] ?? null;
+        if (! $companyId && $member->id) {
+            $companyId = KamsMember::query()->whereKey($member->id)->value('company_id');
+        }
+        if (! $companyId && $source && ! empty($source->company_id)) {
+            $companyId = $source->company_id;
+        }
+
+        abort_if(! $companyId, 422, 'The member is not attached to a company.');
+
+        return (int) $companyId;
+    }
+
+    private function notifyAccountHolder(KamsSavingsEntry $entry): void
+    {
+        if (! in_array($entry->type, ['deposit', 'withdrawal'], true)) {
+            return;
+        }
+
+        $entryId = (int) $entry->id;
+        $send = function () use ($entryId) {
+            $entry = KamsSavingsEntry::query()->with('member.user')->find($entryId);
+            $user = $entry?->member?->user;
+            if (! $entry || ! $user || ! filled($user->email)) {
+                return;
+            }
+
+            $english = $user->locale === 'en';
+            $wallet = match ((string) $entry->kind) {
+                'salary' => $english ? 'Salary account' : 'Compte Salaire',
+                'percentage' => $english ? 'Overed account' : 'Compte Overed',
+                'assistant_manager' => $english ? 'Assistant account' : 'Compte assistant',
+                'secretary' => $english ? 'Secretary account' : 'Compte secrétaire',
+                'divisionnaire' => $english ? 'Division account' : 'Compte divisionnaire',
+                'manager' => $english ? 'Manager account' : 'Compte manager',
+                default => $english ? 'Agent account' : 'Compte agent',
+            };
+
+            app(KamsAccountNotice::class)->send($user, [
+                'purpose' => 'posted',
+                'movement' => $entry->type === 'withdrawal' ? 'withdrawal' : 'deposit',
+                'amount' => (float) $entry->amount,
+                'notes' => $entry->notes,
+                'balance_after' => $entry->balance_after !== null ? (float) $entry->balance_after : null,
+                'wallet' => $wallet,
+            ]);
+        };
+
+        if (DB::transactionLevel() > 0) {
+            DB::afterCommit($send);
+        } else {
+            $send();
         }
     }
 

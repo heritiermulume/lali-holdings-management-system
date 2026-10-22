@@ -4,14 +4,11 @@ import {
   Crown,
   Globe2,
   Gem,
-  Home,
   Landmark,
   LayoutDashboard,
   Settings,
   Shield,
   SlidersHorizontal,
-  Sprout,
-  Trees,
   Truck,
   Tv,
   UserCog,
@@ -136,9 +133,6 @@ const businessIcons: Record<string, LucideIcon> = {
   'rice-mills': Wheat,
   'lali-tv': Tv,
   'machinery-fleet': Wrench,
-  'kibiti-agribusiness': Sprout,
-  'properties-magomeni': Home,
-  'agribusiness-park-kisegese': Trees,
 }
 
 export function businessModuleIcon(slug: string): LucideIcon {

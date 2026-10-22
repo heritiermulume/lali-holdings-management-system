@@ -1,13 +1,10 @@
 import {
   Building2,
   Crown,
-  Home,
   LayoutDashboard,
   Search,
   Settings,
   Shield,
-  Sprout,
-  Trees,
   Truck,
   Tv,
   Users,
@@ -33,9 +30,6 @@ const moduleLooks = {
   'rice-mills': { icon: Wheat, tint: 'bg-[linear-gradient(145deg,#a3e635,#4d7c0f)]' },
   'lali-tv': { icon: Tv, tint: 'bg-[linear-gradient(145deg,#f472b6,#9d174d)]' },
   'machinery-fleet': { icon: Wrench, tint: 'bg-[linear-gradient(145deg,#94a3b8,#334155)]' },
-  'kibiti-agribusiness': { icon: Sprout, tint: 'bg-[linear-gradient(145deg,#86efac,#15803d)]' },
-  'properties-magomeni': { icon: Home, tint: 'bg-[linear-gradient(145deg,#7dd3fc,#0369a1)]' },
-  'agribusiness-park-kisegese': { icon: Trees, tint: 'bg-[linear-gradient(145deg,#bef264,#3f6212)]' },
 }
 
 type DockApp = {

@@ -8,7 +8,7 @@ import { LoadingScreen } from '../../components/LoadingScreen'
 import { PaginationButtons } from '../../components/PaginationButtons'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
-import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
+import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { money, roleLabel } from '../../lib/format'
@@ -30,6 +30,7 @@ type MemberRow = {
 type Payload = {
   members: MemberRow[]
   totals: Record<AccountKind | 'total', number>
+  profiles?: Array<{ slug: string; name: string; total: number }>
   can_filter_offices?: boolean
   office_id?: number | null
   filter_offices?: Array<{ id: number; name: string; code: string }>
@@ -39,7 +40,7 @@ export function KamsMemberAccountsPage() {
   const { t } = useTranslation()
   const { hasPermission } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, syncFromPayload } = usePayloadOfficeFilter()
   const [search, setSearch] = useState('')
   const [data, setData] = useState<Payload | null>(null)
   const [viewMemberId, setViewMemberId] = useState<number | null>(null)
@@ -53,7 +54,7 @@ export function KamsMemberAccountsPage() {
     }).then((res) => {
       const payload = res.data.data
       setData(payload)
-      syncOfficeIdFromPayload(setOfficeId, payload)
+      syncFromPayload(payload)
     })
   }
 
@@ -105,18 +106,15 @@ export function KamsMemberAccountsPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.guySavings')}</div>
-          <div className="mt-2 text-xl font-extrabold sm:text-2xl">{money(data.totals.guy || 0)}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.assistantManagerSavings')}</div>
-          <div className="mt-2 text-xl font-extrabold sm:text-2xl">{money(data.totals.assistant_manager || 0)}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-sm text-muted">{t('kams.managerSavings')}</div>
-          <div className="mt-2 text-xl font-extrabold sm:text-2xl">{money(data.totals.manager || 0)}</div>
-        </Card>
+        {(['distributor', 'assistant_manager', 'manager', 'divisionnaire'] as const).map((slug) => {
+          const profile = (data.profiles || []).find((row) => row.slug === slug)
+          return (
+          <Card key={slug} className="p-4">
+            <div className="text-sm text-muted">{roleLabel(t, { slug, name: profile?.name })}</div>
+            <div className="mt-2 text-xl font-extrabold sm:text-2xl">{money(profile?.total || 0)}</div>
+          </Card>
+          )
+        })}
         <Card className="p-4">
           <div className="text-sm text-muted">{t('kams.totalSavings')}</div>
           <div className="mt-2 text-xl font-extrabold sm:text-2xl text-lhms">{money(data.totals.total || 0)}</div>

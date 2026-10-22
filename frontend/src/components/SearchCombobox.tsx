@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn'
 
 export type SearchComboboxItem = {
@@ -43,15 +44,36 @@ export function SearchCombobox({
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [menuStyle, setMenuStyle] = useState<{ top: number; left: number; width: number } | null>(null)
   const root = useRef<HTMLDivElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false)
+      const target = event.target as Node
+      if (root.current?.contains(target) || menu.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onClick)
     return () => document.removeEventListener('mousedown', onClick)
   }, [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const place = () => {
+      const anchor = root.current?.querySelector('[data-combobox-anchor]')
+      if (!anchor) return
+      const rect = anchor.getBoundingClientRect()
+      setMenuStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open])
 
   const options = useMemo(() => {
     const term = query.trim().toLowerCase()
@@ -76,6 +98,7 @@ export function SearchCombobox({
         aria-hidden
       />
       <div
+        data-combobox-anchor
         className={cn(
           'flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-2.5 ring-lhms/20 focus-within:border-lhms focus-within:ring-4',
           disabled && 'bg-surface text-muted',
@@ -101,8 +124,12 @@ export function SearchCombobox({
           autoComplete="off"
         />
       </div>
-      {open && !disabled ? (
-        <div className="absolute z-[80] mt-1 max-h-56 w-full overflow-auto rounded-xl border border-line bg-white py-1 shadow-xl">
+      {open && !disabled && menuStyle ? createPortal(
+        <div
+          ref={menu}
+          style={{ top: menuStyle.top, left: menuStyle.left, width: menuStyle.width }}
+          className="fixed z-[80] max-h-56 overflow-auto rounded-xl border border-line bg-white py-1 shadow-xl"
+        >
           {options.length === 0 ? (
             <div className="px-3 py-2 text-sm text-muted">{emptyLabel}</div>
           ) : options.map((item) => (
@@ -126,7 +153,8 @@ export function SearchCombobox({
               </span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   )

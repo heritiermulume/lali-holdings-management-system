@@ -4,6 +4,7 @@ namespace App\Modules\Kams\Models;
 
 use App\Core\Support\TaxSettings;
 use App\Models\Company;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -41,7 +42,7 @@ class KamsProduct extends Model
 
     protected function imageUrl(): Attribute
     {
-        return Attribute::get(fn (): ?string => $this->image_path ? '/storage/'.$this->image_path : null);
+        return Attribute::get(fn (): ?string => app(PeoplePhotoStorage::class)->url($this->image_path));
     }
 
     /** Catalog base sale price as entered (before country tax when not exempt). */

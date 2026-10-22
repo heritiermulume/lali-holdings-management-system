@@ -5,6 +5,8 @@ export type Role = {
   level: number
   module_slug?: string | null
   office_scoped?: boolean
+  company_id?: number | null
+  office_id?: number | null
 }
 
 export type User = {
@@ -35,6 +37,7 @@ export type User = {
   }>
   primary_company?: { id: number; name: string; currency_code?: string | null } | null
   primary_office?: { id: number; name: string } | null
+  created_office_ids?: number[]
   accessible_companies?: Array<{
     id: number
     name: string

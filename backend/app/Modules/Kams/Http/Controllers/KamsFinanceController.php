@@ -5,13 +5,13 @@ namespace App\Modules\Kams\Http\Controllers;
 use App\Core\Support\RoleCatalog;
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
-use App\Models\Company;
-use App\Models\Currency;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsMember;
+use App\Modules\Kams\Models\KamsFixedCharge;
 use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Models\KamsTreasuryAccount;
 use App\Modules\Kams\Models\KamsTreasuryEntry;
+use App\Modules\Kams\Services\FixedChargeService;
 use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\KamsFinanceService;
 use App\Modules\Kams\Services\OfficeCommissionService;
@@ -77,7 +77,7 @@ class KamsFinanceController extends Controller
             'equity' => $equity,
             'inventory_value' => $inventory,
             'patrimoine_value' => $patrimoine,
-            'net_margin' => round((float) $position['profit'] - (float) $position['expenses'], 2),
+            'net_margin' => round((float) $position['profit'] - (float) $position['expenses'] - (float) ($position['fixed_charges'] ?? 0), 2),
             'treasury_balance' => $treasuryBalance,
         ]);
         $payload['position_delta'] = $this->deltaMap($position, $previousPosition);
@@ -89,10 +89,7 @@ class KamsFinanceController extends Controller
             'accounts' => $treasuryAccounts,
         ];
         $payload['savings'] = $savings;
-        $payload['currency'] = $companyId
-            ? strtoupper((string) (Company::query()->whereKey($companyId)->value('currency_code') ?: Currency::defaultCode()))
-            : Currency::defaultCode();
-        $payload = array_merge($payload, $this->officeFilterPayload($officeState));
+        $payload = array_merge($payload, $this->officeFilterPayload($officeState, $companyId));
 
         return $this->ok($payload);
     }
@@ -180,15 +177,9 @@ class KamsFinanceController extends Controller
     {
         $companyId = $this->kamsCompanyId($request);
         $officeState = $this->resolveOfficeFilterState($request, $companyId);
-        // Own row lives under "Mon compte" — keep it out of the agents list/totals.
-        $selfMemberId = KamsMember::query()
-            ->where('user_id', $request->user()->id)
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->value('id');
         $payload = $ledger->memberAccounts(
             $companyId,
             $officeState['office_ids'],
-            $selfMemberId ? (int) $selfMemberId : null,
         );
         $payload = array_merge($payload, $this->officeFilterPayload($officeState));
 
@@ -220,15 +211,27 @@ class KamsFinanceController extends Controller
             'notes' => ['required', 'string', 'max:500'],
             'account_kind' => ['nullable', 'string', 'in:guy,salary,percentage,manager,assistant_manager,secretary,divisionnaire'],
         ]);
-        $entry = $treasury->requestDeposit(
-            $member,
-            (float) $data['amount'],
-            (string) ($data['notes'] ?? ''),
-            $request->user()->id,
-            $data['account_kind'] ?? null,
-        );
+        $entry = $this->postsOwnMovementsDirectly($request)
+            ? $treasury->deposit(
+                $treasury->accountForMember($member),
+                (float) $data['amount'],
+                (string) ($data['notes'] ?? ''),
+                $request->user()->id,
+                $member,
+                $data['account_kind'] ?? null,
+            )
+            : $treasury->requestDeposit(
+                $member,
+                (float) $data['amount'],
+                (string) ($data['notes'] ?? ''),
+                $request->user()->id,
+                $data['account_kind'] ?? null,
+            );
 
-        return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Deposit requested.'));
+        return $this->created(
+            $this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts),
+            $this->postsOwnMovementsDirectly($request) ? __('Deposit recorded.') : __('Deposit requested.'),
+        );
     }
 
     public function withdraw(Request $request, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
@@ -240,15 +243,27 @@ class KamsFinanceController extends Controller
             'notes' => ['required', 'string', 'max:500'],
             'account_kind' => ['nullable', 'string', 'in:guy,salary,percentage,manager,assistant_manager,secretary,divisionnaire'],
         ]);
-        $entry = $treasury->requestWithdrawal(
-            $member,
-            (float) $data['amount'],
-            (string) ($data['notes'] ?? ''),
-            $request->user()->id,
-            $data['account_kind'] ?? null,
-        );
+        $entry = $this->postsOwnMovementsDirectly($request)
+            ? $treasury->withdraw(
+                $treasury->accountForMember($member),
+                (float) $data['amount'],
+                (string) ($data['notes'] ?? ''),
+                $request->user()->id,
+                $member,
+                $data['account_kind'] ?? null,
+            )
+            : $treasury->requestWithdrawal(
+                $member,
+                (float) $data['amount'],
+                (string) ($data['notes'] ?? ''),
+                $request->user()->id,
+                $data['account_kind'] ?? null,
+            );
 
-        return $this->created($this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts), __('Withdrawal requested.'));
+        return $this->created(
+            $this->accountPayload($request, $member->fresh(['office', 'role']), $ledger, $accounts),
+            $this->postsOwnMovementsDirectly($request) ? __('Withdrawal recorded.') : __('Withdrawal requested.'),
+        );
     }
 
     public function postDeposit(Request $request, SavingsLedger $ledger, TreasuryLedger $treasury, KamsAccountProvisioner $accounts): JsonResponse
@@ -421,6 +436,7 @@ class KamsFinanceController extends Controller
         $this->assertCompany($request, (int) $member->company_id);
 
         $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
@@ -429,6 +445,7 @@ class KamsFinanceController extends Controller
             $treasuryAccount,
             $member,
             $request->user()->id,
+            (float) $data['amount'],
             $data['notes'] ?? null,
         );
         $beneficiaries = $commissions->beneficiariesForOffice($treasuryAccount);
@@ -450,6 +467,94 @@ class KamsFinanceController extends Controller
         );
     }
 
+    public function fixedCharges(Request $request, KamsTreasuryAccount $treasuryAccount): JsonResponse
+    {
+        $this->assertTreasuryAccess($request, $treasuryAccount);
+
+        return $this->ok($this->fixedChargePayload($request, $treasuryAccount));
+    }
+
+    public function storeFixedCharge(Request $request, KamsTreasuryAccount $treasuryAccount): JsonResponse
+    {
+        $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.expense');
+        $data = $this->chargeData($request);
+
+        KamsFixedCharge::query()->create([
+            'company_id' => $treasuryAccount->company_id,
+            'office_id' => $treasuryAccount->office_id,
+            'name' => $data['name'],
+            'amount' => $data['amount'],
+            'notes' => $data['notes'] ?? null,
+            'is_active' => true,
+            'created_by' => $request->user()->id,
+        ]);
+
+        return $this->created($this->fixedChargePayload($request, $treasuryAccount), __('Saved.'));
+    }
+
+    public function updateFixedCharge(Request $request, KamsTreasuryAccount $treasuryAccount, KamsFixedCharge $fixedCharge): JsonResponse
+    {
+        $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.expense');
+        $this->assertFixedChargeAccount($treasuryAccount, $fixedCharge);
+        $data = $this->chargeData($request);
+        $fixedCharge->update($data);
+
+        return $this->ok($this->fixedChargePayload($request, $treasuryAccount), __('Saved.'));
+    }
+
+    public function destroyFixedCharge(Request $request, KamsTreasuryAccount $treasuryAccount, KamsFixedCharge $fixedCharge): JsonResponse
+    {
+        $this->assertTreasuryOperate($request, $treasuryAccount, 'kams.finance.company.expense');
+        $this->assertFixedChargeAccount($treasuryAccount, $fixedCharge);
+        $fixedCharge->delete();
+
+        return $this->ok($this->fixedChargePayload($request, $treasuryAccount), __('Deleted.'));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function fixedChargePayload(Request $request, KamsTreasuryAccount $treasuryAccount): array
+    {
+        $charges = KamsFixedCharge::query()
+            ->where('company_id', $treasuryAccount->company_id)
+            ->when(
+                $treasuryAccount->office_id,
+                fn ($query) => $query->where('office_id', $treasuryAccount->office_id),
+                fn ($query) => $query->whereNull('office_id'),
+            )
+            ->orderBy('name')
+            ->get(['id', 'name', 'amount', 'starts_on', 'days', 'notes', 'is_active']);
+
+        $from = $request->string('from')->toString() ?: null;
+        $to = $request->string('to')->toString() ?: null;
+
+        return [
+            'charges' => $charges,
+            'monthly_total' => round((float) $charges->sum('amount'), 2),
+            'period_total' => app(FixedChargeService::class)->sum($charges, $from, $to),
+            'can_manage' => $this->hasFinancePermission($request, 'kams.finance.company.expense'),
+        ];
+    }
+
+    /**
+     * @return array{name: string, amount: float, notes: ?string}
+     */
+    private function chargeData(Request $request): array
+    {
+        return $request->validate([
+            'name' => ['required', 'string', 'max:120'],
+            'amount' => ['required', 'numeric', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:500'],
+        ]);
+    }
+
+    private function assertFixedChargeAccount(KamsTreasuryAccount $account, KamsFixedCharge $charge): void
+    {
+        abort_unless((int) $charge->company_id === (int) $account->company_id, 404);
+        abort_unless((int) ($charge->office_id ?? 0) === (int) ($account->office_id ?? 0), 404);
+    }
+
     private function accountPayload(Request $request, KamsMember $member, SavingsLedger $ledger, KamsAccountProvisioner $accounts): array
     {
         $member->loadMissing(['office:id,name,code', 'role:id,name,slug']);
@@ -458,6 +563,7 @@ class KamsFinanceController extends Controller
         $canViewAgents = $this->canViewAgentAccounts($request);
         $payload['can_deposit'] = $owns && $this->hasFinancePermission($request, 'kams.finance.account.deposit');
         $payload['can_withdraw'] = $owns && $this->hasFinancePermission($request, 'kams.finance.account.withdraw');
+        $payload['can_direct'] = $owns && $this->postsOwnMovementsDirectly($request);
         $payload['can_post_deposit'] = $this->canPostAgentMovement($request, 'deposit');
         $payload['can_post_withdraw'] = $this->canPostAgentMovement($request, 'withdraw');
         $payload['can_expense'] = false;
@@ -634,6 +740,16 @@ class KamsFinanceController extends Controller
     private function canOperateAgentAccounts(Request $request): bool
     {
         return $this->hasFinancePermission($request, 'kams.finance.account.update');
+    }
+
+    private function postsOwnMovementsDirectly(Request $request): bool
+    {
+        $request->user()->loadMissing('roles');
+        $allowed = ['super_administrator', 'president', 'divisionnaire', 'manager', 'secretary'];
+
+        return $request->user()->roles->contains(
+            fn ($role) => in_array((string) $role->slug, $allowed, true),
+        );
     }
 
     private function canPostAgentMovement(Request $request, string $action): bool

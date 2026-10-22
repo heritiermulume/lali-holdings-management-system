@@ -1,17 +1,17 @@
 import { Camera, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import { roleLabel } from '../lib/format'
 import { ChangePasswordModal } from './ChangePasswordModal'
+import { PhotoSourcePicker } from './PhotoSourcePicker'
 import { Button, Field, Modal } from './ui'
 import { UserAvatar } from './UserAvatar'
 
 export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation()
   const { user, refresh } = useAuth()
-  const photoInput = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState({ first_name: '', last_name: '', phone: '' })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -50,10 +50,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
     })
   }, [open, user])
 
-  const pickPhoto = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
+  const pickPhoto = (file: File) => {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) {
       setPhotoError(t('users.photoError'))
       return
@@ -98,46 +95,43 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
       <Modal open={open} title={t('settings.profile')} onClose={onClose}>
         <div className="space-y-3">
           <div className="flex flex-col items-center gap-2 pb-2">
-            <div className="relative h-24 w-24">
-              <button
-                type="button"
-                onClick={() => photoInput.current?.click()}
-                aria-label={t('users.photo')}
-                className="block h-24 w-24 overflow-hidden rounded-full p-0 ring-4 ring-lhms-soft"
-              >
-                <span className="grid h-24 w-24 overflow-hidden place-items-center rounded-full bg-lhms text-2xl font-bold text-white">
-                  <UserAvatar
-                    user={user ? { ...user, avatar_url: photoPreview } : null}
-                    textClassName="text-2xl font-bold text-white"
-                  />
-                </span>
-              </button>
-              {photoPreview ? (
-                <button
-                  type="button"
-                  aria-label={t('users.removePhoto')}
-                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                  onClick={clearPhoto}
-                >
-                  <Trash2 size={14} />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                aria-label={t('users.photo')}
-                className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                onClick={() => photoInput.current?.click()}
-              >
-                <Camera size={14} />
-              </button>
-            </div>
-            <input
-              ref={photoInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={pickPhoto}
-            />
+            <PhotoSourcePicker onFile={pickPhoto} title={t('users.photo')}>
+              {(openPhotoMenu) => (
+                <div className="relative h-24 w-24">
+                  <button
+                    type="button"
+                    onClick={openPhotoMenu}
+                    aria-label={t('users.photo')}
+                    className="block h-24 w-24 overflow-hidden rounded-full p-0 ring-4 ring-lhms-soft"
+                  >
+                    <span className="grid h-24 w-24 overflow-hidden place-items-center rounded-full bg-lhms text-2xl font-bold text-white">
+                      <UserAvatar
+                        user={user ? { ...user, avatar_url: photoPreview } : null}
+                        textClassName="text-2xl font-bold text-white"
+                      />
+                    </span>
+                  </button>
+                  {photoPreview ? (
+                    <button
+                      type="button"
+                      aria-label={t('users.removePhoto')}
+                      className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                      onClick={clearPhoto}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={t('users.photo')}
+                    className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                    onClick={openPhotoMenu}
+                  >
+                    <Camera size={14} />
+                  </button>
+                </div>
+              )}
+            </PhotoSourcePicker>
             <p className="text-center text-xs text-muted">{t('users.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>

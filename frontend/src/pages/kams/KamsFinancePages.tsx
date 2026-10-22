@@ -12,7 +12,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { syncOfficeIdFromPayload } from '../../hooks/useOfficeScope'
+import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
 import { Outlet, Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -37,7 +37,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { compact, money, setActiveCurrency } from '../../lib/format'
+import { compact, money } from '../../lib/format'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
 
 type Period = 'day' | 'week' | 'month' | 'custom'
@@ -45,6 +45,7 @@ type Period = 'day' | 'week' | 'month' | 'custom'
 type Position = {
   revenue: number
   expenses: number
+  fixed_charges?: number
   profit: number
   cash: number
   assets: number
@@ -305,7 +306,7 @@ export function KamsFinanceDashboard() {
   const [period, setPeriod] = useState<Period>('week')
   const [from, setFrom] = useState(initial.from)
   const [to, setTo] = useState(initial.to)
-  const [officeId, setOfficeId] = useState('')
+  const { officeId, setOfficeId, syncFromPayload } = usePayloadOfficeFilter()
   const [data, setData] = useState<FinanceData | null>(null)
   const [openOffice, setOpenOffice] = useState<number | null>(null)
   const [failed, setFailed] = useState(false)
@@ -323,8 +324,7 @@ export function KamsFinanceDashboard() {
       .then((res) => {
         const payload = res.data.data
         setData(payload)
-        syncOfficeIdFromPayload(setOfficeId, payload)
-        if (payload?.currency) setActiveCurrency(payload.currency)
+        syncFromPayload(payload)
         setFailed(false)
       })
       .catch(() => {
@@ -383,9 +383,8 @@ export function KamsFinanceDashboard() {
     { key: 'cash', label: t('dashboard.cash'), value: position?.cash || 0 },
     { key: 'inventory', label: t('kams.inventoryValue'), value: position?.inventory_value || data.totals.inventory_value || 0 },
     { key: 'patrimoine', label: t('kams.patrimoineValue'), value: position?.patrimoine_value || 0 },
-    { key: 'receivables', label: t('dashboard.receivables'), value: position?.receivables || 0 },
     { key: 'savings', label: t('kams.totalSavings'), value: savings?.total || 0 },
-    { key: 'payables', label: t('dashboard.payables'), value: position?.payables || 0 },
+    { key: 'fixed_charges', label: t('kams.fixedCharges'), value: position?.fixed_charges || 0 },
   ].filter((row) => row.value > 0)
 
   const savingsBreakdown = [
@@ -404,7 +403,6 @@ export function KamsFinanceDashboard() {
     { key: 'managerSaleShare', value: compensation.manager_sale },
     { key: 'managerCertifiedShare', value: compensation.manager_certified_office || 0 },
     { key: 'managerOfficeShare', value: compensation.manager_office },
-    { key: 'divisionnaireShare', value: compensation.divisionnaire_office },
     { key: 'secretaryShare', value: compensation.secretary_office + compensation.salary_paid },
   ] : []
 
@@ -482,9 +480,9 @@ export function KamsFinanceDashboard() {
         <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
           <KpiCard label={t('dashboard.revenue')} value={money(position?.revenue)} delta={delta.revenue} icon={TrendingUp} tone="success" />
           <KpiCard label={t('dashboard.expenses')} value={money(position?.expenses)} delta={delta.expenses} icon={Landmark} tone="danger" />
+          <KpiCard label={t('kams.fixedCharges')} value={money(position?.fixed_charges || 0)} />
           <KpiCard label={t('dashboard.profit')} value={money(position?.profit)} delta={delta.profit} icon={CircleDollarSign} tone="success" />
           <KpiCard label={t('kams.cashCollected')} value={money(data.totals.cash)} icon={Wallet} hint={t('kams.cashCollectedHint')} />
-          <KpiCard label={t('kams.companyShare')} value={money(data.totals.company_share || 0)} />
           <KpiCard label={t('kams.commissionsPayable')} value={money(data.totals.commissions_payable)} tone="accent" />
           <KpiCard label={t('kams.marginRate')} value={marginRate === null ? '—' : `${marginRate.toFixed(1)}%`} hint={t('kams.marginRateHint')} />
           <KpiCard label={t('kams.expenseRate')} value={expenseRate === null ? '—' : `${expenseRate.toFixed(1)}%`} tone="danger" />
@@ -498,8 +496,7 @@ export function KamsFinanceDashboard() {
           <KpiCard label={t('dashboard.liabilities')} value={money(position?.liabilities)} delta={delta.liabilities} tone="danger" />
           <KpiCard label={t('kams.equity')} value={money(position?.equity)} tone={(position?.equity || 0) >= 0 ? 'success' : 'danger'} />
           <KpiCard label={t('dashboard.cash')} value={money(position?.cash)} delta={delta.cash} icon={Vault} />
-          <KpiCard label={t('dashboard.receivables')} value={money(position?.receivables)} delta={delta.receivables} tone="accent" />
-          <KpiCard label={t('dashboard.payables')} value={money(position?.payables)} delta={delta.payables} tone="danger" />
+          <KpiCard label={t('kams.fixedCharges')} value={money(position?.fixed_charges || 0)} tone="danger" />
           <KpiCard label={t('kams.inventoryValue')} value={money(position?.inventory_value || data.totals.inventory_value)} />
           <KpiCard label={t('kams.patrimoineValue')} value={money(position?.patrimoine_value || 0)} />
           <KpiCard label={t('kams.totalSavings')} value={money(savings?.total || 0)} hint={t('kams.savingsAsLiability')} />
@@ -737,7 +734,6 @@ export function KamsFinanceDashboard() {
                       {[
                         [t('kams.cashCollected'), money(office.cash)],
                         [t('dashboard.profit'), money(office.profit)],
-                        [t('kams.companyShare'), money(office.company_share)],
                         [t('kams.expected'), money(office.expected)],
                         [t('kams.sales'), String(office.sales_count)],
                         [t('kams.guySavings'), money(office.guy_savings)],
@@ -750,7 +746,6 @@ export function KamsFinanceDashboard() {
                         [t('kams.rule.manager_certified_office'), money(office.manager_certified_share || 0)],
                         [t('kams.assistantShare'), money(office.assistant_share || 0)],
                         [t('kams.managerOfficeShare'), money(office.manager_office_share || 0)],
-                        [t('kams.divisionnaireShare'), money(office.divisionnaire_share || 0)],
                         [t('kams.secretaryShare'), money((office.secretary_share || 0) + (office.salary_paid || 0))],
                         [t('kams.postedShares'), money(office.compensation_posted || 0)],
                         [t('kams.managerRemaining'), money(office.compensation_remaining || 0)],

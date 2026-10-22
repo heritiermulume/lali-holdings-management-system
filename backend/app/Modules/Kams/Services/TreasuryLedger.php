@@ -465,16 +465,16 @@ class TreasuryLedger
         return $treasury;
     }
 
-    public function deposit(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
+    public function deposit(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null, ?string $kind = null): KamsTreasuryEntry
     {
-        return $this->post($account, 'deposit', abs($amount), $notes, $userId, $member);
+        return $this->post($account, 'deposit', abs($amount), $notes, $userId, $member, $kind);
     }
 
-    public function withdraw(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
+    public function withdraw(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null, ?string $kind = null): KamsTreasuryEntry
     {
         abort_unless($amount <= $this->spendable($account) + 0.001, 422, __('Insufficient account balance.'));
 
-        return $this->post($account, 'withdrawal', -abs($amount), $notes, $userId, $member);
+        return $this->post($account, 'withdrawal', -abs($amount), $notes, $userId, $member, $kind);
     }
 
     public function expense(KamsTreasuryAccount $account, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
@@ -492,6 +492,7 @@ class TreasuryLedger
     public function displayedBalance(KamsTreasuryAccount $account): float
     {
         // Principal account is a bank: only its own posted movements count (no auto-sync from offices).
+        // A commission transfer reduces this balance only after the beneficiary accepts it.
         return round($this->available($account) + $this->unmirroredSavingsTotal($account), 2);
     }
 
@@ -502,7 +503,7 @@ class TreasuryLedger
             return $balance;
         }
 
-        // Reserve principal deposit requests and pending commission transfers still awaiting the beneficiary.
+        // Keep pending transfers reserved so they cannot be spent twice, without lowering the shown balance.
         $reserved = $this->pendingBankDepositTotal($account) + $this->pendingCommissionTransferTotal($account);
 
         return round(max(0, $balance - $reserved), 2);
@@ -696,7 +697,13 @@ class TreasuryLedger
             ->where('company_id', $account->company_id)
             ->where(function ($query) {
                 $query->whereNull('source_type')
-                    ->orWhere('source_type', '!=', KamsTreasuryEntry::class);
+                    ->orWhere('source_type', '!=', KamsTreasuryEntry::class)
+                    ->orWhere(function ($query) {
+                        $query->where('source_type', KamsTreasuryEntry::class)
+                            ->whereIn('source_id', KamsTreasuryEntry::query()
+                                ->where('type', 'commission_transfer')
+                                ->select('id'));
+                    });
             })
             ->whereNotIn('id', KamsTreasuryEntry::query()->whereNotNull('savings_entry_id')->select('savings_entry_id'));
         if (! $companyWide) {
@@ -975,6 +982,7 @@ class TreasuryLedger
             );
 
             $fresh = $entry->fresh(['createdBy', 'requestedBy', 'member', 'account.office']);
+            $this->refreshBalance($account);
             $this->notifyCommissionBeneficiary($fresh);
 
             return $fresh;
@@ -1005,15 +1013,22 @@ class TreasuryLedger
             $value = abs((float) $entry->amount);
 
             if ($decision === 'approve') {
-                // Current pending transfer is reserved in spendable — exclude it from the check.
+                // This pending transfer is still in the displayed balance. Exclude only the other reservations.
                 $otherPending = max(0, $this->pendingCommissionTransferTotal($account) - $value);
                 $free = $this->displayedBalance($account) - $this->pendingBankDepositTotal($account) - $otherPending;
                 abort_unless($value <= $free + 0.001, 422, __('Insufficient office account balance.'));
 
                 if ($queued) {
+                    $overed = $savings->account($member, 'percentage');
+                    if ((string) $queued->kind !== 'percentage' || (int) $queued->account_id !== (int) $overed->id) {
+                        $queued->forceFill([
+                            'kind' => 'percentage',
+                            'account_id' => $overed->id,
+                        ])->save();
+                    }
                     $savings->postQueued($queued, $userId, $motif);
                 } else {
-                    $savings->deposit($member, $value, (string) $entry->notes, $userId, $entry, $entry->requested_by);
+                    $savings->deposit($member, $value, (string) $entry->notes, $userId, $entry, $entry->requested_by, 'percentage');
                 }
 
                 // Deduct office cash (commission leaves the office pool).
@@ -1027,6 +1042,11 @@ class TreasuryLedger
                 $this->recordBalanceAfter($entry->fresh());
 
                 app(OfficeCommissionService::class)->markTransferPaid($entry);
+
+                $member->refresh();
+                if ($member->office_id) {
+                    $this->refreshBalance($this->ensureOffice(Office::query()->findOrFail($member->office_id)));
+                }
             } else {
                 $entry->forceFill([
                     'status' => 'rejected',
@@ -1148,6 +1168,15 @@ class TreasuryLedger
                     'path' => '/modules/kams/finance/account',
                 ],
             ]);
+
+            app(KamsAccountNotice::class)->send($user, [
+                'purpose' => 'confirm',
+                'movement' => 'transfer',
+                'amount' => (float) $entry->amount,
+                'notes' => $entry->notes,
+                'office' => $office !== '' ? $office : null,
+                'action_url' => app(KamsAccountNotice::class)->frontend('/modules/kams/finance/account'),
+            ]);
         };
 
         if (DB::transactionLevel() > 0) {
@@ -1213,7 +1242,7 @@ class TreasuryLedger
                 ],
             ]);
 
-            if (filled($user->email)) {
+            if (($payload['decision'] ?? '') !== 'approve' && filled($user->email)) {
                 try {
                     Mail::to($user->email)->send(new FinanceRequestDecisionMail($user, $payload));
                 } catch (Throwable) {
@@ -1348,6 +1377,16 @@ class TreasuryLedger
                         'path' => $path,
                     ],
                 ]);
+
+                app(KamsAccountNotice::class)->send($user, [
+                    'purpose' => 'confirm',
+                    'movement' => $isDeposit ? 'deposit' : 'withdrawal',
+                    'amount' => (float) $entry->amount,
+                    'notes' => $entry->notes,
+                    'office' => $officeName !== '' ? $officeName : null,
+                    'member_name' => $rawMemberName !== '' ? $rawMemberName : null,
+                    'action_url' => app(KamsAccountNotice::class)->frontend($path),
+                ]);
             }
         };
 
@@ -1426,6 +1465,15 @@ class TreasuryLedger
                         'path' => '/modules/kams/finance/company',
                     ],
                 ]);
+
+                app(KamsAccountNotice::class)->send($user, [
+                    'purpose' => 'confirm',
+                    'movement' => 'deposit',
+                    'amount' => (float) $entry->amount,
+                    'notes' => $entry->notes,
+                    'office' => $officeName !== '' ? $officeName : null,
+                    'action_url' => app(KamsAccountNotice::class)->frontend('/modules/kams/finance/company'),
+                ]);
             }
         };
 
@@ -1492,11 +1540,11 @@ class TreasuryLedger
         }
     }
 
-    private function post(KamsTreasuryAccount $account, string $type, float $amount, string $notes, int $userId, ?KamsMember $member = null): KamsTreasuryEntry
+    private function post(KamsTreasuryAccount $account, string $type, float $amount, string $notes, int $userId, ?KamsMember $member = null, ?string $kind = null): KamsTreasuryEntry
     {
         abort_unless($amount != 0.0, 422, __('The amount must be greater than zero.'));
 
-        return DB::transaction(function () use ($account, $type, $amount, $notes, $userId, $member) {
+        return DB::transaction(function () use ($account, $type, $amount, $notes, $userId, $member, $kind) {
             $requestedBy = $member?->user_id ?: $userId;
             $entry = KamsTreasuryEntry::query()->create([
                 'company_id' => $account->company_id,
@@ -1519,9 +1567,9 @@ class TreasuryLedger
                 $savings = app(SavingsLedger::class);
                 $value = abs($amount);
                 match ($type) {
-                    'deposit' => $savings->deposit($member, $value, $notes, $userId, $entry, $requestedBy),
-                    'withdrawal' => $savings->withdraw($member, $value, $notes, $userId, $entry, $requestedBy),
-                    default => $savings->expense($member, $value, $notes, $userId, $entry, $requestedBy),
+                    'deposit' => $savings->deposit($member, $value, $notes, $userId, $entry, $requestedBy, $kind),
+                    'withdrawal' => $savings->withdraw($member, $value, $notes, $userId, $entry, $requestedBy, $kind),
+                    default => $savings->expense($member, $value, $notes, $userId, $entry, $requestedBy, $kind),
                 };
             }
 

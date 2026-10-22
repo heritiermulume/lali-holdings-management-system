@@ -4,11 +4,13 @@ namespace App\Models;
 
 use App\Mail\PasswordResetMail;
 use App\Models\Concerns\HasLhmsPermissions;
+use App\Modules\Kams\Models\KamsMember;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -85,6 +87,11 @@ class User extends Authenticatable
     public function primaryOffice(): BelongsTo
     {
         return $this->belongsTo(Office::class, 'primary_office_id');
+    }
+
+    public function kamsMembers(): HasMany
+    {
+        return $this->hasMany(KamsMember::class);
     }
 
     public function notifications()

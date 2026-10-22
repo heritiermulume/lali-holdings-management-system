@@ -87,6 +87,7 @@ class OrganizationController extends Controller
             'phone_code' => ['nullable', 'string'],
             'currency_code' => ['nullable', 'string'],
             'currency_symbol' => ['nullable', 'string'],
+            'fx_rate' => ['nullable', 'numeric', 'min:0'],
             'tax_name' => ['nullable', 'string', 'max:64'],
             'tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],

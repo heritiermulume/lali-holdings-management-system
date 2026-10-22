@@ -7,6 +7,7 @@ use App\Models\Company;
 use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
+use App\Modules\Kams\Services\PeoplePhotoStorage;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Builder;
@@ -46,7 +47,18 @@ class KamsMember extends Model
 
     protected function photoUrl(): Attribute
     {
-        return Attribute::get(fn (): ?string => $this->photo_path ? '/storage/'.$this->photo_path : null);
+        return Attribute::get(function (): ?string {
+            $storage = app(PeoplePhotoStorage::class);
+            if ($url = $storage->url($this->photo_path)) {
+                return $url;
+            }
+
+            $fallback = $this->relationLoaded('user')
+                ? $this->user?->avatar_path
+                : ($this->user_id ? $this->user()->value('avatar_path') : null);
+
+            return $storage->urlFromPaths($fallback);
+        });
     }
 
     protected function isCertified(): Attribute

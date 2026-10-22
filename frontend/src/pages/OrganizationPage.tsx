@@ -1,6 +1,7 @@
 import { Ban, Pencil, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { PaginationButtons } from '../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { WorldCountryCombobox } from '../components/WorldCountryCombobox'
@@ -58,6 +59,10 @@ export function OrganizationPage() {
   const [toggling, setToggling] = useState<Row | null>(null)
   const [actionError, setActionError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
+  const [total, setTotal] = useState(0)
+  const [lastPage, setLastPage] = useState(1)
 
   const canCreate = hasPermission('organization.create')
   const canUpdate = hasPermission('organization.update')
@@ -67,7 +72,15 @@ export function OrganizationPage() {
   const load = () => {
     const stop = trackLoadSpinner(setLoading)
     return Promise.all([
-      api.get(`/${tab}`, { params: { per_page: 50 } }).then((res) => setRows(res.data.data)),
+      api.get(`/${tab}`, { params: { per_page: perPage, page } }).then((res) => {
+        setRows(res.data.data ?? [])
+        const meta = res.data.meta ?? {}
+        const nextTotal = Number(meta.total ?? 0)
+        const nextLast = Math.max(1, Number(meta.last_page ?? 1))
+        setTotal(nextTotal)
+        setLastPage(nextLast)
+        if (page > nextLast) setPage(nextLast)
+      }),
       api.get('/countries', { params: { per_page: 50 } }).then((res) => setCountries(res.data.data)),
       api.get('/provinces', { params: { per_page: 100 }, skipBusy: true }).then((res) => setProvinces(res.data.data)),
       api.get('/cities', { params: { per_page: 50 } }).then((res) => setCities(res.data.data)),
@@ -84,7 +97,7 @@ export function OrganizationPage() {
 
   useEffect(() => {
     void load()
-  }, [tab])
+  }, [tab, page, perPage])
 
   useLiveData(load)
 
@@ -219,37 +232,46 @@ export function OrganizationPage() {
     ? `${t('common.edit')} — ${t(`org.${tab}`)}`
     : `${t('org.add')} ${t(`org.${tab}`)}`
 
-  const actions = (row: Row) => (
-    <div className="flex flex-wrap items-center gap-1">
-      {canUpdate && canEditTab ? (
-        <button
-          type="button"
-          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-surface"
-          onClick={() => openEdit(row)}
-        >
-          <Pencil size={14} /> {t('common.edit')}
-        </button>
-      ) : null}
-      {canUpdate ? (
-        <button
-          type="button"
-          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-surface"
-          onClick={() => { setActionError(''); setToggling(row) }}
-        >
-          <Ban size={14} /> {isActive(row) ? t('org.deactivateOffice') : t('org.activateOffice')}
-        </button>
-      ) : null}
-      {canDelete ? (
-        <button
-          type="button"
-          className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-surface"
-          onClick={() => { setActionError(''); setDeleting(row) }}
-        >
-          <Trash2 size={14} /> {t('common.delete')}
-        </button>
-      ) : null}
-    </div>
-  )
+  const actions = (row: Row) => {
+    const toggleLabel = isActive(row) ? t('org.deactivateOffice') : t('org.activateOffice')
+    return (
+      <div className="flex flex-wrap items-center gap-1">
+        {canUpdate && canEditTab ? (
+          <button
+            type="button"
+            title={t('common.edit')}
+            aria-label={t('common.edit')}
+            className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface"
+            onClick={() => openEdit(row)}
+          >
+            <Pencil size={16} />
+          </button>
+        ) : null}
+        {canUpdate ? (
+          <button
+            type="button"
+            title={toggleLabel}
+            aria-label={toggleLabel}
+            className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface"
+            onClick={() => { setActionError(''); setToggling(row) }}
+          >
+            <Ban size={16} />
+          </button>
+        ) : null}
+        {canDelete ? (
+          <button
+            type="button"
+            title={t('common.delete')}
+            aria-label={t('common.delete')}
+            className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-surface"
+            onClick={() => { setActionError(''); setDeleting(row) }}
+          >
+            <Trash2 size={16} />
+          </button>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -262,7 +284,10 @@ export function OrganizationPage() {
         {tabs.map((item) => (
           <button
             key={item}
-            onClick={() => setTab(item)}
+            onClick={() => {
+              setTab(item)
+              setPage(1)
+            }}
             className={`min-h-10 rounded-full px-4 text-sm font-semibold ${tab === item ? 'bg-lhms text-white' : 'bg-white text-muted'}`}
           >
             {t(`org.${item}`)}
@@ -319,6 +344,39 @@ export function OrganizationPage() {
               <div className="mt-2">{actions(row)}</div>
             </div>
           ))}
+        </div>
+        <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted">
+            {t('common.pageRange', {
+              from: total === 0 ? 0 : (page - 1) * perPage + 1,
+              to: Math.min(page * perPage, total),
+              total,
+            })}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              {t('common.rowsPerPage')}
+              <select
+                value={perPage}
+                onChange={(event) => {
+                  setPerPage(Number(event.target.value))
+                  setPage(1)
+                }}
+                className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+              >
+                {[10, 20, 50, 100].map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </label>
+            <PaginationButtons
+              page={page}
+              lastPage={lastPage}
+              disabled={loading}
+              onPrev={() => setPage((value) => Math.max(1, value - 1))}
+              onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+            />
+          </div>
         </div>
       </Card>
       )}

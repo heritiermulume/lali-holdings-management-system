@@ -512,6 +512,9 @@ export function CompaniesPage() {
                   <div className="text-xs font-semibold tracking-widest text-muted">{row.code}</div>
                   <h2 className="mt-1 text-xl font-bold">{row.name}</h2>
                   <p className="mt-1 text-sm text-muted">{moduleName}</p>
+                  <p className="mt-1 text-sm font-semibold text-ink">
+                    {t('org.officesCount', { count: row.offices_count ?? row.offices?.length ?? 0 })}
+                  </p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -573,28 +576,34 @@ export function CompaniesPage() {
                             {canUpdate ? (
                               <button
                                 type="button"
-                                className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
+                                title={t('common.edit')}
+                                aria-label={t('common.edit')}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                 onClick={() => openEdit(row, node)}
                               >
-                                <Pencil size={14} /> {t('common.edit')}
+                                <Pencil size={16} />
                               </button>
                             ) : null}
                             {canUpdate ? (
                               <button
                                 type="button"
-                                className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-ink hover:bg-white"
+                                title={node.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
+                                aria-label={node.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-white"
                                 onClick={() => setToggling({ company: row, office: node })}
                               >
-                                <Ban size={14} /> {node.is_active ? t('org.deactivateOffice') : t('org.activateOffice')}
+                                <Ban size={16} />
                               </button>
                             ) : null}
                             {canDelete ? (
                               <button
                                 type="button"
-                                className="inline-flex min-h-10 items-center gap-1 rounded-xl px-2 text-sm font-semibold text-danger hover:bg-white"
+                                title={t('common.delete')}
+                                aria-label={t('common.delete')}
+                                className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-white"
                                 onClick={() => setDeleting({ company: row, office: node })}
                               >
-                                <Trash2 size={14} /> {t('common.delete')}
+                                <Trash2 size={16} />
                               </button>
                             ) : null}
                           </div>

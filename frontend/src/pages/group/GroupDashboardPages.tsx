@@ -932,9 +932,6 @@ const moduleKpis: Record<string, string[]> = {
   'rice-mills': ['production', 'stock', 'shipments', 'yield'],
   'lali-tv': ['programs', 'audience', 'ads', 'broadcast'],
   'machinery-fleet': ['fleet', 'service', 'utilization', 'alerts'],
-  'kibiti-agribusiness': ['plots', 'harvest', 'stock', 'yield'],
-  'properties-magomeni': ['properties', 'occupancy', 'leases', 'rent'],
-  'agribusiness-park-kisegese': ['plots', 'tenants', 'irrigation', 'yield'],
 }
 
 export function GroupModuleDashboardPage() {

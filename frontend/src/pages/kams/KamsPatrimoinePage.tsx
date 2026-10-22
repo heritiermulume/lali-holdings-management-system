@@ -1,6 +1,7 @@
 import { Camera, Eye, Gem, ListFilter, Pencil, Plus, Printer, Search, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { PhotoSourcePicker } from '../../components/PhotoSourcePicker'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
@@ -79,7 +80,6 @@ export function KamsPatrimoinePage() {
   const [removeImage, setRemoveImage] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
-  const imageInput = useRef<HTMLInputElement>(null)
 
   const listParams = () => ({
     per_page: 100,
@@ -136,7 +136,6 @@ export function KamsPatrimoinePage() {
       if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
       return null
     })
-    if (imageInput.current) imageInput.current.value = ''
   }
 
   const resetForm = () => {
@@ -318,9 +317,10 @@ export function KamsPatrimoinePage() {
         <div className="mt-1 text-2xl font-bold text-lhms">{money(totalValue)}</div>
       </Card>
 
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="mb-4 flex items-center gap-2">
         {showOfficeFilter ? (
           <OfficeFilterSelect
+            className="!w-44 shrink-0"
             value={officeId}
             offices={offices}
             onChange={(e) => setOfficeId(e.target.value)}
@@ -489,62 +489,59 @@ export function KamsPatrimoinePage() {
       <Modal open={formOpen} title={editing ? t('kams.editAsset') : t('kams.addAsset')} onClose={() => { setFormOpen(false); resetForm() }}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           <div className="flex justify-center pb-1">
-            <div className="relative">
-              <button
-                type="button"
-                className="grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-lhms-soft text-lhms ring-2 ring-lhms/20"
-                onClick={() => imageInput.current?.click()}
-                aria-label={t('kams.assetImage')}
-              >
-                {imagePreview ? (
-                  <img src={imagePreview} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <Gem size={32} />
-                )}
-              </button>
-              {imagePreview ? (
-                <button
-                  type="button"
-                  aria-label={t('kams.removeImage')}
-                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-danger p-0 text-white shadow-md ring-2 ring-white transition hover:bg-[#a31818]"
-                  onClick={() => {
-                    setImageFile(null)
-                    setRemoveImage(true)
-                    setImagePreview((current) => {
-                      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
-                      return null
-                    })
-                    if (imageInput.current) imageInput.current.value = ''
-                  }}
-                >
-                  <Trash2 size={14} />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                aria-label={t('kams.assetImage')}
-                className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-lhms p-0 text-white shadow-md ring-2 ring-white transition hover:bg-lhms-deep"
-                onClick={() => imageInput.current?.click()}
-              >
-                <Camera size={14} />
-              </button>
-            </div>
-            <input
-              ref={imageInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0] || null
+            <PhotoSourcePicker
+              title={t('kams.assetImage')}
+              onFile={(file) => {
                 setImageFile(file)
                 setRemoveImage(false)
                 setImagePreview((current) => {
                   if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
-                  return file ? URL.createObjectURL(file) : (editing?.image_url || null)
+                  return URL.createObjectURL(file)
                 })
-                event.target.value = ''
               }}
-            />
+            >
+              {(openPhotoMenu) => (
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="grid h-24 w-24 place-items-center overflow-hidden rounded-full bg-lhms-soft text-lhms ring-2 ring-lhms/20"
+                    onClick={openPhotoMenu}
+                    aria-label={t('kams.assetImage')}
+                  >
+                    {imagePreview ? (
+                      <img src={imagePreview} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <Gem size={32} />
+                    )}
+                  </button>
+                  {imagePreview ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.removeImage')}
+                      className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-danger p-0 text-white shadow-md ring-2 ring-white transition hover:bg-[#a31818]"
+                      onClick={() => {
+                        setImageFile(null)
+                        setRemoveImage(true)
+                        setImagePreview((current) => {
+                          if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+                          return null
+                        })
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={t('kams.assetImage')}
+                    className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-lhms p-0 text-white shadow-md ring-2 ring-white transition hover:bg-lhms-deep"
+                    onClick={openPhotoMenu}
+                  >
+                    <Camera size={14} />
+                  </button>
+                </div>
+              )}
+            </PhotoSourcePicker>
           </div>
           {canChooseOffice ? (
             <Select label={t('kams.office')} required value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>

@@ -176,6 +176,14 @@ class StockMetrics
                 ->whereBetween('validated_at', [$start, $end]))
             ->sum('quantity');
         $soldUnits = max(0, $soldUnits - $returnedSold);
+        $lostUnits = (int) KamsStockAssignmentItem::query()
+            ->whereHas('assignment', function ($assignment) use ($companyId, $officeIds, $start, $end) {
+                $assignment->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+                    ->when($officeIds !== [], fn ($query) => $query->whereIn('office_id', $officeIds))
+                    ->where('status', 'settled')
+                    ->whereBetween('settled_at', [$start, $end]);
+            })
+            ->sum('quantity_lost');
         $returnedMargin = (float) KamsStockReturnItem::query()
             ->whereHas('stockReturn', fn ($q) => $q
                 ->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))
@@ -243,6 +251,7 @@ class StockMetrics
                 'inventory_value' => round($inventoryValue, 2),
                 'open_assignments' => (clone $assignments)->where('status', 'open')->count(),
                 'sold_units' => $soldUnits,
+                'lost_units' => $lostUnits,
                 'active_sellers' => $activeSellers,
                 'commissions_payable' => round($commissionsPayable, 2),
                 'guy_savings' => round((float) KamsSavingsAccount::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->where('kind', 'guy')->sum('balance'), 2),
@@ -255,7 +264,7 @@ class StockMetrics
             ],
             'series' => array_values($series),
             'alerts' => $this->alerts($companyId, $threshold, $officesMissingDepot, $lowLocations),
-            'recommendations' => $this->recommendations($companyId, $threshold),
+            'recommendations' => $this->recommendations($companyId, $threshold, $start, $end, $officeIds),
             'low_stock' => SettingsCatalog::bool('kams', 'low_stock_notify')
                 ? $lowLocations->map(fn (KamsStockBalance $row) => [
                     'product' => $row->product?->name,
@@ -613,71 +622,162 @@ class StockMetrics
     }
 
     /**
-     * @return list<array{key: string, product?: string, from?: string, to?: string, quantity?: int, agent?: string}>
+     * Suggest stock moves for offices that sell a product faster than the others
+     * and no longer have enough cover for that pace.
+     *
+     * @param  list<int>  $officeIds
+     * @return list<array{key: string, product?: string, from?: string, to?: string, quantity?: int, sold?: int, agent?: string}>
      */
-    private function recommendations(?int $companyId, int $threshold): array
+    private function recommendations(?int $companyId, int $threshold, Carbon $start, Carbon $end, array $officeIds = []): array
     {
-        $rows = [];
-        $warehouses = KamsDepot::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->where('kind', 'warehouse')->with('balances')->get();
-        $depots = KamsDepot::query()->when($companyId, fn ($q) => $q->where('company_id', $companyId))->where('kind', 'depot')->with(['balances', 'office'])->get();
+        $windowEnd = $end->copy();
+        $windowStart = $start->copy();
+        if ($windowStart->diffInDays($windowEnd) < 29) {
+            $windowStart = $windowEnd->copy()->subDays(29)->startOfDay();
+        }
+        $days = max(1, $windowStart->copy()->startOfDay()->diffInDays($windowEnd->copy()->startOfDay()) + 1);
 
+        $sales = KamsStockSaleItem::query()
+            ->join('kams_stock_sales as sales', 'sales.id', '=', 'kams_stock_sale_items.sale_id')
+            ->join('kams_members as members', 'members.id', '=', 'sales.member_id')
+            ->when($companyId, fn ($query) => $query->where('sales.company_id', $companyId))
+            ->whereBetween('sales.sold_at', [$windowStart, $windowEnd])
+            ->whereNotNull('members.office_id')
+            ->groupBy('members.office_id', 'kams_stock_sale_items.product_id')
+            ->selectRaw('members.office_id as office_id, kams_stock_sale_items.product_id as product_id, SUM(kams_stock_sale_items.quantity) as sold')
+            ->get();
+
+        $soldByOfficeProduct = [];
+        $soldByProduct = [];
+        foreach ($sales as $row) {
+            $officeId = (int) $row->office_id;
+            $productId = (int) $row->product_id;
+            $sold = (int) $row->sold;
+            $soldByOfficeProduct[$officeId][$productId] = $sold;
+            $soldByProduct[$productId][] = $sold;
+        }
+
+        $depots = KamsDepot::query()
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->where('kind', 'depot')
+            ->with(['balances', 'office:id,name'])
+            ->get();
+        $stockByOfficeProduct = [];
+        $depotByOffice = [];
         foreach ($depots as $depot) {
+            if (! $depot->office_id) {
+                continue;
+            }
+            $depotByOffice[(int) $depot->office_id] = $depot;
             foreach ($depot->balances as $balance) {
-                if (($balance->condition ?? 'available') !== 'available' || $balance->quantity > $threshold) {
+                if (($balance->condition ?? 'available') !== 'available') {
                     continue;
                 }
-                $target = max($threshold * 2, $threshold);
-                $needed = max($target - (int) $balance->quantity, max(1, $threshold));
-                foreach ($warehouses as $warehouse) {
-                    $available = (int) $warehouse->balances->firstWhere('product_id', $balance->product_id)?->quantity;
-                    if ($available >= $needed) {
-                        $product = KamsProduct::query()->find($balance->product_id);
-                        $rows[] = [
-                            'key' => 'transferToOffice',
-                            'product' => $product?->name,
-                            'from' => $warehouse->name,
-                            'to' => $depot->name,
-                            'quantity' => min($needed, $available),
-                        ];
-                        break;
-                    }
-                }
+                $stockByOfficeProduct[(int) $depot->office_id][(int) $balance->product_id] = (int) $balance->quantity;
             }
         }
 
-        KamsStockAssignment::query()
-            ->with('member:id,full_name')
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('status', 'open')
-            ->where('assigned_at', '<=', now()->subDays(7))
-            ->limit(5)
-            ->get()
-            ->each(function (KamsStockAssignment $row) use (&$rows) {
-                $rows[] = [
-                    'key' => 'settleAssignment',
-                    'agent' => $row->member?->full_name,
+        $warehouses = KamsDepot::query()
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->where('kind', 'warehouse')
+            ->with('balances')
+            ->get();
+
+        $rows = [];
+        $candidates = [];
+        foreach ($soldByOfficeProduct as $officeId => $products) {
+            if ($officeIds !== [] && ! in_array($officeId, $officeIds, true)) {
+                continue;
+            }
+            foreach ($products as $productId => $sold) {
+                $peers = $soldByProduct[$productId] ?? [$sold];
+                sort($peers);
+                $median = $peers[(int) floor((count($peers) - 1) / 2)];
+                if ($sold < max(3, $median)) {
+                    continue;
+                }
+                $daily = $sold / $days;
+                $stock = $stockByOfficeProduct[$officeId][$productId] ?? 0;
+                $coverDays = $daily > 0 ? $stock / $daily : 999;
+                if ($coverDays >= 14) {
+                    continue;
+                }
+                $needed = (int) max(1, ceil(($daily * 14) - $stock));
+                $candidates[] = [
+                    'office_id' => $officeId,
+                    'product_id' => $productId,
+                    'sold' => $sold,
+                    'needed' => $needed,
+                    'stock' => $stock,
+                    'score' => $sold * (14 / max($coverDays, 0.5)),
                 ];
-            });
-
-        $lossy = KamsStockAssignmentItem::query()
-            ->selectRaw('product_id, SUM(quantity_lost) as lost, SUM(quantity_out) as outed')
-            ->whereHas('assignment', fn ($q) => $q->when($companyId, fn ($inner) => $inner->where('company_id', $companyId))->where('status', 'settled'))
-            ->groupBy('product_id')
-            ->havingRaw('SUM(quantity_out) > 0')
-            ->get()
-            ->filter(function ($row) {
-                $threshold = max(0, SettingsCatalog::number('kams', 'stock_loss_alert_percent')) / 100;
-
-                return ($row->lost / max(1, $row->outed)) >= $threshold;
-            })
-            ->take(3);
-
-        foreach ($lossy as $row) {
-            $product = KamsProduct::query()->find($row->product_id);
-            $rows[] = ['key' => 'investigateLoss', 'product' => $product?->name];
+            }
         }
 
-        return array_slice($rows, 0, 8);
+        usort($candidates, fn (array $left, array $right) => $right['score'] <=> $left['score']);
+
+        foreach ($candidates as $candidate) {
+            $depot = $depotByOffice[$candidate['office_id']] ?? null;
+            $product = KamsProduct::query()->find($candidate['product_id']);
+            if (! $depot || ! $product) {
+                continue;
+            }
+            $sourceName = null;
+            $quantity = $candidate['needed'];
+            foreach ($warehouses as $warehouse) {
+                $available = (int) $warehouse->balances
+                    ->where('product_id', $candidate['product_id'])
+                    ->where('condition', 'available')
+                    ->sum('quantity');
+                if ($available >= 1) {
+                    $sourceName = $warehouse->name;
+                    $quantity = min($quantity, $available);
+                    break;
+                }
+            }
+            if (! $sourceName) {
+                $bestExcess = null;
+                foreach ($stockByOfficeProduct as $otherOfficeId => $stocks) {
+                    if ($otherOfficeId === $candidate['office_id']) {
+                        continue;
+                    }
+                    $otherSold = $soldByOfficeProduct[$otherOfficeId][$candidate['product_id']] ?? 0;
+                    $otherDaily = $otherSold / $days;
+                    $otherStock = $stocks[$candidate['product_id']] ?? 0;
+                    $surplus = (int) floor($otherStock - ($otherDaily * 21));
+                    if ($surplus < 1) {
+                        continue;
+                    }
+                    if ($bestExcess === null || $surplus > $bestExcess['surplus']) {
+                        $bestExcess = ['surplus' => $surplus, 'office_id' => $otherOfficeId];
+                    }
+                }
+                if ($bestExcess && isset($depotByOffice[$bestExcess['office_id']])) {
+                    $sourceName = $depotByOffice[$bestExcess['office_id']]->office?->name
+                        ?: $depotByOffice[$bestExcess['office_id']]->name;
+                    $quantity = min($quantity, $bestExcess['surplus']);
+                }
+            }
+            if (! $sourceName || $quantity < 1) {
+                continue;
+            }
+            $rows[] = [
+                'key' => 'supplyHotOffice',
+                'product' => $product->name,
+                'from' => $sourceName,
+                'to' => $depot->office?->name ?: $depot->name,
+                'quantity' => $quantity,
+                'sold' => $candidate['sold'],
+                'score' => $candidate['score'],
+            ];
+        }
+
+        usort($rows, fn (array $left, array $right) => ($right['score'] ?? 0) <=> ($left['score'] ?? 0));
+
+        return array_map(
+            fn (array $row) => array_diff_key($row, ['score' => true]),
+            array_slice($rows, 0, 10),
+        );
     }
 
     /**

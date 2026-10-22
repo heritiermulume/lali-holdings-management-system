@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\PreventsReplies;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -11,7 +12,7 @@ use Illuminate\Queue\SerializesModels;
 
 class UserCredentialsMail extends Mailable
 {
-    use Queueable, SerializesModels;
+    use PreventsReplies, Queueable, SerializesModels;
 
     public function __construct(
         public User $user,
@@ -22,11 +23,9 @@ class UserCredentialsMail extends Mailable
     {
         $locale = $this->user->locale === 'en' ? 'en' : 'fr';
 
-        return new Envelope(
-            subject: $locale === 'en'
-                ? 'Your LHMS login credentials'
-                : 'Vos identifiants de connexion LHMS',
-        );
+        return $this->automaticEnvelope($locale === 'en'
+            ? 'Your LHMS login credentials'
+            : 'Vos identifiants de connexion LHMS');
     }
 
     public function content(): Content

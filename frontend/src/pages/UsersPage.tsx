@@ -1,6 +1,7 @@
 import { BadgeCheck, Camera, Download, Eye, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserRound, Users as UsersIcon, VenusAndMars } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { PhotoSourcePicker } from '../components/PhotoSourcePicker'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
 import { PaginationButtons } from '../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal, Select } from '../components/ui'
@@ -158,6 +159,10 @@ export function UsersPage() {
   const [roles, setRoles] = useState<RoleOption[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [editing, setEditing] = useState<UserRow | null>(null)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [passwordForm, setPasswordForm] = useState({ password: '', confirmation: '' })
+  const [pendingPassword, setPendingPassword] = useState<string | null>(null)
+  const [passwordError, setPasswordError] = useState('')
   const [viewing, setViewing] = useState<UserRow | null>(null)
   const [deleting, setDeleting] = useState<UserRow | null>(null)
   const [open, setOpen] = useState(false)
@@ -187,7 +192,6 @@ export function UsersPage() {
   const [deleteError, setDeleteError] = useState('')
   const filterRef = useRef<HTMLDivElement>(null)
   const printMenuRef = useRef<HTMLDivElement>(null)
-  const photoInput = useRef<HTMLInputElement>(null)
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [photoRemoved, setPhotoRemoved] = useState(false)
@@ -495,6 +499,12 @@ export function UsersPage() {
       if (editing) {
         payload.append('_method', 'PUT')
         await api.post(`/users/${editing.id}`, payload)
+        if (pendingPassword) {
+          await api.post(`/users/${editing.id}/password`, {
+            password: pendingPassword,
+            password_confirmation: pendingPassword,
+          })
+        }
         if (editing.id === user?.id) {
           await refresh().catch(() => {})
         }
@@ -504,6 +514,8 @@ export function UsersPage() {
       setOpen(false)
       setForm(emptyForm())
       setEditing(null)
+      setPendingPassword(null)
+      setPasswordOpen(false)
       resetPhoto()
       void load()
     } catch (error) {
@@ -892,40 +904,43 @@ export function UsersPage() {
         )}
       </Card>
 
-      <Modal open={open} title={editing ? t('users.edit') : t('users.create')} onClose={() => { setOpen(false); resetPhoto() }}>
+      <Modal open={open} title={editing ? t('users.edit') : t('users.create')} onClose={() => { setOpen(false); setPendingPassword(null); setPasswordOpen(false); resetPhoto() }}>
         <form className="space-y-3" onSubmit={(event) => void save(event)}>
           <div className="flex flex-col items-center gap-2 pb-1">
-            <div className="relative h-24 w-24">
-              <button type="button" onClick={() => photoInput.current?.click()} aria-label={t('users.photo')} className="block h-24 w-24 overflow-hidden rounded-full p-0">
-                {photoPreview || form.first_name || form.last_name ? (
-                  <PersonPhoto name={`${form.first_name} ${form.last_name}`.trim() || t('users.create')} url={photoPreview} className="h-24 w-24 text-2xl" />
-                ) : (
-                  <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white"><Camera size={28} /></span>
-                )}
-              </button>
-              {photoPreview ? (
-                <button
-                  type="button"
-                  aria-label={t('users.removePhoto')}
-                  className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
-                  onClick={() => {
-                    setPhoto(null)
-                    setPhotoRemoved(true)
-                    setPhotoError('')
-                    setPhotoPreview((current) => {
-                      if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
-                      return null
-                    })
-                  }}
-                >
-                  <Trash2 size={14} />
-                </button>
-              ) : null}
-              <button type="button" aria-label={t('users.photo')} className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md" onClick={() => photoInput.current?.click()}>
-                <Camera size={14} />
-              </button>
-            </div>
-            <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => { pickPhoto(event.target.files?.[0]); event.target.value = '' }} />
+            <PhotoSourcePicker onFile={pickPhoto} title={t('users.photo')}>
+              {(openPhotoMenu) => (
+                <div className="relative h-24 w-24">
+                  <button type="button" onClick={openPhotoMenu} aria-label={t('users.photo')} className="block h-24 w-24 overflow-hidden rounded-full p-0">
+                    {photoPreview || form.first_name || form.last_name ? (
+                      <PersonPhoto name={`${form.first_name} ${form.last_name}`.trim() || t('users.create')} url={photoPreview} className="h-24 w-24 text-2xl" />
+                    ) : (
+                      <span className="grid h-24 w-24 place-items-center rounded-full bg-lhms text-white"><Camera size={28} /></span>
+                    )}
+                  </button>
+                  {photoPreview ? (
+                    <button
+                      type="button"
+                      aria-label={t('users.removePhoto')}
+                      className="absolute bottom-0 left-0 grid h-8 w-8 -translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md"
+                      onClick={() => {
+                        setPhoto(null)
+                        setPhotoRemoved(true)
+                        setPhotoError('')
+                        setPhotoPreview((current) => {
+                          if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
+                          return null
+                        })
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : null}
+                  <button type="button" aria-label={t('users.photo')} className="absolute bottom-0 right-0 grid h-8 w-8 translate-x-1/4 translate-y-1/4 place-items-center rounded-full bg-ink p-0 text-white shadow-md" onClick={openPhotoMenu}>
+                    <Camera size={14} />
+                  </button>
+                </div>
+              )}
+            </PhotoSourcePicker>
             <p className="text-center text-xs text-muted">{t('users.photoHint')}</p>
             {photoError ? <p className="text-center text-xs text-danger">{photoError}</p> : null}
           </div>
@@ -1093,7 +1108,33 @@ export function UsersPage() {
           </div>
           ) : null}
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
+          {editing ? (
+            <Button type="button" variant="secondary" className="w-full" onClick={() => { setPasswordForm({ password: pendingPassword || '', confirmation: pendingPassword || '' }); setPasswordError(''); setPasswordOpen(true) }}>
+              {t('common.changePassword')}
+            </Button>
+          ) : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
+        </form>
+      </Modal>
+
+      <Modal open={passwordOpen} title={t('common.changePassword')} onClose={() => setPasswordOpen(false)}>
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (passwordForm.password !== passwordForm.confirmation) {
+              setPasswordError(t('auth.passwordMismatch'))
+              return
+            }
+            setPendingPassword(passwordForm.password)
+            setPasswordError('')
+            setPasswordOpen(false)
+          }}
+        >
+          <Field label={t('auth.newPassword')} type="password" required value={passwordForm.password} onChange={(e) => setPasswordForm({ ...passwordForm, password: e.target.value })} autoComplete="new-password" />
+          <Field label={t('auth.confirmPassword')} type="password" required value={passwordForm.confirmation} onChange={(e) => setPasswordForm({ ...passwordForm, confirmation: e.target.value })} autoComplete="new-password" />
+          {passwordError ? <p className="text-sm text-danger">{passwordError}</p> : null}
+          <Button type="submit" className="w-full">{t('common.validate')}</Button>
         </form>
       </Modal>
 

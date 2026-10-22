@@ -19,6 +19,7 @@ import type { OperationsOfficeFilter } from './KamsStockFlows'
 
 type Period = 'day' | 'week' | 'month' | 'custom'
 type DaySort = 'name' | 'code' | 'amount' | 'due' | 'quantity' | 'reference'
+type ReportSort = 'az' | 'za' | 'sold' | 'collected'
 
 type Product = {
   id: number
@@ -175,6 +176,18 @@ function sortAssignments(rows: Assignment[], sort: DaySort) {
   return list
 }
 
+function sortReportAssignments(rows: Assignment[], sort: ReportSort) {
+  const list = [...rows]
+  const byName = (left: Assignment, right: Assignment) => (left.member?.full_name || '').localeCompare(right.member?.full_name || '', undefined, { sensitivity: 'base' })
+  list.sort((left, right) => {
+    if (sort === 'za') return byName(right, left)
+    if (sort === 'sold') return assignmentSoldUnits(right) - assignmentSoldUnits(left)
+    if (sort === 'collected') return Number(right.collected_amount || 0) - Number(left.collected_amount || 0)
+    return byName(left, right)
+  })
+  return list
+}
+
 export function KamsAssignmentReports() {
   const { t, i18n } = useTranslation()
   const { hasPermission } = useAuth()
@@ -193,6 +206,7 @@ export function KamsAssignmentReports() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(20)
   const [daySorts] = useState<Record<string, DaySort>>({})
+  const [reportSort, setReportSort] = useState<ReportSort>('az')
   const [loading, setLoading] = useState(true)
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const [printPreviewTitle, setPrintPreviewTitle] = useState('')
@@ -299,7 +313,9 @@ export function KamsAssignmentReports() {
 
   const sortedDay = (day: DayReport): DayReport => ({
     ...day,
-    assignments: sortAssignments(day.assignments || [], daySort(day.date)),
+    assignments: detailDate
+      ? sortReportAssignments(day.assignments || [], reportSort)
+      : sortAssignments(day.assignments || [], daySort(day.date)),
   })
 
   const totalsHtml = (totals: DayTotals) => `
@@ -440,7 +456,7 @@ export function KamsAssignmentReports() {
   const hasPrintableRows = Boolean(data && (data.days || []).length > 0)
   const canPrint = hasPermission('kams.stock.reports.print') && hasPrintableRows
   const canPreview = hasPermission('kams.stock.reports.preview') && hasPrintableRows
-  const lines = (data?.days || []).flatMap((day) => (day.assignments || []).map((assignment) => ({ date: day.date, assignment })))
+  const lines = (data?.days || []).flatMap((day) => sortReportAssignments(day.assignments || [], reportSort).map((assignment) => ({ date: day.date, assignment })))
   const lastPage = Math.max(1, Math.ceil(lines.length / perPage) || 1)
   const safePage = Math.min(page, lastPage)
   const pageRows = lines.slice((safePage - 1) * perPage, safePage * perPage)
@@ -634,17 +650,6 @@ export function KamsAssignmentReports() {
             ) : null}
           </div>
           <div className="flex shrink-0 items-center justify-end gap-1.5">
-            {canDelete && detailDate ? (
-              <button
-                type="button"
-                aria-label={t('kams.deleteDayReport')}
-                title={t('kams.deleteDayReport')}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full text-danger hover:bg-danger/10"
-                onClick={() => { setDeleteError(''); setDeletingDate(detailDate) }}
-              >
-                <Trash2 size={18} />
-              </button>
-            ) : null}
             <KamsTransactionsPrintMenu
               buttonClassName="px-2.5 sm:px-4"
               canPreview={canPreview}
@@ -678,6 +683,24 @@ export function KamsAssignmentReports() {
           </Card>
         </div>
       ) : null}
+
+      <div className="flex min-w-0 overflow-x-auto rounded-full bg-white p-1">
+        {([
+          ['az', 'kams.sortAz'],
+          ['za', 'kams.sortZa'],
+          ['sold', 'kams.sortSoldQuantity'],
+          ['collected', 'kams.sortCollected'],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => { setReportSort(key); setPage(1) }}
+            className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', reportSort === key ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+          >
+            {t(label)}
+          </button>
+        ))}
+      </div>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_10px_40px_rgba(4,55,17,0.04)]">
         <div className="overflow-x-auto">
@@ -804,18 +827,6 @@ export function KamsAssignmentReports() {
         html={printPreviewHtml}
         onClose={() => setPrintPreviewHtml('')}
       />
-      <Modal open={Boolean(deletingDate)} title={t('kams.deleteDayReport')} onClose={() => { setDeletingDate(null); setDeleteError('') }}>
-        <div className="space-y-4">
-          <p className="text-sm text-muted">
-            {t('kams.deleteDayReportConfirm', { date: deletingDate ? formatDay(deletingDate, locale) : '' })}
-          </p>
-          {deleteError ? <p className="text-sm text-danger">{deleteError}</p> : null}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => { setDeletingDate(null); setDeleteError('') }}>{t('common.cancel')}</Button>
-            <Button onClick={() => void confirmDeleteReport()}>{t('common.delete')}</Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }
