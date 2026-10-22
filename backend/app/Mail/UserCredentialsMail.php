@@ -4,6 +4,7 @@ namespace App\Mail;
 
 use App\Mail\Concerns\PreventsReplies;
 use App\Models\User;
+use App\Support\MailLocale;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -21,23 +22,22 @@ class UserCredentialsMail extends Mailable
 
     public function envelope(): Envelope
     {
-        $locale = $this->user->locale === 'en' ? 'en' : 'fr';
-
-        return $this->automaticEnvelope($locale === 'en'
-            ? 'Your LHMS login credentials'
-            : 'Vos identifiants de connexion LHMS');
+        return $this->automaticEnvelope(MailLocale::text(
+            'Vos identifiants de connexion LHMS',
+            'Your LHMS login credentials',
+            'Taarifa zako za kuingia LHMS',
+            $this->user->locale,
+        ));
     }
 
     public function content(): Content
     {
-        $locale = $this->user->locale === 'en' ? 'en' : 'fr';
-
         return new Content(
             view: 'emails.user-credentials',
             with: [
                 'user' => $this->user,
                 'password' => $this->password,
-                'locale' => $locale,
+                'locale' => MailLocale::for($this->user->locale),
                 'loginUrl' => rtrim((string) config('lhms.frontend_url', config('app.url')), '/').'/login',
             ],
         );

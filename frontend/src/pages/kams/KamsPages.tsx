@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n/locales'
 import { Navigate } from 'react-router-dom'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
@@ -54,7 +55,7 @@ export function KamsDashboard() {
   const canOrders = allow('kams.dashboard.orders.view')
   const canFinance = allow('kams.dashboard.finance.view')
   const canRecruitment = allow('kams.dashboard.recruitment.view')
-  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
   const today = isoDate(new Date())
   const [period, setPeriod] = useState<DashboardPeriod>('week')
   const [from, setFrom] = useState(today)
@@ -106,22 +107,22 @@ export function KamsDashboard() {
         <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
           {t('kams.periodRange', { start: formatDay(data.range.from), end: formatDay(data.range.to) })}
         </p>
-        <div className="flex w-full min-w-0 flex-nowrap items-center gap-2">
+        <div className="flex w-full min-w-0 items-center justify-between gap-2">
           {data.can_filter_offices ? (
             <OfficeFilterSelect
-              className="!w-auto min-w-[7.5rem] max-w-[42%] shrink"
+              className="!w-auto min-w-[7.5rem] max-w-[12rem] shrink-0"
               value={officeId}
               offices={data.filter_offices || []}
               onChange={(e) => setOfficeId(e.target.value)}
             />
-          ) : null}
-          <div className="flex min-w-0 flex-1 overflow-x-auto rounded-full bg-white p-1">
+          ) : <span />}
+          <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-white p-1">
             {(['day', 'week', 'month'] as const).map((item) => (
               <button
                 key={item}
                 type="button"
                 onClick={() => setPeriod(item)}
-                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                className={cn('min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
               >
                 {t(`kams.period.${item}`)}
               </button>
@@ -129,14 +130,14 @@ export function KamsDashboard() {
             <button
               type="button"
               onClick={() => setPeriod('custom')}
-              className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              className={cn('min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
             >
               {t('dashboard.customPeriod')}
             </button>
           </div>
         </div>
         {period === 'custom' ? (
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-80 sm:ml-auto">
+          <div className="ml-auto grid w-full max-w-80 grid-cols-2 gap-2">
             <Field
               className="min-w-0 max-w-full"
               label={t('dashboard.dateFrom')}

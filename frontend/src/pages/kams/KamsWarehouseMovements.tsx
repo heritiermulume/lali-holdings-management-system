@@ -1,6 +1,7 @@
 import { ArrowLeft, ChevronDown, Download, Eye, ListFilter, Printer, Search } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n/locales'
 import { Link, useParams } from 'react-router-dom'
 import { PaginationButtons } from '../../components/PaginationButtons'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
@@ -93,7 +94,7 @@ export function KamsWarehouseMovements() {
   const canPrint = hasPermission('kams.stock.reports.print')
   const canPreview = hasPermission('kams.stock.reports.preview')
   const { warehouseId, depotId: depotParam } = useParams()
-  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
   const depotId = Number(warehouseId || depotParam)
   const isDepot = Boolean(depotParam)
 

@@ -4,6 +4,7 @@ namespace App\Mail;
 
 use App\Mail\Concerns\PreventsReplies;
 use App\Models\User;
+use App\Support\MailLocale;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -21,16 +22,16 @@ class PasswordResetMail extends Mailable
 
     public function envelope(): Envelope
     {
-        $locale = $this->user->locale === 'en' ? 'en' : 'fr';
-
-        return $this->automaticEnvelope($locale === 'en'
-            ? 'Reset your LHMS password'
-            : 'Réinitialisation de votre mot de passe LHMS');
+        return $this->automaticEnvelope(MailLocale::text(
+            'Réinitialisation de votre mot de passe LHMS',
+            'Reset your LHMS password',
+            'Weka upya nenosiri lako la LHMS',
+            $this->user->locale,
+        ));
     }
 
     public function content(): Content
     {
-        $locale = $this->user->locale === 'en' ? 'en' : 'fr';
         $frontend = rtrim((string) config('lhms.frontend_url'), '/');
         $resetUrl = $frontend.'/reset-password?'.http_build_query([
             'token' => $this->token,
@@ -41,7 +42,7 @@ class PasswordResetMail extends Mailable
             view: 'emails.password-reset',
             with: [
                 'user' => $this->user,
-                'locale' => $locale,
+                'locale' => MailLocale::for($this->user->locale),
                 'resetUrl' => $resetUrl,
                 'expiresMinutes' => (int) config('auth.passwords.users.expire', 60),
             ],

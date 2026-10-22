@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Mail\MailTestMail;
 use App\Models\Currency;
 use App\Models\Setting;
+use App\Models\User;
+use App\Support\MailLocale;
 use App\Support\MailSettings;
 use App\Support\SecuritySettings;
 use App\Support\SettingsCatalog;
@@ -117,10 +119,9 @@ class SettingController extends Controller
             ], 422);
         }
 
-        $locale = $request->user()?->locale === 'en' ? 'en' : SettingsCatalog::defaultLocale();
-
         try {
-            Mail::to($to)->send(new MailTestMail($locale));
+            $recipient = User::query()->where('email', $to)->first();
+            Mail::to($to)->send(new MailTestMail(MailLocale::for($recipient?->locale ?: $request->user()?->locale)));
         } catch (\Throwable $exception) {
             report($exception);
 

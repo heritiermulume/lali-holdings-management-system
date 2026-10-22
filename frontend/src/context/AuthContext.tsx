@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { normalizeLocale } from '../i18n/locales'
 import api from '../lib/api'
 import { setPermissionsStaleHandler } from '../lib/authSync'
 import { applyDisplayPrefs } from '../lib/format'
@@ -63,14 +64,14 @@ async function loadPublicBootstrap() {
 
 async function groupDefaultLocale() {
   const bootstrap = await loadPublicBootstrap()
-  return bootstrap?.default_locale === 'en' ? 'en' : 'fr'
+  return normalizeLocale(bootstrap?.default_locale)
 }
 
 async function applyLocale(
   i18n: { language?: string; changeLanguage: (lng: string) => Promise<unknown> },
   locale: string,
 ) {
-  const next = locale.startsWith('en') ? 'en' : 'fr'
+  const next = normalizeLocale(locale)
   if (localStorage.getItem('lhms_locale') === next && (i18n.language || '').startsWith(next)) {
     return
   }

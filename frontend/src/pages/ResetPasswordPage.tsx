@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Button, Field } from '../components/ui'
+import { normalizeLocale } from '../i18n/locales'
 import api from '../lib/api'
 
 export function ResetPasswordPage() {
@@ -20,7 +21,7 @@ export function ResetPasswordPage() {
     let cancelled = false
     api.get('/public/bootstrap').then((res) => {
       if (cancelled || localStorage.getItem('lhms_locale_picked')) return
-      const locale = res.data.data?.default_locale === 'en' ? 'en' : 'fr'
+      const locale = normalizeLocale(res.data.data?.default_locale)
       localStorage.setItem('lhms_locale', locale)
       void i18n.changeLanguage(locale)
     }).catch(() => undefined)

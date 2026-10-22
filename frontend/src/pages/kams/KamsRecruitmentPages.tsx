@@ -2,6 +2,7 @@ import { BadgeCheck, Building2, Camera, Check, CheckCircle2, Download, Eye, EyeO
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Outlet, Navigate, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n/locales'
 import { PhotoSourcePicker } from '../../components/PhotoSourcePicker'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
@@ -530,7 +531,7 @@ export function KamsRecruitmentWorkspace() {
   const [to, setTo] = useState(today)
   const [offices, setOffices] = useState<LookupOffice[]>([])
   const { officeId, setOfficeId, showOfficeFilter } = useOfficeScope(offices)
-  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
   const range = period === 'custom' ? { from, to } : presetRange(period)
   const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
 
@@ -566,13 +567,13 @@ export function KamsRecruitmentWorkspace() {
         </div>
         {filtersOpen ? (
           <>
-            <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-white p-1 sm:ml-auto sm:w-auto">
+            <div className="ml-auto inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-white p-1">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => setPeriod(item)}
-                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                  className={cn('min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
                 >
                   {t(`kams.period.${item}`)}
                 </button>
@@ -580,13 +581,13 @@ export function KamsRecruitmentWorkspace() {
               <button
                 type="button"
                 onClick={() => setPeriod('custom')}
-                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                className={cn('min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
               >
                 {t('dashboard.customPeriod')}
               </button>
             </div>
             {period === 'custom' ? (
-              <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-80">
+              <div className="ml-auto grid w-full max-w-80 grid-cols-2 gap-2">
                 <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
                 <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
               </div>
@@ -2607,7 +2608,7 @@ export function KamsRecruitmentReports() {
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const printMenuRef = useRef<HTMLDivElement>(null)
-  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
 
   const reportParams = (pageNumber: number, pageSize: number) => {
     const range = period === 'custom' ? { from, to } : presetRange(period)

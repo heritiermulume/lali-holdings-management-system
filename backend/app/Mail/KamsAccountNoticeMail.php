@@ -4,6 +4,7 @@ namespace App\Mail;
 
 use App\Mail\Concerns\PreventsReplies;
 use App\Models\User;
+use App\Support\MailLocale;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -40,13 +41,11 @@ class KamsAccountNoticeMail extends Mailable
 
     public function content(): Content
     {
-        $locale = $this->user->locale === 'en' ? 'en' : 'fr';
-
         return new Content(
             view: 'emails.kams-account-notice',
             with: [
                 'user' => $this->user,
-                'locale' => $locale,
+                'locale' => MailLocale::for($this->user->locale),
                 'payload' => $this->payload,
                 'title' => $this->subjectLine(),
             ],
@@ -55,26 +54,40 @@ class KamsAccountNoticeMail extends Mailable
 
     private function subjectLine(): string
     {
-        $locale = $this->user->locale === 'en' ? 'en' : 'fr';
         $confirm = ($this->payload['purpose'] ?? '') === 'confirm';
         $movement = (string) ($this->payload['movement'] ?? 'deposit');
 
         return match (true) {
-            $confirm && $movement === 'withdrawal' => $locale === 'en'
-                ? 'Withdrawal request to confirm'
-                : 'Demande de retrait à confirmer',
-            $confirm && $movement === 'transfer' => $locale === 'en'
-                ? 'Transfer to confirm'
-                : 'Transfert à confirmer',
-            $confirm => $locale === 'en'
-                ? 'Deposit request to confirm'
-                : 'Demande de dépôt à confirmer',
-            $movement === 'withdrawal' => $locale === 'en'
-                ? 'Withdrawal recorded on your account'
-                : 'Retrait enregistré sur votre compte',
-            default => $locale === 'en'
-                ? 'Deposit recorded on your account'
-                : 'Dépôt enregistré sur votre compte',
+            $confirm && $movement === 'withdrawal' => MailLocale::text(
+                'Demande de retrait à confirmer',
+                'Withdrawal request to confirm',
+                'Ombi la kutoa pesa la kuthibitishwa',
+                $this->user->locale,
+            ),
+            $confirm && $movement === 'transfer' => MailLocale::text(
+                'Transfert à confirmer',
+                'Transfer to confirm',
+                'Uhamisho wa kuthibitishwa',
+                $this->user->locale,
+            ),
+            $confirm => MailLocale::text(
+                'Demande de dépôt à confirmer',
+                'Deposit request to confirm',
+                'Ombi la kuweka pesa la kuthibitishwa',
+                $this->user->locale,
+            ),
+            $movement === 'withdrawal' => MailLocale::text(
+                'Retrait enregistré sur votre compte',
+                'Withdrawal recorded on your account',
+                'Utoaji umerekodiwa kwenye akaunti yako',
+                $this->user->locale,
+            ),
+            default => MailLocale::text(
+                'Dépôt enregistré sur votre compte',
+                'Deposit recorded on your account',
+                'Amana imerekodiwa kwenye akaunti yako',
+                $this->user->locale,
+            ),
         };
     }
 }

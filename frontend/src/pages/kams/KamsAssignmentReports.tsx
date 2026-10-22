@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n/locales'
 import { ChevronDown, Info, Package, Trash2 } from 'lucide-react'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { PaginationButtons } from '../../components/PaginationButtons'
@@ -194,7 +195,7 @@ export function KamsAssignmentReports() {
   const navigate = useNavigate()
   const { date: reportDate } = useParams()
   const detailDate = reportDate && /^\d{4}-\d{2}-\d{2}$/.test(reportDate) ? reportDate : ''
-  const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
   const initial = useMemo(() => (detailDate ? { from: detailDate, to: detailDate } : presetRange('month')), [detailDate])
   const today = useMemo(() => isoDate(new Date()), [])
   const [period, setPeriod] = useState<Period>(detailDate ? 'day' : 'month')
@@ -503,15 +504,15 @@ export function KamsAssignmentReports() {
             </div>
           </div>
           {filtersOpen ? (
-            <div className="flex w-full min-w-0 flex-col gap-2 sm:items-end">
-              <div className="flex w-full min-w-0 overflow-x-auto rounded-full bg-white p-1 sm:w-auto">
+            <div className="flex w-full min-w-0 flex-col items-end gap-2">
+              <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-white p-1">
                 {(['day', 'week', 'month'] as const).map((item) => (
                   <button
                     key={item}
                     type="button"
                     onClick={() => applyPreset(item)}
                     className={cn(
-                      'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
+                      'min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap',
                       period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
                     )}
                   >
@@ -522,7 +523,7 @@ export function KamsAssignmentReports() {
                   type="button"
                   onClick={() => setPeriod('custom')}
                   className={cn(
-                    'min-h-10 min-w-0 flex-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap sm:flex-none sm:px-4 sm:text-sm',
+                    'min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap',
                     period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
                   )}
                 >
@@ -530,7 +531,7 @@ export function KamsAssignmentReports() {
                 </button>
               </div>
               {period === 'custom' ? (
-                <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+                <div className="grid w-full max-w-80 grid-cols-2 gap-2">
                   <Field className="min-w-0 max-w-full" label={t('kams.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
                   <Field className="min-w-0 max-w-full" label={t('kams.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
                 </div>

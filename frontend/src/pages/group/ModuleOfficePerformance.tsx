@@ -137,8 +137,8 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
 
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col items-end gap-3">
+        <div className="flex w-full items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-semibold">{t('dashboard.officePerformance')}</div>
             <p className="mt-1 text-sm text-muted">{t('dashboard.officePerformanceHint')}</p>
@@ -152,7 +152,7 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
           </button>
         </div>
         {period === 'custom' ? (
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+          <div className="grid w-full max-w-80 grid-cols-2 gap-2">
             <Field
               className="min-w-0 max-w-full"
               label={t('dashboard.dateFrom')}
@@ -172,13 +172,13 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
             />
           </div>
         ) : (
-          <div className="flex w-full rounded-full bg-white p-1 sm:w-auto">
+          <div className="inline-flex w-fit max-w-full shrink-0 rounded-full bg-white p-1">
             {(['day', 'week', 'month'] as const).map((item) => (
               <button
                 key={item}
                 type="button"
                 onClick={() => applyPreset(item)}
-                className={cn('min-h-10 flex-1 rounded-full px-3 text-sm font-semibold sm:flex-none sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
               >
                 {t(`dashboard.period.${item}`)}
               </button>

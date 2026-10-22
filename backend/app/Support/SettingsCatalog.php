@@ -143,7 +143,7 @@ class SettingsCatalog
     {
         $locale = strtolower(self::string('general', 'default_locale', 'fr'));
 
-        return in_array($locale, ['fr', 'en'], true) ? $locale : 'fr';
+        return in_array($locale, config('lhms.supported_locales', ['fr', 'en', 'sw']), true) ? $locale : 'fr';
     }
 
     /**

@@ -620,16 +620,15 @@ export function KamsCompanyAccountPage() {
       {data ? (
         <>
           <div className="space-y-3">
-            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-muted">{t('kams.cashPeriodHint')}</p>
-              <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-surface p-1 sm:w-auto sm:ml-auto">
+            <div className="flex w-full min-w-0 flex-col items-end gap-2">
+              <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
                 {(['day', 'week', 'month'] as const).map((item) => (
                   <button
                     key={item}
                     type="button"
                     onClick={() => applyPreset(item)}
                     className={cn(
-                      'min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none',
+                      'min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap',
                       period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
                     )}
                   >
@@ -640,16 +639,17 @@ export function KamsCompanyAccountPage() {
                   type="button"
                   onClick={() => setPeriod('custom')}
                   className={cn(
-                    'min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none',
+                    'min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap',
                     period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink',
                   )}
                 >
                   {t('dashboard.customPeriod')}
                 </button>
               </div>
+              <p className="self-start text-sm text-muted">{t('kams.cashPeriodHint')}</p>
             </div>
             {period === 'custom' ? (
-              <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-80">
+              <div className="ml-auto grid w-full max-w-80 grid-cols-2 gap-2">
                 <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
                 <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
               </div>

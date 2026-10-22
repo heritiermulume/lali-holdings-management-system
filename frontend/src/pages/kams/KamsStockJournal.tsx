@@ -1,6 +1,7 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n/locales'
 import {
   ArrowLeftRight,
   Package,
@@ -218,7 +219,7 @@ export function KamsStockJournal() {
   const { t, i18n } = useTranslation()
   const { hasPermission } = useAuth()
   const { officeId } = useOutletContext<OperationsOfficeFilter>()
-  const locale = i18n.language.startsWith('en') ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
   const [rows, setRows] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')

@@ -102,9 +102,11 @@
                     <tr>
                         <td class="lhms-body" align="center" bgcolor="{{ $body }}" style="padding:8px 32px 28px;background:{{ $body }} !important;background-color:{{ $body }} !important;font-size:12px;line-height:1.5;color:{{ $muted }};text-align:center;">
                             <div style="height:2px;background:{{ $line }};background-color:{{ $line }};margin:0 0 16px;"></div>
-                            {{ $locale === 'en'
-                                ? 'This message was sent automatically by '.$product.'. Please do not reply to it.'
-                                : 'Ce message a été envoyé automatiquement par '.$product.'. Merci de ne pas y répondre.' }}
+                            {{ match ($locale ?? 'fr') {
+                                'en' => 'This message was sent automatically by '.$product.'. Please do not reply to it.',
+                                'sw' => 'Ujumbe huu umetumwa kiotomatiki na '.$product.'. Tafadhali usijibu.',
+                                default => 'Ce message a été envoyé automatiquement par '.$product.'. Merci de ne pas y répondre.',
+                            } }}
                             <div align="center" style="margin-top:8px;color:#e8f3ea;font-weight:700;text-align:center;">© {{ $year }} Lali Holdings Limited</div>
                         </td>
                     </tr>

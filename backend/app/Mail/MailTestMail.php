@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Mail\Concerns\PreventsReplies;
+use App\Support\MailLocale;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -19,9 +20,12 @@ class MailTestMail extends Mailable
 
     public function envelope(): Envelope
     {
-        return $this->automaticEnvelope($this->messageLocale === 'en'
-            ? 'LHMS mail configuration test'
-            : 'Test de configuration e-mail LHMS');
+        return $this->automaticEnvelope(MailLocale::text(
+            'Test de configuration e-mail LHMS',
+            'LHMS mail configuration test',
+            'Jaribio la usanidi wa barua pepe wa LHMS',
+            $this->messageLocale,
+        ));
     }
 
     public function content(): Content
@@ -29,7 +33,7 @@ class MailTestMail extends Mailable
         return new Content(
             view: 'emails.mail-test',
             with: [
-                'locale' => $this->messageLocale === 'en' ? 'en' : 'fr',
+                'locale' => MailLocale::for($this->messageLocale),
             ],
         );
     }

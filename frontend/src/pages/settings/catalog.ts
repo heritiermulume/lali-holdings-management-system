@@ -18,6 +18,7 @@ export const settingGroups: Record<SettingGroupId, SettingField[]> = {
     { key: 'default_locale', type: 'select', options: [
       { value: 'fr', labelKey: 'settings.options.localeFr' },
       { value: 'en', labelKey: 'settings.options.localeEn' },
+      { value: 'sw', labelKey: 'settings.options.localeSw' },
     ] },
     { key: 'default_timezone', type: 'string' },
     { key: 'date_format', type: 'select', options: [

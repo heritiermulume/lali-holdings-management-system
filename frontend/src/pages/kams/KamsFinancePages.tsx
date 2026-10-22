@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
 import { Outlet, Navigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { intlLocale } from '../../i18n/locales'
 import {
   Area,
   AreaChart,
@@ -300,7 +301,7 @@ export function KamsFinanceIndex() {
 
 export function KamsFinanceDashboard() {
   const { t, i18n } = useTranslation()
-  const locale = i18n.language === 'en' ? 'en-GB' : 'fr-FR'
+  const locale = intlLocale(i18n.language)
   const initial = useMemo(() => presetRange('week'), [])
   const today = useMemo(() => isoDate(new Date()), [])
   const [period, setPeriod] = useState<Period>('week')
@@ -435,10 +436,10 @@ export function KamsFinanceDashboard() {
 
       <Card className="p-3 sm:p-4">
         <div className="flex min-w-0 flex-col gap-2">
-          <div className="flex w-full min-w-0 flex-nowrap items-center gap-2">
+          <div className="flex w-full min-w-0 items-center justify-between gap-2">
             {data.can_filter_offices ? (
               <OfficeFilterSelect
-                className="!w-auto min-w-[7.5rem] max-w-[42%] shrink"
+                className="!w-auto min-w-[7.5rem] max-w-[12rem] shrink-0"
                 value={officeId}
                 offices={data.filter_offices || []}
                 onChange={(e) => {
@@ -446,14 +447,14 @@ export function KamsFinanceDashboard() {
                   setOpenOffice(null)
                 }}
               />
-            ) : null}
-            <div className="flex min-w-0 flex-1 overflow-x-auto rounded-full bg-surface p-1">
+            ) : <span />}
+            <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => applyPreset(item)}
-                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                  className={cn('min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
                 >
                   {t(`kams.period.${item}`)}
                 </button>
@@ -461,14 +462,14 @@ export function KamsFinanceDashboard() {
               <button
                 type="button"
                 onClick={() => setPeriod('custom')}
-                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                className={cn('min-h-10 shrink-0 rounded-full px-4 text-sm font-semibold whitespace-nowrap', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
               >
                 {t('dashboard.customPeriod')}
               </button>
             </div>
           </div>
           {period === 'custom' ? (
-            <div className="grid w-full grid-cols-2 gap-2 sm:w-80 sm:ml-auto">
+            <div className="ml-auto grid w-full max-w-80 grid-cols-2 gap-2">
               <Field className="min-w-0" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
               <Field className="min-w-0" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
             </div>

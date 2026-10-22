@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { normalizeLocale } from '../../i18n/locales'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ChangePasswordModal } from '../ChangePasswordModal'
 import { ProfileModal } from '../ProfileModal'
@@ -324,7 +325,7 @@ export function AppShell() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <select
-              value={i18n.language.startsWith('fr') ? 'fr' : 'en'}
+              value={normalizeLocale(i18n.language)}
               onChange={(e) => setLocale(e.target.value)}
               className={cn(
                 'min-h-10 rounded-xl px-2 text-sm',
@@ -335,6 +336,7 @@ export function AppShell() {
             >
               <option value="fr">FR</option>
               <option value="en">EN</option>
+              <option value="sw">SW</option>
             </select>
             {hasPermission('notifications.view') ? (
             <button

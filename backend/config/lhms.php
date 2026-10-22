@@ -4,7 +4,7 @@ return [
     'name' => 'LALI Holdings Management System',
     'short_name' => 'LHMS',
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
-    'supported_locales' => ['fr', 'en'],
+    'supported_locales' => ['fr', 'en', 'sw'],
 
     /*
     |--------------------------------------------------------------------------

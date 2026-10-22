@@ -261,7 +261,7 @@ class UserController extends Controller
             'gender' => ['nullable', Rule::in(['male', 'female'])],
             'email' => [$userId ? 'sometimes' : 'required', 'email', Rule::unique('users', 'email')->ignore($userId)],
             'phone' => ['nullable', 'string', 'max:40'],
-            'locale' => ['nullable', 'in:fr,en'],
+            'locale' => ['nullable', 'in:fr,en,sw'],
             'timezone' => ['nullable', 'string', 'max:64'],
             'is_active' => ['boolean'],
             'is_certified' => ['boolean'],

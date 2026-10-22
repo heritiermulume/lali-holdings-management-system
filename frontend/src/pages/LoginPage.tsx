@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { normalizeLocale } from '../i18n/locales'
 import { Button, Field } from '../components/ui'
 import api from '../lib/api'
 
@@ -23,7 +24,7 @@ export function LoginPage() {
     let cancelled = false
     api.get('/public/bootstrap').then((res) => {
       if (cancelled || localStorage.getItem('lhms_locale_picked')) return
-      const locale = res.data.data?.default_locale === 'en' ? 'en' : 'fr'
+      const locale = normalizeLocale(res.data.data?.default_locale)
       localStorage.setItem('lhms_locale', locale)
       void i18n.changeLanguage(locale)
     }).catch(() => undefined)
@@ -32,11 +33,11 @@ export function LoginPage() {
     }
   }, [i18n])
 
-  const switchLanguage = () => {
-    const next = i18n.language.startsWith('fr') ? 'en' : 'fr'
+  const switchLanguage = (next: string) => {
+    const locale = normalizeLocale(next)
     localStorage.setItem('lhms_locale_picked', '1')
-    localStorage.setItem('lhms_locale', next)
-    void i18n.changeLanguage(next)
+    localStorage.setItem('lhms_locale', locale)
+    void i18n.changeLanguage(locale)
   }
 
   return (
@@ -126,9 +127,16 @@ export function LoginPage() {
                 </Button>
               </div>
               <div className="flex items-center justify-end text-sm text-muted">
-                <button type="button" onClick={switchLanguage}>
-                  {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
-                </button>
+                <select
+                  aria-label={t('settings.fields.default_locale')}
+                  value={normalizeLocale(i18n.language)}
+                  onChange={(event) => switchLanguage(event.target.value)}
+                  className="rounded-lg border border-line bg-white px-2 py-1"
+                >
+                  <option value="fr">FR</option>
+                  <option value="en">EN</option>
+                  <option value="sw">SW</option>
+                </select>
               </div>
             </form>
           ) : (
@@ -178,9 +186,16 @@ export function LoginPage() {
                 >
                   {t('auth.backToLogin')}
                 </button>
-                <button type="button" className="text-muted" onClick={switchLanguage}>
-                  {i18n.language.startsWith('fr') ? 'EN' : 'FR'}
-                </button>
+                <select
+                  aria-label={t('settings.fields.default_locale')}
+                  value={normalizeLocale(i18n.language)}
+                  onChange={(event) => switchLanguage(event.target.value)}
+                  className="rounded-lg border border-line bg-white px-2 py-1 text-muted"
+                >
+                  <option value="fr">FR</option>
+                  <option value="en">EN</option>
+                  <option value="sw">SW</option>
+                </select>
               </div>
             </form>
           )}

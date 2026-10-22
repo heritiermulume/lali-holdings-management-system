@@ -356,7 +356,8 @@ function ScopeFilters({
   return (
     <Card className="p-3 sm:p-5">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between xl:gap-4">
-        <div className="min-w-0 sm:max-w-xs">
+        <div className="flex min-w-0 flex-wrap items-end gap-2">
+          <div className="min-w-0 sm:max-w-xs">
           <label className="block text-sm">
             <span className="mb-1.5 block font-medium text-muted">{t('groupDash.scopeCompany')}</span>
             <select
@@ -370,12 +371,10 @@ function ScopeFilters({
               ))}
             </select>
           </label>
-        </div>
-
-        <div className="flex w-full min-w-0 flex-nowrap items-center gap-2">
+          </div>
           {data.scope.offices.length > 1 ? (
             <OfficeFilterSelect
-              className="!w-auto min-w-[7.5rem] max-w-[42%] shrink"
+              className="!w-auto min-w-[7.5rem] max-w-[12rem] shrink-0"
               label={t('groupDash.scopeOffice')}
               allLabel={t('groupDash.allOffices')}
               value={officeId === '' ? '' : String(officeId)}
@@ -384,6 +383,8 @@ function ScopeFilters({
               onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
             />
           ) : null}
+        </div>
+        <div className="ml-auto flex w-fit max-w-full min-w-0 flex-nowrap items-center gap-2">
           <button
             type="button"
             onClick={() => (period === 'custom' ? applyPreset(lastPreset) : setPeriod('custom'))}
@@ -392,7 +393,7 @@ function ScopeFilters({
             {period === 'custom' ? t('dashboard.presetPeriod') : t('dashboard.customPeriod')}
           </button>
           {period === 'custom' ? (
-            <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
+            <div className="grid w-72 max-w-full shrink-0 grid-cols-2 gap-2">
               <Field
                 className="min-w-0 max-w-full"
                 label={t('dashboard.dateFrom')}
@@ -412,13 +413,13 @@ function ScopeFilters({
               />
             </div>
           ) : (
-            <div className="flex min-w-0 flex-1 overflow-x-auto rounded-full bg-surface p-1">
+            <div className="inline-flex w-fit max-w-full shrink-0 overflow-x-auto rounded-full bg-surface p-1">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => applyPreset(item)}
-                  className={cn('min-h-10 flex-1 rounded-full px-3 text-sm font-semibold whitespace-nowrap sm:flex-none sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                  className={cn('min-h-10 shrink-0 rounded-full px-3 text-sm font-semibold whitespace-nowrap sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
                 >
                   {t(`dashboard.period.${item}`)}
                 </button>
