@@ -122,7 +122,7 @@ function PagedTable<T extends { id: number | string }>({
   rows,
   renderRow,
 }: {
-  columns: Array<{ key: string; label: string; align?: 'right' }>
+  columns: Array<{ key: string; label: string; align?: 'right'; className?: string }>
   rows: T[]
   renderRow: (row: T, index: number) => ReactNode
 }) {
@@ -142,7 +142,7 @@ function PagedTable<T extends { id: number | string }>({
           <thead className="bg-lhms text-white">
             <tr className="text-left text-xs font-semibold tracking-wide">
               {columns.map((column) => (
-                <th key={column.key} className={cn('bg-lhms px-4 py-1.5 font-semibold', column.align === 'right' && 'text-right')}>{column.label}</th>
+                <th key={column.key} className={cn('bg-lhms px-4 py-1.5 font-semibold', column.align === 'right' && 'text-right', column.className)}>{column.label}</th>
               ))}
             </tr>
           </thead>
@@ -721,7 +721,7 @@ export function KamsWarehouses() {
                     <PagedTable
                       rows={warehouseProducts}
                       columns={[
-                        { key: 'product', label: t('kams.products') },
+                        { key: 'product', label: t('kams.products'), className: 'min-w-64' },
                         { key: 'price', label: t('kams.salePrice') },
                         { key: 'quantity', label: t('kams.quantity'), align: 'right' },
                         { key: 'value', label: t('kams.inventoryValue'), align: 'right' },
@@ -729,7 +729,7 @@ export function KamsWarehouses() {
                       ]}
                       renderRow={(item, index) => (
                         <tr key={item.id} className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
-                          <td className="px-4 py-1.5">
+                          <td className="min-w-64 px-4 py-1.5">
                             <div className="flex items-center gap-3">
                               <ProductThumb name={item.product.name || ''} url={item.product.image_url} className="h-9 w-9" />
                               <div className="min-w-0">
@@ -1571,7 +1571,7 @@ export function KamsDepots() {
                     <PagedTable
                       rows={products}
                       columns={[
-                        { key: 'product', label: t('kams.products') },
+                        { key: 'product', label: t('kams.products'), className: 'min-w-64' },
                         { key: 'price', label: t('kams.salePrice') },
                         { key: 'quantity', label: t('kams.quantity'), align: 'right' },
                         { key: 'value', label: t('kams.inventoryValue'), align: 'right' },
@@ -1579,7 +1579,7 @@ export function KamsDepots() {
                       ]}
                       renderRow={(item, index) => (
                         <tr key={item.id} className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
-                          <td className="px-4 py-1.5">
+                          <td className="min-w-64 px-4 py-1.5">
                             <div className="flex items-center gap-3">
                               <ProductThumb name={item.product?.name || ''} url={item.product?.image_url} className="h-9 w-9" />
                               <div className="min-w-0">
