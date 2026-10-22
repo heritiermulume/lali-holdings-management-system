@@ -94,8 +94,8 @@ Route::post('finance/company-accounts/{treasuryAccount}/expense', [KamsFinanceCo
 Route::get('depots/lookups', [KamsStockController::class, 'lookups'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.warehouses.view,kams.stock.depots.view');
 Route::get('depots', [KamsResourceController::class, 'depots'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.warehouses.view,kams.stock.depots.view');
 Route::post('depots', [KamsResourceController::class, 'storeDepot'])->middleware(EnsurePermission::class.':kams.products.create');
-Route::put('depots/{depot}', [KamsResourceController::class, 'updateDepot'])->middleware(EnsurePermission::class.':kams.products.update');
-Route::delete('depots/{depot}', [KamsResourceController::class, 'destroyDepot'])->middleware(EnsurePermission::class.':kams.products.delete');
+Route::put('depots/{depot}', [KamsResourceController::class, 'updateDepot'])->middleware(EnsurePermission::class.':kams.stock.warehouses.update,kams.products.update');
+Route::delete('depots/{depot}', [KamsResourceController::class, 'destroyDepot'])->middleware(EnsurePermission::class.':kams.stock.warehouses.delete,kams.stock.depots.delete');
 
 Route::get('products', [KamsResourceController::class, 'products'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.warehouses.view,kams.stock.depots.view');
 Route::post('products', [KamsResourceController::class, 'storeProduct'])->middleware(EnsurePermission::class.':kams.products.create');

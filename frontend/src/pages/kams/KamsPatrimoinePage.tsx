@@ -402,6 +402,7 @@ export function KamsPatrimoinePage() {
                 className="h-11 w-11 px-0 sm:w-auto sm:px-4"
                 aria-label={t('common.print')}
                 aria-expanded={printMenuOpen}
+                disabled={rows.length === 0}
                 onClick={() => setPrintMenuOpen((open) => !open)}
               >
                 <Printer size={16} />

@@ -9,13 +9,7 @@
     $locale = $locale ?? 'fr';
     $preheader = $preheader ?? '';
     $eyebrow = $eyebrow ?? 'LALI HOLDINGS MANAGEMENT SYSTEM';
-    $logoPath = resource_path('images/lali_holdings_logo.png');
-    $logoUrl = '';
-    if (isset($message) && is_file($logoPath)) {
-        $part = (new \Symfony\Component\Mime\Part\DataPart(file_get_contents($logoPath), null, 'image/png'))->asInline();
-        $message->getSymfonyMessage()->addPart($part);
-        $logoUrl = 'cid:'.$part->getContentId();
-    }
+    $logoUrl = asset('lali_holdings_logo.png');
 @endphp
 <!DOCTYPE html>
 <html lang="{{ $locale }}" style="margin:0;padding:0;background:{{ $body }};background-color:{{ $body }};">

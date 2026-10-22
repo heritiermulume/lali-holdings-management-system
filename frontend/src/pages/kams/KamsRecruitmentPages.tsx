@@ -1139,7 +1139,7 @@ export function KamsAgents() {
             </Button>
           ) : null}
           {hasPermission('kams.members.export') ? (
-            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0" title={t('common.export')} aria-label={t('common.export')} onClick={() => void exportAgents()}>
+            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0" title={t('common.export')} aria-label={t('common.export')} disabled={rows.length === 0} onClick={() => void exportAgents()}>
               <Download size={16} />
             </Button>
           ) : null}
@@ -1155,6 +1155,7 @@ export function KamsAgents() {
               title={t('common.print')}
               aria-label={t('common.print')}
               aria-expanded={printMenuOpen}
+              disabled={rows.length === 0}
               onClick={() => setPrintMenuOpen((open) => !open)}
             >
               <Printer size={16} />
@@ -1416,18 +1417,22 @@ export function KamsAgents() {
             emptyLabel={coachOptions.length === 0 ? t('kams.noEligibleSupervisor') : t('common.empty')}
             onSelect={(item) => setForm({ ...form, coach_member_id: item?.id ?? '' })}
           />
-          <Field label={t('kams.joinedOn')} type="date" value={form.joined_on || ''} onChange={(e) => setForm({ ...form, joined_on: e.target.value })} />
+          <div className="flex items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <Field label={t('kams.joinedOn')} type="date" value={form.joined_on || ''} onChange={(e) => setForm({ ...form, joined_on: e.target.value })} />
+            </div>
+            {editing ? (
+              <Button type="button" variant="secondary" className="shrink-0" onClick={() => { setPasswordForm({ password: pendingPassword || '', confirmation: pendingPassword || '' }); setPasswordError(''); setPasswordOpen(true) }}>
+                {t('auth.changePassword')}
+              </Button>
+            ) : null}
+          </div>
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
-          {editing ? (
-            <Button type="button" variant="secondary" className="w-full" onClick={() => { setPasswordForm({ password: pendingPassword || '', confirmation: pendingPassword || '' }); setPasswordError(''); setPasswordOpen(true) }}>
-              {t('common.changePassword')}
-            </Button>
-          ) : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
       </Modal>
 
-      <Modal open={passwordOpen} title={t('common.changePassword')} onClose={() => setPasswordOpen(false)}>
+      <Modal open={passwordOpen} title={t('auth.changePassword')} onClose={() => setPasswordOpen(false)}>
         <form
           className="space-y-3"
           onSubmit={(event) => {
@@ -2594,6 +2599,7 @@ export function KamsRecruitmentReports() {
             title={t('common.print')}
             aria-label={t('common.print')}
             aria-expanded={printMenuOpen}
+            disabled={total === 0}
             onClick={() => setPrintMenuOpen((open) => !open)}
           >
             <Printer size={16} /> {t('common.print')}

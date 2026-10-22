@@ -234,8 +234,15 @@ class KamsResourceController extends Controller
             abort_unless($request->user()->canAccessOffice((int) $depot->office_id), 403);
         }
 
+        if ($depot->kind === 'warehouse') {
+            abort_unless($request->user()->hasPermission('kams.stock.warehouses.update'), 403);
+        } else {
+            abort_unless($request->user()->hasPermission('kams.products.update'), 403);
+        }
+
         $data = $request->validate([
             'office_id' => ['nullable', 'exists:offices,id'],
+            'province_id' => ['nullable', 'exists:provinces,id'],
             'name' => ['sometimes', 'string'],
             'code' => ['nullable', 'string', 'max:32'],
             'status' => ['nullable', 'in:active,inactive'],
@@ -265,6 +272,16 @@ class KamsResourceController extends Controller
 
     public function destroyDepot(Request $request, KamsDepot $depot): JsonResponse
     {
+        if ($depot->kind === 'warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+            abort_unless($request->user()->hasPermission('kams.stock.warehouses.delete'), 403);
+        } else {
+            abort_unless($request->user()->hasPermission('kams.stock.depots.delete'), 403);
+            if ($depot->office_id) {
+                abort_unless($request->user()->canAccessOffice((int) $depot->office_id), 403);
+            }
+        }
+
         return $this->destroy($depot, $request);
     }
 

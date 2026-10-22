@@ -129,13 +129,13 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="relative flex min-h-[calc(100dvh-64px)] flex-col overflow-hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(78,154,44,0.35),transparent_42%),radial-gradient(circle_at_80%_10%,rgba(4,55,17,0.55),transparent_38%),linear-gradient(180deg,#0b2416_0%,#062010_55%,#04150c_100%)]" />
       <div className="pointer-events-none absolute -left-24 top-24 h-72 w-72 rounded-full bg-lime/20 blur-3xl" />
       <div className="pointer-events-none absolute -right-16 bottom-32 h-80 w-80 rounded-full bg-white/5 blur-3xl" />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 py-8">
-        <div className="flex flex-1 flex-col items-center justify-center">
+      <div className="relative z-10 mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col px-5 pt-8 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto">
           <div className="w-full text-center text-white">
             <p className="text-xs font-semibold tracking-[0.32em] text-white/55">LALI HOLDINGS</p>
             <h1 className="mt-3 text-3xl font-extrabold sm:text-4xl">

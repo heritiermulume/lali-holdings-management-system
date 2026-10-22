@@ -1066,6 +1066,9 @@
     "region": "Region",
     "noRegion": "No region",
     "addWarehouse": "Create",
+    "editWarehouse": "Edit warehouse",
+    "deleteWarehouse": "Delete warehouse",
+    "deleteWarehouseConfirm": "Delete warehouse {{name}}? This cannot be undone.",
     "newWarehouse": "New warehouse",
     "receiveStock": "Receive stock",
     "movements": "Movements",
@@ -1742,10 +1745,13 @@
             "view": "View stock statistics"
           },
           "warehouses": {
-            "view": "View warehouses"
+            "view": "View warehouses",
+            "update": "Edit a warehouse",
+            "delete": "Delete a warehouse"
           },
           "depots": {
-            "view": "View depots"
+            "view": "View depots",
+            "delete": "Delete a depot"
           },
           "reports": {
             "view": "View the Assignment reports page",

@@ -786,7 +786,7 @@ export function UsersPage() {
             </Button>
           ) : null}
           {hasPermission('users.export') ? (
-            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('common.export')} onClick={() => void exportUsers()}>
+            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('common.export')} disabled={total === 0} onClick={() => void exportUsers()}>
               <Download size={16} />
               <span className="hidden sm:inline">{t('common.export')}</span>
             </Button>
@@ -798,6 +798,7 @@ export function UsersPage() {
                 className="h-11 w-11 px-0 sm:w-auto sm:px-4"
                 aria-label={t('common.print')}
                 aria-expanded={printMenuOpen}
+                disabled={total === 0}
                 onClick={() => setPrintMenuOpen((current) => !current)}
               >
                 <Printer size={16} />
@@ -953,10 +954,19 @@ export function UsersPage() {
           </Select>
           <Field label={t('users.email')} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
           <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <Select label={t('common.status')} value={form.is_active ? '1' : '0'} onChange={(e) => setForm({ ...form, is_active: e.target.value === '1' })}>
-            <option value="1">{t('users.active')}</option>
-            <option value="0">{t('users.inactive')}</option>
-          </Select>
+          <div className="flex items-end gap-3">
+            <div className="min-w-0 flex-1">
+              <Select label={t('common.status')} value={form.is_active ? '1' : '0'} onChange={(e) => setForm({ ...form, is_active: e.target.value === '1' })}>
+                <option value="1">{t('users.active')}</option>
+                <option value="0">{t('users.inactive')}</option>
+              </Select>
+            </div>
+            {editing ? (
+              <Button type="button" variant="secondary" className="shrink-0" onClick={() => { setPasswordForm({ password: pendingPassword || '', confirmation: pendingPassword || '' }); setPasswordError(''); setPasswordOpen(true) }}>
+                {t('auth.changePassword')}
+              </Button>
+            ) : null}
+          </div>
           {formCanBeCertified ? (
             <div className="space-y-1.5">
               <Select
@@ -1108,16 +1118,11 @@ export function UsersPage() {
           </div>
           ) : null}
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
-          {editing ? (
-            <Button type="button" variant="secondary" className="w-full" onClick={() => { setPasswordForm({ password: pendingPassword || '', confirmation: pendingPassword || '' }); setPasswordError(''); setPasswordOpen(true) }}>
-              {t('common.changePassword')}
-            </Button>
-          ) : null}
           <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
       </Modal>
 
-      <Modal open={passwordOpen} title={t('common.changePassword')} onClose={() => setPasswordOpen(false)}>
+      <Modal open={passwordOpen} title={t('auth.changePassword')} onClose={() => setPasswordOpen(false)}>
         <form
           className="space-y-3"
           onSubmit={(event) => {

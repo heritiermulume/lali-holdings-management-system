@@ -248,6 +248,7 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
           'Warehouses',
           leaves(byExact(kams, 'kams.stock.warehouses.view')),
           [
+            ...actionLeavesOnly(kams, 'kams.stock.warehouses', ['update', 'delete'], true),
             ...leaves(byExact(kams, 'kams.products.view'), true),
             ...actionLeavesOnly(kams, 'kams.products', ['create', 'update', 'delete'], true),
             ...leaves(byExact(kams, 'kams.stock.update'), true),
@@ -259,6 +260,7 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
           'Depots',
           leaves(byExact(kams, 'kams.stock.depots.view')),
           [
+            ...actionLeavesOnly(kams, 'kams.stock.depots', ['delete'], true),
             ...leaves(byExact(kams, 'kams.products.view'), true),
             ...actionLeavesOnly(kams, 'kams.products', ['create', 'update', 'delete'], true),
             ...leaves(byExact(kams, 'kams.stock.update'), true),

@@ -247,6 +247,8 @@ export function KamsWarehouses() {
   const [lookups, setLookups] = useState<Lookups | null>(null)
   const [openWarehouseIds, setOpenWarehouseIds] = useState<number[]>([])
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState<Location | null>(null)
+  const [deleting, setDeleting] = useState<Location | null>(null)
   const [receiveOpen, setReceiveOpen] = useState(false)
   const [productOpen, setProductOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
@@ -371,20 +373,52 @@ export function KamsWarehouses() {
     setSelectedDepotIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   }
 
+  const openEditWarehouse = (warehouse: Location) => {
+    const city = (lookups?.cities || []).find((item) => item.province_id && item.province_id === warehouse.province_id)
+    setEditing(warehouse)
+    setForm({
+      name: warehouse.name || '',
+      code: warehouse.code || '',
+      city_id: city ? String(city.id) : '',
+      province_id: warehouse.province_id ? String(warehouse.province_id) : '',
+      notes: warehouse.notes || '',
+    })
+    setError('')
+    setOpen(true)
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
     try {
-      await api.post('/modules/kams/depots', {
-        kind: 'warehouse',
+      const payload = {
         name: form.name,
         code: form.code || null,
         province_id: form.province_id ? Number(form.province_id) : null,
         notes: form.notes || null,
         status: 'active',
-      })
+      }
+      if (editing) {
+        await api.put(`/modules/kams/depots/${editing.id}`, payload)
+      } else {
+        await api.post('/modules/kams/depots', { kind: 'warehouse', ...payload })
+      }
       setOpen(false)
+      setEditing(null)
       setForm({})
+      void loadWarehouses()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    }
+  }
+
+  const confirmDeleteWarehouse = async () => {
+    if (!deleting) return
+    setError('')
+    try {
+      await api.delete(`/modules/kams/depots/${deleting.id}`)
+      setDeleting(null)
       void loadWarehouses()
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
@@ -582,7 +616,7 @@ export function KamsWarehouses() {
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">{t('kams.warehousesHint')}</p>
         {lookups?.can_manage_warehouses && hasPermission('kams.products.create') ? (
-          <Button className="shrink-0 self-end sm:self-auto" onClick={() => { setForm({}); setError(''); setOpen(true) }}>{t('kams.addWarehouse')}</Button>
+          <Button className="shrink-0 self-end sm:self-auto" onClick={() => { setEditing(null); setForm({}); setError(''); setOpen(true) }}>{t('kams.addWarehouse')}</Button>
         ) : null}
       </div>
       <div className="grid gap-3">
@@ -593,11 +627,12 @@ export function KamsWarehouses() {
           const warehouseValue = warehouseProducts.reduce((sum, item) => sum + lineStockValue(item.quantity, item.product), 0)
           return (
             <Card key={row.id} className="overflow-hidden">
+              <div className="flex w-full items-start justify-between gap-3 p-5">
               <button
                 type="button"
                 onClick={() => toggleWarehouseOpen(row.id)}
                 aria-expanded={expanded}
-                className="flex w-full items-start justify-between gap-3 p-5 text-left"
+                className="flex min-w-0 flex-1 items-start gap-3 text-left"
               >
                 <div className="flex min-w-0 items-start gap-3">
                   <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-lhms-soft text-lhms">
@@ -617,8 +652,40 @@ export function KamsWarehouses() {
                     </div>
                   </div>
                 </div>
-                <ChevronDown size={18} className={cn('mt-1 shrink-0 text-muted transition', expanded ? 'rotate-0' : '-rotate-90')} />
               </button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {lookups?.can_manage_warehouses && hasPermission('kams.stock.warehouses.update') ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.editWarehouse')}
+                      title={t('kams.editWarehouse')}
+                      className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface"
+                      onClick={() => openEditWarehouse(row)}
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  ) : null}
+                  {lookups?.can_manage_warehouses && hasPermission('kams.stock.warehouses.delete') ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.deleteWarehouse')}
+                      title={t('kams.deleteWarehouse')}
+                      className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-surface"
+                      onClick={() => setDeleting(row)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={expanded ? t('common.close') : t('common.view')}
+                    className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-surface"
+                    onClick={() => toggleWarehouseOpen(row.id)}
+                  >
+                    <ChevronDown size={18} className={cn('transition', expanded ? 'rotate-0' : '-rotate-90')} />
+                  </button>
+                </div>
+              </div>
               {expanded ? (
                 <div className="space-y-4 border-t border-line bg-surface px-5 py-4">
                   <div className="flex flex-wrap items-center gap-2">
@@ -740,7 +807,18 @@ export function KamsWarehouses() {
       </div>
       {rows.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
 
-      <Modal open={open} title={t('kams.newWarehouse')} onClose={() => setOpen(false)}>
+      <Modal open={Boolean(deleting)} title={t('kams.deleteWarehouse')} onClose={() => setDeleting(null)}>
+        <div className="space-y-4">
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <p className="text-sm text-muted">{t('kams.deleteWarehouseConfirm', { name: deleting?.name })}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
+            <Button onClick={() => void confirmDeleteWarehouse()}>{t('common.delete')}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={open} title={editing ? t('kams.editWarehouse') : t('kams.newWarehouse')} onClose={() => { setOpen(false); setEditing(null) }}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <Field label={t('org.name')} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
@@ -1138,6 +1216,7 @@ export function KamsDepots() {
   const [openDepotIds, setOpenDepotIds] = useState<number[]>([])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Location | null>(null)
+  const [deleting, setDeleting] = useState<Location | null>(null)
   const [receiveOpen, setReceiveOpen] = useState(false)
   const [receiveTarget, setReceiveTarget] = useState<Location | null>(null)
   const [receiveForm, setReceiveForm] = useState<Record<string, string>>({})
@@ -1231,6 +1310,19 @@ export function KamsDepots() {
       setError(response?.message || t('kams.saveError'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const confirmDeleteDepot = async () => {
+    if (!deleting) return
+    setError('')
+    try {
+      await api.delete(`/modules/kams/depots/${deleting.id}`)
+      setDeleting(null)
+      void load()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
     }
   }
 
@@ -1428,6 +1520,17 @@ export function KamsDepots() {
                       <Pencil size={16} />
                     </button>
                   ) : null}
+                  {hasPermission('kams.stock.depots.delete') ? (
+                    <button
+                      type="button"
+                      aria-label={t('kams.deleteDepot')}
+                      title={t('kams.deleteDepot')}
+                      className="grid h-9 w-9 place-items-center rounded-lg text-danger hover:bg-surface"
+                      onClick={() => { setError(''); setDeleting(row) }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     aria-label={isOpen ? t('common.close') : t('common.view')}
@@ -1561,6 +1664,17 @@ export function KamsDepots() {
         })}
       </div>
       {rows.length === 0 ? <Empty>{t('common.empty')}</Empty> : null}
+
+      <Modal open={Boolean(deleting)} title={t('kams.deleteDepot')} onClose={() => setDeleting(null)}>
+        <div className="space-y-4">
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <p className="text-sm text-muted">{t('kams.deleteDepotConfirm', { name: deleting?.name })}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleting(null)}>{t('common.cancel')}</Button>
+            <Button onClick={() => void confirmDeleteDepot()}>{t('common.delete')}</Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={open}

@@ -438,7 +438,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
             </Button>
           ) : null}
           {hasPermission('kams.clients.view') ? (
-            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('common.export')} onClick={() => void exportClients()}>
+            <Button variant="secondary" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label={t('common.export')} disabled={rows.length === 0} onClick={() => void exportClients()}>
               <Download size={16} />
               <span className="hidden sm:inline">{t('common.export')}</span>
             </Button>
@@ -454,6 +454,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
               className="h-11 w-11 px-0 sm:w-auto sm:px-4"
               aria-label={t('common.print')}
               aria-expanded={printMenuOpen}
+              disabled={rows.length === 0}
               onClick={() => setPrintMenuOpen((open) => !open)}
             >
               <Printer size={16} />

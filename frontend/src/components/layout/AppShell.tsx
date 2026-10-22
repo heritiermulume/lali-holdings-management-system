@@ -149,7 +149,7 @@ export function AppShell() {
     : []
 
   return (
-    <div className={cn('min-h-dvh', isHome ? 'bg-[#071a10]' : 'bg-surface lg:grid lg:grid-cols-[272px_1fr]')}>
+    <div className={cn(isHome ? 'fixed inset-0 flex flex-col overflow-hidden bg-[#071a10]' : 'min-h-dvh bg-surface lg:grid lg:grid-cols-[272px_1fr]')}>
       {!isHome && open ? (
         <button
           type="button"
@@ -284,7 +284,7 @@ export function AppShell() {
       </aside>
       ) : null}
 
-      <div className={cn('flex min-w-0 flex-col', isHome ? 'min-h-dvh' : 'pb-20 lg:pb-0')}>
+      <div className={cn('flex min-w-0 flex-col', isHome ? 'min-h-0 flex-1' : 'pb-20 lg:pb-0')}>
         <header className={cn(
           'sticky top-0 z-30 flex items-center justify-between gap-3 px-4 py-1.5 lg:px-8',
           isHome ? 'border-b border-white/10 bg-black/20 text-white backdrop-blur-xl' : 'border-b border-line bg-white/90 backdrop-blur',
@@ -416,7 +416,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className={cn('flex-1', isHome ? 'px-0 py-0' : 'px-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:px-8 lg:py-8')}>
+        <main className={cn('flex-1', isHome ? 'flex min-h-0 flex-col px-0 py-0' : 'px-4 py-5 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:px-8 lg:py-8')}>
           <Outlet />
         </main>
       </div>

@@ -1065,6 +1065,9 @@
     "region": "Région",
     "noRegion": "Sans région",
     "addWarehouse": "Créer",
+    "editWarehouse": "Modifier l'entrepôt",
+    "deleteWarehouse": "Supprimer l'entrepôt",
+    "deleteWarehouseConfirm": "Supprimer l'entrepôt {{name}} ? Cette action est définitive.",
     "newWarehouse": "Nouvel entrepôt",
     "receiveStock": "Réceptionner",
     "movements": "Mouvements",
@@ -1737,10 +1740,13 @@
             "view": "Consulter les statistiques stock"
           },
           "warehouses": {
-            "view": "Consulter les entrepôts"
+            "view": "Consulter les entrepôts",
+            "update": "Modifier un entrepôt",
+            "delete": "Supprimer un entrepôt"
           },
           "depots": {
-            "view": "Consulter les dépôts"
+            "view": "Consulter les dépôts",
+            "delete": "Supprimer un dépôt"
           },
           "reports": {
             "view": "Consulter la page Rapports d'affectations",

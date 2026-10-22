@@ -40,7 +40,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-dvh lg:grid-cols-2">
+    <div className="fixed inset-0 flex flex-col overflow-y-auto lg:grid lg:grid-cols-2 lg:grid-rows-1">
       <section className="relative hidden overflow-hidden bg-lhms text-white lg:flex lg:flex-col lg:justify-between lg:p-14">
         <div className="absolute -right-24 -top-24 h-80 w-80 rounded-full bg-lime/30 blur-3xl" />
         <div className="absolute bottom-10 left-10 h-64 w-64 rounded-full bg-white/5 blur-2xl" />
@@ -63,7 +63,7 @@ export function LoginPage() {
         </ul>
       </section>
 
-      <section className="flex min-h-dvh flex-col bg-[radial-gradient(circle_at_top,_#e8f3ea_0%,_#f4f7f5_45%,_#ffffff_100%)] px-5 py-5 lg:min-h-0 lg:items-center lg:justify-center lg:bg-none lg:py-10">
+      <section className="flex min-h-0 flex-1 flex-col bg-[radial-gradient(circle_at_top,_#e8f3ea_0%,_#f4f7f5_45%,_#ffffff_100%)] px-5 py-5 lg:items-center lg:justify-center lg:bg-none lg:py-10">
         <div className="flex flex-1 items-start justify-center lg:flex-none lg:items-center">
           {mode === 'login' ? (
             <form
