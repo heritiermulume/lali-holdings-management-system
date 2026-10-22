@@ -382,7 +382,11 @@ function ScopeFilters({
               offices={data.scope.offices}
               onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
             />
-          ) : null}
+          ) : (
+            <span className="self-center text-xs text-muted whitespace-nowrap">
+              {t('dashboard.periodRange', { start: data.range.from, end: data.range.to })}
+            </span>
+          )}
         </div>
         <button
           type="button"
@@ -439,7 +443,9 @@ function ScopeFilters({
       <div className="mt-3 flex flex-col gap-2 text-xs text-muted sm:flex-row sm:flex-wrap sm:items-center">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="green">{t(`groupDash.level.${data.scope.level}`)}</Badge>
-          <span>{t('dashboard.periodRange', { start: data.range.from, end: data.range.to })}</span>
+          {data.scope.offices.length > 1 ? (
+            <span>{t('dashboard.periodRange', { start: data.range.from, end: data.range.to })}</span>
+          ) : null}
         </div>
         <span className="sm:before:mr-1 sm:before:content-['·']">{t('groupDash.vsPrevious')}</span>
         {(companyId || officeId) ? (

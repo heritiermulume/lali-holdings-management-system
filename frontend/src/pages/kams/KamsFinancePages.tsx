@@ -425,13 +425,16 @@ export function KamsFinanceDashboard() {
             {t('kams.financeDashboardHint')}
             {selectedOffice ? ` · ${selectedOffice.name}` : ` · ${t('kams.allOffices')}`}
           </p>
-          <p className="mt-2 text-xs text-white/60">
-            {t('kams.periodRange', {
-              start: parseDate(data.range.from).toLocaleDateString(locale),
-              end: parseDate(data.range.to).toLocaleDateString(locale),
-            })}
-            {data.previous_range ? ` · ${t('kams.vsPreviousPeriod')}` : ''}
-          </p>
+          {(data.can_filter_offices || data.previous_range) ? (
+            <p className="mt-2 text-xs text-white/60">
+              {data.can_filter_offices ? t('kams.periodRange', {
+                start: parseDate(data.range.from).toLocaleDateString(locale),
+                end: parseDate(data.range.to).toLocaleDateString(locale),
+              }) : null}
+              {data.can_filter_offices && data.previous_range ? ' · ' : ''}
+              {data.previous_range ? t('kams.vsPreviousPeriod') : null}
+            </p>
+          ) : null}
         </div>
       </Card>
 
@@ -448,7 +451,14 @@ export function KamsFinanceDashboard() {
                   setOpenOffice(null)
                 }}
               />
-            ) : <span />}
+            ) : (
+              <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+                {t('kams.periodRange', {
+                  start: parseDate(data.range.from).toLocaleDateString(locale),
+                  end: parseDate(data.range.to).toLocaleDateString(locale),
+                })}
+              </p>
+            )}
             <button
               type="button"
               onClick={() => setFiltersOpen((open) => !open)}

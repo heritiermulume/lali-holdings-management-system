@@ -137,11 +137,14 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
   return (
     <div className="min-w-0 space-y-4 overflow-x-hidden">
       <div className="flex flex-col gap-3">
-        <div className="flex w-full items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-semibold">{t('dashboard.officePerformance')}</div>
-            <p className="mt-1 text-sm text-muted">{t('dashboard.officePerformanceHint')}</p>
-          </div>
+        <div className="min-w-0">
+          <div className="font-semibold">{t('dashboard.officePerformance')}</div>
+          <p className="mt-1 text-sm text-muted">{t('dashboard.officePerformanceHint')}</p>
+        </div>
+        <div className="flex w-full items-center justify-between gap-3">
+          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+            {t('dashboard.periodRange', { start: data.range.from, end: data.range.to })}
+          </p>
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}

@@ -105,9 +105,11 @@ export function KamsDashboard() {
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-2">
-        <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
-          {t('kams.periodRange', { start: formatDay(data.range.from), end: formatDay(data.range.to) })}
-        </p>
+        {data.can_filter_offices ? (
+          <p className="shrink-0 whitespace-nowrap text-[11px] text-muted sm:text-xs">
+            {t('kams.periodRange', { start: formatDay(data.range.from), end: formatDay(data.range.to) })}
+          </p>
+        ) : null}
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
           {data.can_filter_offices ? (
             <OfficeFilterSelect
@@ -116,7 +118,11 @@ export function KamsDashboard() {
               offices={data.filter_offices || []}
               onChange={(e) => setOfficeId(e.target.value)}
             />
-          ) : <span />}
+          ) : (
+            <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+              {t('kams.periodRange', { start: formatDay(data.range.from), end: formatDay(data.range.to) })}
+            </p>
+          )}
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}

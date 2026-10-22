@@ -166,12 +166,14 @@ export function KamsRecruitmentDashboard() {
   return (
     <div className="space-y-5">
       <div className="flex w-full flex-col gap-2">
-        <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
-          {t('kams.periodRange', {
-            start: parseDate(data.range.from).toLocaleDateString(locale),
-            end: parseDate(data.range.to).toLocaleDateString(locale),
-          })}
-        </p>
+        {data.can_filter_offices ? (
+          <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+            {t('kams.periodRange', {
+              start: parseDate(data.range.from).toLocaleDateString(locale),
+              end: parseDate(data.range.to).toLocaleDateString(locale),
+            })}
+          </p>
+        ) : null}
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
           {data.can_filter_offices ? (
             <OfficeFilterSelect
@@ -180,7 +182,14 @@ export function KamsRecruitmentDashboard() {
               offices={data.filter_offices || []}
               onChange={(e) => setOfficeId(e.target.value)}
             />
-          ) : <span />}
+          ) : (
+            <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+              {t('kams.periodRange', {
+                start: parseDate(data.range.from).toLocaleDateString(locale),
+                end: parseDate(data.range.to).toLocaleDateString(locale),
+              })}
+            </p>
+          )}
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}

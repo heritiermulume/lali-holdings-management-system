@@ -156,7 +156,7 @@ function todayIso() {
 }
 
 export function KamsCompanyAccountPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { hasPermission } = useAuth()
   const [rows, setRows] = useState<Summary[]>([])
   const [data, setData] = useState<Statement | null>(null)
@@ -622,7 +622,14 @@ export function KamsCompanyAccountPage() {
         <>
           <div className="space-y-3">
             <div className="flex w-full min-w-0 items-center justify-between gap-2">
-              <p className="text-sm text-muted">{t('kams.cashPeriodHint')}</p>
+              <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
+                {from && to
+                  ? t('kams.periodRange', {
+                    start: new Date(`${from}T12:00:00`).toLocaleDateString(i18n.language),
+                    end: new Date(`${to}T12:00:00`).toLocaleDateString(i18n.language),
+                  })
+                  : t('kams.cashPeriodHint')}
+              </p>
               <button
                 type="button"
                 onClick={() => setFiltersOpen((open) => !open)}
