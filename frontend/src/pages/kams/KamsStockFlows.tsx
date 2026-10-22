@@ -450,7 +450,7 @@ function AssignmentDetails({ assignment }: { assignment: Assignment }) {
         <AssignmentDetailLine label={t('kams.reference')} value={assignment.reference} />
         <AssignmentDetailLine label={t('common.status')} value={t(`kams.status.${assignment.status}`, { defaultValue: assignment.status })} />
       </div>
-      {items.length === 0 ? <p className="text-sm text-muted">{t('common.empty')}</p> : (
+      {items.length === 0 ? <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p> : (
         <div className="overflow-hidden rounded-2xl border border-line">
           {items.map((item, index) => {
             const sold = Math.max(0, item.quantity_out - item.quantity_returned - item.quantity_lost)

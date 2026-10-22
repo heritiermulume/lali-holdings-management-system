@@ -568,7 +568,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-muted">{t('kams.noWarehousesYet')}</p>
+              <p className="py-2 text-center text-sm text-muted">{t('kams.noWarehousesYet')}</p>
             )
           ) : canChooseOffice ? (
             <Select label={t('kams.office')} required value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>

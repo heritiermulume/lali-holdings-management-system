@@ -403,8 +403,8 @@ export function KamsAssignmentReports() {
                 `).join('')}
               </tbody>
             </table>`
-          : `<p style="color:#5d6b62;font-size:12px;">${escapeHtml(t('common.empty'))}</p>`)
-        : (day.assignments.map(assignmentHtml).join('') || `<p style="color:#5d6b62;font-size:12px;">${escapeHtml(t('common.empty'))}</p>`)}
+          : `<p style="color:#5d6b62;font-size:12px;text-align:center;">${escapeHtml(t('common.empty'))}</p>`)
+        : (day.assignments.map(assignmentHtml).join('') || `<p style="color:#5d6b62;font-size:12px;text-align:center;">${escapeHtml(t('common.empty'))}</p>`)}
     </section>
   `
 

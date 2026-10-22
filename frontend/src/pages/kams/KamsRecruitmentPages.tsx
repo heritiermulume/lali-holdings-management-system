@@ -1566,7 +1566,7 @@ export function KamsAgents() {
               </div>
             </div>
           ))}
-          {coachedMembers.length === 0 ? <p className="text-sm text-muted">{t('common.empty')}</p> : null}
+          {coachedMembers.length === 0 ? <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p> : null}
         </div>
         <Button className="mt-4 w-full" variant="secondary" onClick={() => setCoachedOpen(false)}>{t('common.close')}</Button>
       </Modal>
@@ -2158,7 +2158,7 @@ export function KamsCandidates() {
           </Card>
           )
         })}
-        {rows.length === 0 ? <p className="text-sm text-muted md:col-span-2">{t('common.empty')}</p> : null}
+        {rows.length === 0 ? <p className="py-8 text-center text-sm text-muted md:col-span-2">{t('common.empty')}</p> : null}
           </>
         )}
       </div>

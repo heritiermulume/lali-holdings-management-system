@@ -716,7 +716,7 @@ export function KamsWarehouses() {
                     ) : null}
                   </div>
                   {warehouseProducts.length === 0 ? (
-                    <p className="text-sm text-muted">{t('common.empty')}</p>
+                    <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p>
                   ) : (
                     <PagedTable
                       rows={warehouseProducts}
@@ -1068,7 +1068,7 @@ export function KamsWarehouses() {
                 </label>
               ))}
               {!originWarehouseId && assignableWarehouses.length === 0 ? (
-                <p className="text-xs text-muted">{t('kams.noWarehousesYet')}</p>
+                <p className="py-2 text-center text-xs text-muted">{t('kams.noWarehousesYet')}</p>
               ) : null}
             </div>
           </div>
@@ -1099,7 +1099,7 @@ export function KamsWarehouses() {
                   <span>{depot.name}{depot.office?.name ? ` · ${depot.office.name}` : ''}</span>
                 </label>
               ))}
-              {(lookups?.depots || []).length === 0 ? <p className="text-xs text-muted">{t('kams.noDepotsYet')}</p> : null}
+              {(lookups?.depots || []).length === 0 ? <p className="py-2 text-center text-xs text-muted">{t('kams.noDepotsYet')}</p> : null}
             </div>
           </div>
           <Button type="submit" className="w-full">{t('common.save')}</Button>
@@ -1566,7 +1566,7 @@ export function KamsDepots() {
                     ) : null}
                   </div>
                   {products.length === 0 ? (
-                    <p className="text-sm text-muted">{t('common.empty')}</p>
+                    <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p>
                   ) : (
                     <PagedTable
                       rows={products}
@@ -1859,7 +1859,7 @@ export function KamsDepots() {
             <div className="space-y-2">
               <div className="text-sm font-medium">{t('kams.adjustmentHistory')}</div>
               {infoAdjustments.length === 0 ? (
-                <p className="text-xs text-muted">{t('kams.noAdjustments')}</p>
+                <p className="py-2 text-center text-xs text-muted">{t('kams.noAdjustments')}</p>
               ) : (
                 <div className="max-h-40 space-y-2 overflow-y-auto text-xs">
                   {infoAdjustments.map((row) => (
