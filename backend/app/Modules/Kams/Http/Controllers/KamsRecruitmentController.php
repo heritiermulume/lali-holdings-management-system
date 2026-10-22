@@ -81,6 +81,7 @@ class KamsRecruitmentController extends Controller
 
         $users = User::query()
             ->where('is_active', true)
+            ->whereDoesntHave('roles', fn ($roles) => $roles->whereIn('roles.slug', RoleCatalog::kamsStockAssignmentExcludedSlugs()))
             ->when(! $request->user()->isGroupAdmin(), function ($q) use ($companyIds) {
                 $q->where(function ($inner) use ($companyIds) {
                     $inner->whereIn('primary_company_id', $companyIds ?: [0])
@@ -993,7 +994,7 @@ class KamsRecruitmentController extends Controller
 
     private function scopedMembers(Request $request): Builder
     {
-        $query = KamsMember::query();
+        $query = KamsMember::query()->withoutPlatformAccounts();
         $this->applyMemberScope($query, $request);
 
         return $query;

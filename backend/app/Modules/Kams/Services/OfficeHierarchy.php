@@ -106,6 +106,11 @@ class OfficeHierarchy
             return;
         }
 
+        $manager = \App\Models\User::query()->find($office->manager_user_id);
+        if ($manager?->hasFullAccess()) {
+            return;
+        }
+
         $member = KamsMember::query()
             ->with('role:id,slug')
             ->where('company_id', $office->company_id)

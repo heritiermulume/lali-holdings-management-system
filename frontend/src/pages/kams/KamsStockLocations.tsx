@@ -688,7 +688,7 @@ export function KamsWarehouses() {
               </div>
               {expanded ? (
                 <div className="space-y-4 border-t border-line bg-surface px-5 py-4">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
                     {hasPermission('kams.products.create') ? (
                       <Button onClick={() => openCreateProduct(row)}>{t('kams.addProduct')}</Button>
                     ) : null}
@@ -745,7 +745,7 @@ export function KamsWarehouses() {
                           <td className="px-4 py-1.5 text-right font-semibold tabular-nums">{item.quantity}</td>
                           <td className="px-4 py-1.5 text-right tabular-nums">{money(lineStockValue(item.quantity, item.product))}</td>
                           <td className="px-4 py-1.5">
-                            <div className="flex flex-wrap justify-end gap-1">
+                            <div className="flex flex-nowrap items-center justify-end gap-1">
                               {lookups?.can_manage_warehouses && hasPermission('kams.stock.update') ? (
                                 <button
                                   type="button"
@@ -1544,7 +1544,7 @@ export function KamsDepots() {
               </div>
               {isOpen ? (
                 <div className="space-y-4 border-t border-line bg-surface px-5 py-4">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
                     {hasPermission('kams.stock.update') ? (
                       <Button variant="secondary" onClick={() => openReceive(row)}>
                         {t('kams.receiveStock')}
@@ -1595,7 +1595,7 @@ export function KamsDepots() {
                           <td className="px-4 py-1.5 text-right font-semibold tabular-nums">{item.quantity}</td>
                           <td className="px-4 py-1.5 text-right tabular-nums">{money(lineStockValue(item.quantity, item.product))}</td>
                           <td className="px-4 py-1.5">
-                            <div className="flex flex-wrap justify-end gap-1">
+                            <div className="flex flex-nowrap items-center justify-end gap-1">
                               <button
                                 type="button"
                                 aria-label={t('kams.productInfo')}

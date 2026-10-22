@@ -356,7 +356,7 @@ function ScopeFilters({
   return (
     <Card className="p-3 sm:p-5">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between xl:gap-4">
-        <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:max-w-xl">
+        <div className="min-w-0 sm:max-w-xs">
           <label className="block text-sm">
             <span className="mb-1.5 block font-medium text-muted">{t('groupDash.scopeCompany')}</span>
             <select
@@ -370,31 +370,29 @@ function ScopeFilters({
               ))}
             </select>
           </label>
-          {data.scope.offices.length > 1 ? (
-            <div className="flex items-end">
-              <OfficeFilterSelect
-                className="w-full sm:w-full"
-                label={t('groupDash.scopeOffice')}
-                allLabel={t('groupDash.allOffices')}
-                value={officeId === '' ? '' : String(officeId)}
-                disabled={!companyId}
-                offices={data.scope.offices}
-                onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
-              />
-            </div>
-          ) : null}
         </div>
 
-        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-end sm:justify-between xl:w-auto xl:justify-end">
+        <div className="flex w-full min-w-0 flex-nowrap items-center gap-2">
+          {data.scope.offices.length > 1 ? (
+            <OfficeFilterSelect
+              className="!w-auto min-w-[7.5rem] max-w-[42%] shrink"
+              label={t('groupDash.scopeOffice')}
+              allLabel={t('groupDash.allOffices')}
+              value={officeId === '' ? '' : String(officeId)}
+              disabled={!companyId}
+              offices={data.scope.offices}
+              onChange={(event) => setOfficeId(event.target.value ? Number(event.target.value) : '')}
+            />
+          ) : null}
           <button
             type="button"
             onClick={() => (period === 'custom' ? applyPreset(lastPreset) : setPeriod('custom'))}
-            className="min-h-10 shrink-0 self-start rounded-full bg-surface px-3 py-2 text-xs font-semibold text-lhms sm:text-sm"
+            className="min-h-10 shrink-0 rounded-full bg-surface px-3 py-2 text-xs font-semibold text-lhms sm:text-sm"
           >
             {period === 'custom' ? t('dashboard.presetPeriod') : t('dashboard.customPeriod')}
           </button>
           {period === 'custom' ? (
-            <div className="grid w-full grid-cols-2 gap-2 sm:w-80">
+            <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
               <Field
                 className="min-w-0 max-w-full"
                 label={t('dashboard.dateFrom')}
@@ -414,13 +412,13 @@ function ScopeFilters({
               />
             </div>
           ) : (
-            <div className="flex w-full rounded-full bg-surface p-1 sm:w-auto">
+            <div className="flex min-w-0 flex-1 overflow-x-auto rounded-full bg-surface p-1">
               {(['day', 'week', 'month'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => applyPreset(item)}
-                  className={cn('min-h-10 flex-1 rounded-full px-3 text-sm font-semibold sm:flex-none sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                  className={cn('min-h-10 flex-1 rounded-full px-3 text-sm font-semibold whitespace-nowrap sm:flex-none sm:px-4', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
                 >
                   {t(`dashboard.period.${item}`)}
                 </button>

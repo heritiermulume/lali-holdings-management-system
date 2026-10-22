@@ -15,6 +15,10 @@ class UserCredentialsService
     {
         $user->loadMissing('roles');
 
+        if ($user->isSuperAdmin() || $user->isGroupAdmin()) {
+            return false;
+        }
+
         return $user->roles->contains(fn (Role $role) => filled($role->pivot->company_id) || filled($role->pivot->office_id));
     }
 
@@ -29,7 +33,8 @@ class UserCredentialsService
             return null;
         }
 
-        $shouldIssue = blank($user->login_password) || filled($requestedPassword);
+        $newlyCreated = $user->created_at && $user->created_at->greaterThan(now()->subMinutes(2));
+        $shouldIssue = filled($requestedPassword) || (blank($user->login_password) && $newlyCreated);
 
         if ($shouldIssue) {
             $plain = $requestedPassword ?: $this->generatePassword();

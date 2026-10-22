@@ -181,15 +181,16 @@ export function KamsStockStats() {
             end: parseDate(data.range.to).toLocaleDateString(locale),
           })}
         </p>
-        <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full min-w-0 flex-nowrap items-center gap-2">
           {data.can_filter_offices ? (
             <OfficeFilterSelect
+              className="!w-auto min-w-[7.5rem] max-w-[42%] shrink"
               value={officeId}
               offices={data.filter_offices || []}
               onChange={(e) => setOfficeId(e.target.value)}
             />
           ) : null}
-          <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto sm:ml-auto">
+          <div className="flex min-w-0 flex-1 overflow-x-auto rounded-full bg-white p-1">
             {(['day', 'week', 'month'] as const).map((item) => (
               <button
                 key={item}

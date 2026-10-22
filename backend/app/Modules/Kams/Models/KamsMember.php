@@ -170,6 +170,19 @@ class KamsMember extends Model
     }
 
     /**
+     * Super administrators and presidents keep full access and are not bureau agents.
+     */
+    public function scopeWithoutPlatformAccounts(Builder $query): Builder
+    {
+        $excluded = RoleCatalog::kamsStockAssignmentExcludedSlugs();
+
+        return $query->where(function (Builder $inner) use ($excluded) {
+            $inner->whereNull('user_id')
+                ->orWhereDoesntHave('user.roles', fn (Builder $roles) => $roles->whereIn('roles.slug', $excluded));
+        });
+    }
+
+    /**
      * Members who can receive stock from an office depot (excludes platform admins).
      */
     public function scopeAssignableForStock(Builder $query): Builder

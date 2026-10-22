@@ -20,6 +20,8 @@ class KamsAccountProvisioner
 
     public function forUser(User $user, ?int $companyId = null): KamsMember
     {
+        abort_if($user->hasFullAccess(), 422, __('A platform administrator is not a bureau agent.'));
+
         $member = $this->existingMember($user);
 
         if (! $member) {
@@ -91,6 +93,10 @@ class KamsAccountProvisioner
 
     public function tryForUser(User $user, ?int $companyId = null): ?KamsMember
     {
+        if ($user->hasFullAccess()) {
+            return null;
+        }
+
         $companyId = $companyId ?: $this->kamsCompanyIdFor($user);
         if (! $companyId && ! KamsMember::withTrashed()->where('user_id', $user->id)->exists()) {
             return null;

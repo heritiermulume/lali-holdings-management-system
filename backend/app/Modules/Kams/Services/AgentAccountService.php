@@ -110,7 +110,7 @@ class AgentAccountService
         }
 
         $user = $member->user()->first();
-        if (! $user) {
+        if (! $user || $user->hasFullAccess()) {
             return;
         }
 
