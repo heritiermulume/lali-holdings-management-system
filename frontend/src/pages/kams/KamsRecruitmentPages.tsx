@@ -506,9 +506,10 @@ export function KamsRecruitmentWorkspace() {
               className="!w-auto !max-w-[42%] sm:!w-44 sm:!max-w-none"
             />
           ) : null}
-          <p className="min-w-0 flex-1 truncate text-right text-xs text-muted">
+          <p className="min-w-0 truncate text-left text-xs text-muted">
             {range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : null}
           </p>
+          <span className="min-w-0 flex-1" aria-hidden />
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}
@@ -2161,35 +2162,34 @@ export function KamsCandidates() {
           </>
         )}
       </div>
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted">
+      <div className="mt-4 flex items-center justify-center gap-2 overflow-x-auto whitespace-nowrap text-xs sm:gap-3 sm:text-sm">
+        <p className="shrink-0 text-muted">
           {t('kams.pageRange', {
             from: total === 0 ? 0 : (page - 1) * perPage + 1,
             to: Math.min(page * perPage, total),
             total,
           })}
         </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-sm text-muted">
-            {t('kams.rowsPerPage')}
-            <select
-              value={perPage}
-              onChange={(event) => setPerPage(Number(event.target.value))}
-              className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
-            >
-              {[10, 20, 50].map((size) => (
-                <option key={size} value={size}>{size}</option>
-              ))}
-            </select>
-          </label>
-          <PaginationButtons
-            page={page}
-            lastPage={lastPage}
-            disabled={loading}
-            onPrev={() => setPage((value) => Math.max(1, value - 1))}
-            onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
-          />
-        </div>
+        <label className="flex shrink-0 items-center gap-1.5 text-muted">
+          {t('kams.rowsPerPage')}
+          <select
+            value={perPage}
+            onChange={(event) => setPerPage(Number(event.target.value))}
+            className="h-8 rounded-full border border-line bg-white px-2 text-xs font-semibold text-ink sm:h-10 sm:px-3 sm:text-sm"
+          >
+            {[10, 20, 50].map((size) => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+        </label>
+        <PaginationButtons
+          className="shrink-0"
+          page={page}
+          lastPage={lastPage}
+          disabled={loading}
+          onPrev={() => setPage((value) => Math.max(1, value - 1))}
+          onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+        />
       </div>
 
       <Modal open={open} title={editingId ? t('kams.editCandidate') : t('kams.newCandidate')} onClose={() => { setOpen(false); resetCandidateForm() }}>
