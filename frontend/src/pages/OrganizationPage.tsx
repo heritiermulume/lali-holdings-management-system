@@ -296,55 +296,31 @@ export function OrganizationPage() {
       </div>
       {actionError ? <p className="mb-3 text-sm text-danger">{actionError}</p> : null}
       {loading ? <LoadingScreen /> : (
-      <Card className="overflow-hidden">
-        <div className="hidden md:block">
-          <table className="w-full text-sm">
-            <thead className="bg-surface text-left text-muted">
-              <tr>
-                <th className="px-5 py-3">{t('org.name')}</th>
-                <th className="px-5 py-3">{t('org.code')}</th>
-                {tab === 'countries' ? <th className="px-5 py-3">{t('org.coordinates')}</th> : null}
-                <th className="px-5 py-3">{t('org.status')}</th>
-                {(canUpdate || canDelete) ? <th className="px-5 py-3">{t('common.actions')}</th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className={cn('border-t border-line', !isActive(row) && 'opacity-60')}>
-                  <td className="px-5 py-3 font-semibold">{row.name}</td>
-                  <td className="px-5 py-3">{String(row.code || row.iso_code || '—')}</td>
-                  {tab === 'countries' ? (
-                    <td className="px-5 py-3 text-muted">
-                      {row.latitude != null && row.longitude != null
-                        ? `${Number(row.latitude).toFixed(2)}, ${Number(row.longitude).toFixed(2)}`
-                        : '—'}
-                    </td>
-                  ) : null}
-                  <td className="px-5 py-3">
-                    <Badge tone={isActive(row) ? 'green' : 'amber'}>
-                      {isActive(row) ? t('org.active') : t('org.inactive')}
-                    </Badge>
-                  </td>
-                  {(canUpdate || canDelete) ? <td className="px-5 py-3">{actions(row)}</td> : null}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="space-y-3 p-4 md:hidden">
-          {rows.map((row) => (
-            <div key={row.id} className={cn('rounded-xl border border-line p-4', !isActive(row) && 'opacity-60')}>
-              <div className="font-semibold">{row.name}</div>
-              <div className="mt-1 text-sm text-muted">{String(row.code || row.iso_code || '')}</div>
-              <div className="mt-2">
-                <Badge tone={isActive(row) ? 'green' : 'amber'}>
-                  {isActive(row) ? t('org.active') : t('org.inactive')}
-                </Badge>
+      <Card className="overflow-hidden p-0">
+        {rows.length === 0 ? <p className="px-4 py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
+        {rows.map((row) => {
+          const code = String(row.code || row.iso_code || '')
+          const coordinates = tab === 'countries' && row.latitude != null && row.longitude != null
+            ? `${Number(row.latitude).toFixed(2)}, ${Number(row.longitude).toFixed(2)}`
+            : ''
+          const status = isActive(row) ? t('org.active') : t('org.inactive')
+          const detail = [code, coordinates].filter(Boolean).join(' · ')
+          return (
+            <div key={row.id} className={cn('flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0', !isActive(row) && 'opacity-60')}>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold">{row.name}</div>
+                <div className="truncate text-xs text-muted sm:text-sm">
+                  <span className="sm:hidden">{[detail, status].filter(Boolean).join(' · ')}</span>
+                  <span className="hidden sm:inline">{detail || '—'}</span>
+                </div>
               </div>
-              <div className="mt-2">{actions(row)}</div>
+              <span className="hidden shrink-0 sm:inline-flex">
+                <Badge tone={isActive(row) ? 'green' : 'amber'}>{status}</Badge>
+              </span>
+              {(canUpdate || canDelete) ? <div className="shrink-0">{actions(row)}</div> : null}
             </div>
-          ))}
-        </div>
+          )
+        })}
         <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">
             {t('common.pageRange', {

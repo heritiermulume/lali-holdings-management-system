@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Outlet, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Info, Package, Search, Trash2, User } from 'lucide-react'
+import { ClipboardPlus, Info, Lock, Package, Search, Trash2, User } from 'lucide-react'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
@@ -893,8 +893,7 @@ export function KamsAssignments() {
 
   return (
     <div>
-      <p className="mb-4 text-sm text-muted">{t('kams.assignmentFlowHint')}</p>
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex items-center gap-2 sm:gap-3">
         <div className="relative flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />
           <input
@@ -906,15 +905,26 @@ export function KamsAssignments() {
         </div>
         {hasPermission('kams.stock.update') ? (
           <>
-            <Button className="shrink-0" onClick={() => { setError(''); setMemberId(''); setLines([emptyLine()]); setOpen(true) }}>{t('kams.newAssignment')}</Button>
+            <Button
+              className="!h-9 !min-h-0 !w-9 shrink-0 !px-0 sm:!h-11 sm:!min-h-11 sm:!w-auto sm:!px-4"
+              title={t('kams.newAssignment')}
+              aria-label={t('kams.newAssignment')}
+              onClick={() => { setError(''); setMemberId(''); setLines([emptyLine()]); setOpen(true) }}
+            >
+              <ClipboardPlus className="size-5 sm:size-4" />
+              <span className="hidden sm:inline">{t('kams.newAssignment')}</span>
+            </Button>
             <span className="h-8 w-px shrink-0 bg-line" aria-hidden />
             <Button
               variant="secondary"
-              className="shrink-0"
+              className="!h-9 !min-h-0 !w-9 shrink-0 !px-0 sm:!h-11 sm:!min-h-11 sm:!w-auto sm:!px-4"
+              title={t('kams.closeTheDay')}
+              aria-label={t('kams.closeTheDay')}
               disabled={!canCloseDay || saving}
               onClick={() => { setError(''); setCloseDayOpen(true) }}
             >
-              {t('kams.closeTheDay')}
+              <Lock className="size-5 sm:size-4" />
+              <span className="hidden sm:inline">{t('kams.closeTheDay')}</span>
             </Button>
           </>
         ) : null}

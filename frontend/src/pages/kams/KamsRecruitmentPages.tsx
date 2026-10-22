@@ -1,4 +1,4 @@
-import { BadgeCheck, Building2, Camera, Check, CheckCircle2, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload } from 'lucide-react'
+import { BadgeCheck, Building2, Camera, Check, CheckCircle2, Download, Eye, EyeOff, Info, ListFilter, Pencil, Plus, Printer, Search, Trash2, Upload, UserPlus } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Outlet, Navigate, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -479,6 +479,7 @@ export function KamsRecruitmentWorkspace() {
   const { hasPermission } = useAuth()
   const today = isoDate(new Date())
   const [period, setPeriod] = useState<ListPeriod>('week')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(today)
   const [offices, setOffices] = useState<LookupOffice[]>([])
@@ -496,42 +497,54 @@ export function KamsRecruitmentWorkspace() {
   return (
     <div>
       <div className="mb-4 flex flex-col gap-2">
-        <p className="min-w-0 truncate text-xs text-muted whitespace-nowrap">
-          {range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : null}
-        </p>
-        <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full min-w-0 items-center gap-2">
           {showOfficeFilter ? (
             <OfficeFilterSelect
               value={officeId}
               offices={offices}
               onChange={(e) => setOfficeId(e.target.value)}
+              className="!w-auto !max-w-[42%] sm:!w-44 sm:!max-w-none"
             />
           ) : null}
-          <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-white p-1 sm:w-auto sm:ml-auto">
-            {(['day', 'week', 'month'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setPeriod(item)}
-                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-              >
-                {t(`kams.period.${item}`)}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setPeriod('custom')}
-              className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
-            >
-              {t('dashboard.customPeriod')}
-            </button>
-          </div>
+          <p className="min-w-0 flex-1 truncate text-right text-xs text-muted">
+            {range.from && range.to ? t('kams.periodRange', { start: formatDay(range.from), end: formatDay(range.to) }) : null}
+          </p>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            className={cn('shrink-0 rounded-full px-3 py-2 text-sm font-semibold', filtersOpen ? 'bg-lhms text-white' : 'bg-white text-lhms')}
+          >
+            {filtersOpen ? t('common.hide') : t('common.filter')}
+          </button>
         </div>
-        {period === 'custom' ? (
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-80 sm:ml-auto">
-            <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
-            <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
-          </div>
+        {filtersOpen ? (
+          <>
+            <div className="flex min-w-0 w-full overflow-x-auto rounded-full bg-white p-1 sm:ml-auto sm:w-auto">
+              {(['day', 'week', 'month'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPeriod(item)}
+                  className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === item ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+                >
+                  {t(`kams.period.${item}`)}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPeriod('custom')}
+                className={cn('min-h-10 flex-1 rounded-full px-4 text-sm font-semibold whitespace-nowrap sm:flex-none', period === 'custom' ? 'bg-lhms text-white' : 'text-muted hover:text-ink')}
+              >
+                {t('dashboard.customPeriod')}
+              </button>
+            </div>
+            {period === 'custom' ? (
+              <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-80">
+                <Field className="min-w-0 max-w-full" label={t('dashboard.dateFrom')} type="date" value={from} max={to || today} onChange={(event) => setFrom(event.target.value)} />
+                <Field className="min-w-0 max-w-full" label={t('dashboard.dateTo')} type="date" value={to} min={from} max={today} onChange={(event) => setTo(event.target.value)} />
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
       <KamsWorkspaceTabs
@@ -1627,6 +1640,10 @@ export function KamsCandidates() {
   const [formError, setFormError] = useState('')
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(20)
+  const [lastPage, setLastPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [action, setAction] = useState<'interview' | 'observation' | null>(null)
   const [pickingSupervisor, setPickingSupervisor] = useState(false)
   const [credentials, setCredentials] = useState<Member[]>([])
@@ -1637,12 +1654,17 @@ export function KamsCandidates() {
     const range = period === 'custom' ? { from, to } : presetRange(period)
     return api.get('/modules/kams/candidates', {
       params: {
-        per_page: 50,
+        page,
+        per_page: perPage,
         ...(term ? { search: term } : {}),
         ...(officeId ? { office_id: officeId } : {}),
         ...range,
       },
-    }).then((res) => setRows(res.data.data ?? [])).finally(stop)
+    }).then((res) => {
+      setRows(res.data.data ?? [])
+      setLastPage(Math.max(1, Number(res.data.meta?.last_page || 1)))
+      setTotal(Number(res.data.meta?.total || 0))
+    }).finally(stop)
   }
 
   useEffect(() => {
@@ -1651,8 +1673,12 @@ export function KamsCandidates() {
   }, [search])
 
   useEffect(() => {
+    setPage(1)
+  }, [query, period, from, to, officeId, perPage])
+
+  useEffect(() => {
     void load()
-  }, [query, period, from, to, officeId])
+  }, [query, period, from, to, officeId, page, perPage])
 
   useLiveData(() => load(query))
 
@@ -1962,7 +1988,7 @@ export function KamsCandidates() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="mb-4 flex items-center gap-2 sm:gap-3">
         <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-white px-3">
           <Search size={16} className="shrink-0 text-muted" />
           <input
@@ -1973,8 +1999,14 @@ export function KamsCandidates() {
           />
         </label>
         {canCreate ? (
-          <Button onClick={openCreate} className="shrink-0">
-            <Plus size={16} /> {t('kams.newCandidate')}
+          <Button
+            onClick={openCreate}
+            className="!h-9 !min-h-0 !w-9 shrink-0 !px-0 sm:!h-11 sm:!min-h-11 sm:!w-auto sm:!px-4"
+            title={t('kams.newCandidate')}
+            aria-label={t('kams.newCandidate')}
+          >
+            <UserPlus className="size-5 sm:size-4" />
+            <span className="hidden sm:inline">{t('kams.newCandidate')}</span>
           </Button>
         ) : null}
       </div>
@@ -2128,6 +2160,36 @@ export function KamsCandidates() {
         {rows.length === 0 ? <p className="text-sm text-muted md:col-span-2">{t('common.empty')}</p> : null}
           </>
         )}
+      </div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted">
+          {t('kams.pageRange', {
+            from: total === 0 ? 0 : (page - 1) * perPage + 1,
+            to: Math.min(page * perPage, total),
+            total,
+          })}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-sm text-muted">
+            {t('kams.rowsPerPage')}
+            <select
+              value={perPage}
+              onChange={(event) => setPerPage(Number(event.target.value))}
+              className="h-10 rounded-full border border-line bg-white px-3 text-sm font-semibold text-ink"
+            >
+              {[10, 20, 50].map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
+          <PaginationButtons
+            page={page}
+            lastPage={lastPage}
+            disabled={loading}
+            onPrev={() => setPage((value) => Math.max(1, value - 1))}
+            onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
+          />
+        </div>
       </div>
 
       <Modal open={open} title={editingId ? t('kams.editCandidate') : t('kams.newCandidate')} onClose={() => { setOpen(false); resetCandidateForm() }}>
