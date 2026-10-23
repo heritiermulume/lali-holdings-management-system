@@ -248,7 +248,10 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
           'kams.orders',
           'Orders',
           leaves(byExact(kams, 'kams.stock.orders.view')),
-          actionLeavesOnly(kams, 'kams.stock.orders', ['create', 'update', 'delete', 'receive', 'cancel'], true),
+          [
+            ...leaves(byExact(kams, 'kams.orders.view'), true),
+            ...actionLeavesOnly(kams, 'kams.stock.orders', ['create', 'update', 'delete', 'receive', 'cancel'], true),
+          ],
         ),
         pageSection(
           'kams.stock.warehouses',
