@@ -70,6 +70,7 @@ export function AppShell() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const mustChangePassword = Boolean(user?.must_change_password)
   const [unread, setUnread] = useState(0)
+  const [tabletNav, setTabletNav] = useState(false)
   const sidebarUserRef = useRef<HTMLDivElement>(null)
   const headerUserRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
@@ -85,6 +86,14 @@ export function AppShell() {
     setMoreOpen(false)
     setUserMenuOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)')
+    const apply = () => setTabletNav(media.matches)
+    apply()
+    media.addEventListener('change', apply)
+    return () => media.removeEventListener('change', apply)
+  }, [])
 
   useEffect(() => {
     if (location.pathname.startsWith('/modules/kams')) return
@@ -134,13 +143,21 @@ export function AppShell() {
   )
   let bottomModuleItems = moduleItems.slice(0, needsMore ? 2 : 4)
   if (needsMore && currentModule?.slug === 'kams') {
-    const stock = moduleItems.find((item) => item.to === '/modules/kams/stock')
-    const membersIndex = bottomModuleItems.findIndex((item) => item.to === '/modules/kams/members')
-    if (stock && membersIndex >= 0 && !bottomModuleItems.some((item) => item.to === stock.to)) {
+    const pinned = ['/modules/kams/stock', ...(tabletNav ? ['/modules/kams/finance'] : [])]
+    for (const path of pinned) {
+      const extra = moduleItems.find((item) => item.to === path)
+      if (!extra || bottomModuleItems.some((item) => item.to === extra.to)) continue
+      const membersIndex = bottomModuleItems.findIndex((item) => item.to === '/modules/kams/members')
+      const stockIndex = bottomModuleItems.findIndex((item) => item.to === '/modules/kams/stock')
+      const insertAt = path.endsWith('/finance') && stockIndex >= 0
+        ? stockIndex + 1
+        : membersIndex >= 0
+          ? membersIndex + 1
+          : bottomModuleItems.length
       bottomModuleItems = [
-        ...bottomModuleItems.slice(0, membersIndex + 1),
-        stock,
-        ...bottomModuleItems.slice(membersIndex + 1),
+        ...bottomModuleItems.slice(0, insertAt),
+        extra,
+        ...bottomModuleItems.slice(insertAt),
       ]
     }
   }

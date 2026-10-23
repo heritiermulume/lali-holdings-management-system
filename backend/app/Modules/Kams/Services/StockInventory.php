@@ -230,18 +230,60 @@ class StockInventory
         });
     }
 
-    public function receiveTransfer(KamsStockTransfer $transfer, int $userId): KamsStockTransfer
+    /**
+     * @param  array<int, int>  $receivedByItemId  transfer item id => quantity actually received
+     */
+    public function receiveTransfer(KamsStockTransfer $transfer, int $userId, array $receivedByItemId, bool $confirmLoss = false): KamsStockTransfer
     {
         abort_unless($transfer->status === 'in_transit', 422, __('This transfer is not in transit.'));
 
-        return DB::transaction(function () use ($transfer, $userId) {
+        return DB::transaction(function () use ($transfer, $userId, $receivedByItemId, $confirmLoss) {
             $transfer = KamsStockTransfer::query()->whereKey($transfer->id)->lockForUpdate()->firstOrFail();
+            abort_unless($transfer->status === 'in_transit', 422, __('This transfer is not in transit.'));
             $from = $transfer->fromDepot;
             $to = $transfer->toDepot;
-            foreach ($transfer->items()->with('product')->get() as $line) {
-                $this->changeBalance($from, $line->product, -$line->quantity, 'in_transit');
-                $this->changeBalance($to, $line->product, $line->quantity, 'available');
-                // Dispatch already recorded a "transfer" row; receiving only updates stock, not a second movement.
+            $lines = $transfer->items()->with('product')->get();
+            abort_unless($lines->isNotEmpty(), 422, __('Add at least one product.'));
+
+            $hasLoss = false;
+            foreach ($lines as $line) {
+                abort_unless(array_key_exists($line->id, $receivedByItemId), 422, __('Enter the quantity received for each product.'));
+                $received = (int) $receivedByItemId[$line->id];
+                abort_unless($received >= 0, 422, __('Quantity must be greater than zero.'));
+                abort_unless($received <= (int) $line->quantity, 422, __('The quantity received cannot exceed the quantity transferred.'));
+                if ($received < (int) $line->quantity) {
+                    $hasLoss = true;
+                }
+            }
+            abort_unless(! $hasLoss || $confirmLoss, 422, __('Confirm that the missing quantity is lost.'));
+
+            foreach ($lines as $line) {
+                $received = (int) $receivedByItemId[$line->id];
+                $lost = (int) $line->quantity - $received;
+                $this->changeBalance($from, $line->product, -(int) $line->quantity, 'in_transit');
+                if ($received > 0) {
+                    $this->changeBalance($to, $line->product, $received, 'available');
+                }
+                if ($lost > 0) {
+                    $this->recordMovement(
+                        $line->product,
+                        $lost,
+                        'loss',
+                        $userId,
+                        $from->id,
+                        null,
+                        $transfer,
+                        null,
+                        __('Missing quantity on transfer :reference marked as lost.', ['reference' => $transfer->reference]),
+                        'lost',
+                        $userId,
+                        (float) $line->unit_cost,
+                    );
+                }
+                $line->update([
+                    'quantity_received' => $received,
+                    'quantity_lost' => $lost,
+                ]);
                 $this->syncProductStock($line->product);
             }
             $transfer->update([
@@ -307,7 +349,7 @@ class StockInventory
                     'assignment_id' => $assignment->id,
                     'product_id' => $product->id,
                     'quantity_out' => $quantity,
-                    'unit_price' => $product->salePrice(),
+                    'unit_price' => $product->salePrice((int) $office->id),
                     'unit_cost' => $cost > 0 ? $cost : $product->purchasePrice(),
                 ]);
                 $this->recordMovement($product, $quantity, 'assignment', $userId, $depot->id, $seller->id, $assignment, $member->id, $notes, 'available', $userId, $cost > 0 ? $cost : $product->purchasePrice());
@@ -441,7 +483,7 @@ class StockInventory
                         'assignment_id' => $assignment->id,
                         'product_id' => $product->id,
                         'quantity_out' => $quantity,
-                        'unit_price' => $product->salePrice(),
+                        'unit_price' => $product->salePrice((int) $assignment->office_id),
                         'unit_cost' => $cost > 0 ? $cost : $product->purchasePrice(),
                     ]);
                     $existingByProduct->put($product->id, $created);
@@ -629,7 +671,7 @@ class StockInventory
             foreach ($items as $item) {
                 $product = KamsProduct::query()->where('company_id', $member->company_id)->findOrFail($item['product_id']);
                 $quantity = (int) $item['quantity'];
-                $salePrice = isset($item['unit_price']) ? (float) $item['unit_price'] : $product->salePrice();
+                $salePrice = isset($item['unit_price']) ? (float) $item['unit_price'] : $product->salePrice((int) $member->office_id);
                 abort_unless($quantity > 0, 422, __('Quantity must be greater than zero.'));
                 // Prefer snapshot from assignment/settlement when provided; otherwise live DB cost.
                 $purchasePrice = isset($item['unit_cost']) ? (float) $item['unit_cost'] : $this->unitCost($product);
@@ -764,7 +806,9 @@ class StockInventory
                         : $this->unitCost($product),
                     'unit_price' => $saleLine
                         ? (float) ($saleLine->field_price ?: $saleLine->unit_price)
-                        : $product->salePrice(),
+                        : $product->salePrice(
+                            (int) ($member?->office_id ?: $from?->office_id ?: $to?->office_id ?: 0) ?: null
+                        ),
                 ]);
             }
 

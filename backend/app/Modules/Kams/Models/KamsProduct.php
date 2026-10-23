@@ -53,12 +53,32 @@ class KamsProduct extends Model
         return $value > 0 ? $value : (float) $this->price;
     }
 
-    /**
-     * Effective sale price charged in the field.
-     * Exempt → catalog price only; otherwise catalog price + country tax.
-     */
-    public function salePrice(): float
+    /** Catalog sale price for an office, or the product default when no override exists. */
+    public function baseSalePriceForOffice(?int $officeId): float
     {
+        if ($officeId) {
+            if (! $this->relationLoaded('officePrices')) {
+                $this->load('officePrices');
+            }
+            $override = $this->officePrices->first(fn ($row) => (int) $row->office_id === $officeId);
+            if ($override && (float) $override->sale_price > 0) {
+                return (float) $override->sale_price;
+            }
+        }
+
+        return $this->baseSalePrice();
+    }
+
+    /**
+     * Price charged for an office: the depot sale price when one is set, otherwise the catalog sale price.
+     * Tax is not added again on top of a bureau price. Without an office, the catalog price includes country tax.
+     */
+    public function salePrice(?int $officeId = null): float
+    {
+        if ($officeId) {
+            return $this->baseSalePriceForOffice($officeId);
+        }
+
         $base = $this->baseSalePrice();
         if ($base <= 0 || $this->tax_exempt) {
             return $base;
@@ -118,9 +138,11 @@ class KamsProduct extends Model
         string $productAlias = 'kams_products',
         string $countryAlias = 'countries',
     ): string {
-        $base = "COALESCE(NULLIF({$productAlias}.field_price, 0), NULLIF({$productAlias}.price, 0), 0)";
+        $catalog = "COALESCE(NULLIF({$productAlias}.field_price, 0), NULLIF({$productAlias}.price, 0), 0)";
+        $taxedCatalog = "({$catalog} * CASE WHEN COALESCE({$productAlias}.tax_exempt, 0) = 1 THEN 1 ELSE (1 + COALESCE({$countryAlias}.tax_rate, 0) / 100) END)";
+        $officePrice = "COALESCE(NULLIF(kams_product_office_prices.sale_price, 0), {$catalog})";
 
-        return "({$base} * CASE WHEN COALESCE({$productAlias}.tax_exempt, 0) = 1 THEN 1 ELSE (1 + COALESCE({$countryAlias}.tax_rate, 0) / 100) END)";
+        return "CASE WHEN kams_depots.kind IN ('depot', 'seller') THEN {$officePrice} ELSE {$taxedCatalog} END";
     }
 
     /**
@@ -133,6 +155,11 @@ class KamsProduct extends Model
         $table = (new KamsStockBalance)->getTable();
         $value = (clone $balancesQuery)
             ->join('kams_products', 'kams_products.id', '=', "{$table}.product_id")
+            ->join('kams_depots', 'kams_depots.id', '=', "{$table}.depot_id")
+            ->leftJoin('kams_product_office_prices', function ($join) use ($table) {
+                $join->on('kams_product_office_prices.product_id', '=', "{$table}.product_id")
+                    ->on('kams_product_office_prices.office_id', '=', 'kams_depots.office_id');
+            })
             ->leftJoin('companies', 'companies.id', '=', 'kams_products.company_id')
             ->leftJoin('countries', 'countries.id', '=', 'companies.country_id')
             ->selectRaw('COALESCE(SUM('.$table.'.quantity * '.self::inventoryUnitSalePriceSql().'), 0) as value')
@@ -184,5 +211,10 @@ class KamsProduct extends Model
     public function balances(): HasMany
     {
         return $this->hasMany(KamsStockBalance::class, 'product_id');
+    }
+
+    public function officePrices(): HasMany
+    {
+        return $this->hasMany(KamsProductOfficePrice::class, 'product_id');
     }
 }

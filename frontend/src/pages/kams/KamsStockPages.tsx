@@ -102,6 +102,7 @@ export function KamsStockWorkspace() {
   const { hasPermission } = useAuth()
   const canStats = hasPermission('kams.stock.statistics.view')
   const canWarehouses = hasPermission('kams.stock.warehouses.view')
+  const canOrders = hasPermission('kams.stock.orders.view')
   const canDepots = hasPermission('kams.stock.depots.view')
   const canAssignments = hasPermission('kams.stock.assignments.view') || hasPermission('kams.stock.reports.view') || hasPermission('kams.stock.journal.view')
 
@@ -110,6 +111,7 @@ export function KamsStockWorkspace() {
       <KamsWorkspaceTabs
         tabs={[
           { to: '/modules/kams/stock', end: true, label: t('kams.statistics'), show: canStats },
+          { to: '/modules/kams/stock/orders', label: t('kams.orders'), show: canOrders },
           { to: '/modules/kams/stock/warehouses', label: t('kams.warehouses'), show: canWarehouses },
           { to: '/modules/kams/stock/depots', label: t('kams.depots'), show: canDepots },
           { to: '/modules/kams/stock/assignments', label: t('kams.commercialOperations'), show: canAssignments },

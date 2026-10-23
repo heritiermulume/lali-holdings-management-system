@@ -12,6 +12,8 @@ use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsDepot;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsProduct;
+use App\Modules\Kams\Models\KamsPurchaseOrder;
+use App\Modules\Kams\Models\KamsPurchaseOrderItem;
 use App\Modules\Kams\Models\KamsSellerCommission;
 use App\Modules\Kams\Models\KamsStockAdjustment;
 use App\Modules\Kams\Models\KamsStockAssignment;
@@ -25,13 +27,14 @@ use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsSavingsEntry;
 use App\Modules\Kams\Models\KamsStockJournalEntry;
 use App\Modules\Kams\Services\SavingsLedger;
-use App\Modules\Kams\Services\StockJournal;
 use App\Modules\Kams\Services\StockInventory;
+use App\Modules\Kams\Services\StockJournal;
 use App\Modules\Kams\Services\StockMetrics;
 use App\Modules\Kams\Support\DomainOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class KamsStockController extends Controller
@@ -217,7 +220,18 @@ class KamsStockController extends Controller
                 'receivedBy:id,name',
             ])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->when($officeState['office_ids'] !== [], function ($q) use ($officeState) {
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')->toString()))
+            ->when($request->filled('to_depot_id'), function ($q) use ($request) {
+                $depot = KamsDepot::query()->findOrFail($request->integer('to_depot_id'));
+                $this->assertCompany($request, (int) $depot->company_id);
+                if ($depot->kind === 'warehouse') {
+                    abort_unless($this->canManageWarehouses($request), 403);
+                } elseif ($depot->office_id) {
+                    abort_unless($request->user()->canAccessOffice((int) $depot->office_id), 403);
+                }
+                $q->where('to_depot_id', $depot->id);
+            })
+            ->when(! $request->filled('to_depot_id') && $officeState['office_ids'] !== [], function ($q) use ($officeState) {
                 $q->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']));
             })
             ->latest();
@@ -245,7 +259,7 @@ class KamsStockController extends Controller
         } elseif ($to->office_id) {
             abort_unless($request->user()->canAccessOffice((int) $to->office_id), 403);
         }
-        $autoReceive = array_key_exists('auto_receive', $data) ? (bool) $data['auto_receive'] : true;
+        $autoReceive = (bool) ($data['auto_receive'] ?? false);
         $transfer = $this->inventory->transfer(
             $from,
             $to,
@@ -265,13 +279,34 @@ class KamsStockController extends Controller
 
     public function receiveTransfer(Request $request, KamsStockTransfer $transfer): JsonResponse
     {
+        $data = $request->validate([
+            'confirm_loss' => ['nullable', 'boolean'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['required', 'integer'],
+            'items.*.quantity_received' => ['required', 'integer', 'min:0'],
+        ]);
         $this->assertCompany($request, (int) $transfer->company_id);
         $transfer->loadMissing('toDepot');
-        if ($transfer->toDepot?->office_id) {
+        if ($transfer->toDepot?->kind === 'warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+        } elseif ($transfer->toDepot?->office_id) {
             abort_unless($request->user()->canAccessOffice((int) $transfer->toDepot->office_id), 403);
         }
-        $received = $this->inventory->receiveTransfer($transfer, $request->user()->id);
-        StockJournal::record('update', $received, [], ['status' => 'received']);
+        $receivedByItemId = [];
+        foreach ($data['items'] as $item) {
+            $receivedByItemId[(int) $item['id']] = (int) $item['quantity_received'];
+        }
+        $received = $this->inventory->receiveTransfer(
+            $transfer,
+            $request->user()->id,
+            $receivedByItemId,
+            (bool) ($data['confirm_loss'] ?? false),
+        );
+        StockJournal::record('update', $received, [], [
+            'status' => 'received',
+            'items' => $data['items'],
+            'confirm_loss' => (bool) ($data['confirm_loss'] ?? false),
+        ]);
 
         return $this->ok($received);
     }
@@ -1767,6 +1802,7 @@ class KamsStockController extends Controller
                         ->where('kind', 'depot')
                         ->whereIn('office_id', $officeIds ?: [0])));
             })
+            ->with('officePrices:id,product_id,office_id,sale_price')
             ->orderBy('name')
             ->get(['id', 'company_id', 'name', 'sku', 'price', 'field_price', 'manager_price', 'company_price', 'cost', 'avg_cost', 'seller_share_percent', 'manager_share_percent', 'stock', 'tax_exempt', 'image_path']);
 
@@ -1801,5 +1837,338 @@ class KamsStockController extends Controller
 
             return $row;
         })->values();
+    }
+
+    public function purchaseOrders(Request $request): JsonResponse
+    {
+        $companyId = $this->kamsCompanyId($request);
+        $query = KamsPurchaseOrder::query()
+            ->with(['warehouse:id,name', 'supplier:id,name', 'items.product:id,name,sku'])
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->latest('ordered_at')
+            ->latest('id');
+
+        $all = (clone $query)->with('items')->get();
+        $ordered = round((float) $all->sum('total'), 2);
+        $received = round($all->sum(fn (KamsPurchaseOrder $order) => $order->items->sum(
+            fn ($item) => (int) $item->received_quantity * (float) $item->unit_cost
+        )), 2);
+
+        return $this->paginated($query->paginate($request->integer('per_page', 50)), 'OK', [
+            'ordered_amount' => $ordered,
+            'received_amount' => $received,
+            'outstanding_amount' => round($ordered - $received, 2),
+        ]);
+    }
+
+    public function storePurchaseOrder(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'warehouse_id' => ['required', 'exists:kams_depots,id'],
+            'supplier_id' => ['nullable', 'exists:kams_clients,id'],
+            'ordered_at' => ['required', 'date'],
+            'notes' => ['nullable', 'string'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.product_id' => ['required', 'exists:kams_products,id'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.unit_cost' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $warehouse = KamsDepot::query()->where('kind', 'warehouse')->findOrFail($data['warehouse_id']);
+        $this->assertCompany($request, (int) $warehouse->company_id);
+        $supplier = isset($data['supplier_id'])
+            ? KamsClient::query()->where('kind', 'supplier')->where('company_id', $warehouse->company_id)->find($data['supplier_id'])
+            : null;
+
+        $order = DB::transaction(function () use ($request, $data, $warehouse, $supplier) {
+            $order = KamsPurchaseOrder::query()->create([
+                'company_id' => $warehouse->company_id,
+                'warehouse_id' => $warehouse->id,
+                'supplier_id' => $supplier?->id,
+                'supplier_name' => $supplier?->name,
+                'reference' => 'PO-'.now()->format('ymd').'-'.strtoupper(Str::random(4)),
+                'status' => 'ordered',
+                'ordered_at' => $data['ordered_at'],
+                'notes' => $data['notes'] ?? null,
+                'total' => 0,
+                'created_by' => $request->user()?->id,
+            ]);
+            $total = 0.0;
+            foreach ($data['items'] as $item) {
+                $product = KamsProduct::query()->where('company_id', $warehouse->company_id)->findOrFail($item['product_id']);
+                $line = round((int) $item['quantity'] * (float) $item['unit_cost'], 2);
+                KamsPurchaseOrderItem::query()->create([
+                    'purchase_order_id' => $order->id,
+                    'product_id' => $product->id,
+                    'quantity' => (int) $item['quantity'],
+                    'received_quantity' => 0,
+                    'unit_cost' => round((float) $item['unit_cost'], 2),
+                    'line_total' => $line,
+                ]);
+                $total += $line;
+            }
+            $order->update(['total' => round($total, 2)]);
+            $order->load(['warehouse:id,name', 'items.product:id,name']);
+            StockJournal::record('create', $order, [], $this->purchaseOrderSnapshot($order));
+
+            return $order;
+        });
+
+        return $this->created($order->load(['warehouse:id,name', 'supplier:id,name', 'items.product:id,name,sku']));
+    }
+
+    public function updatePurchaseOrder(Request $request, KamsPurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->assertCompany($request, (int) $purchaseOrder->company_id);
+        abort_unless($purchaseOrder->status !== 'cancelled', 422, __('This order cannot be changed.'));
+
+        $data = $request->validate([
+            'warehouse_id' => ['required', 'exists:kams_depots,id'],
+            'supplier_id' => ['nullable', 'exists:kams_clients,id'],
+            'ordered_at' => ['required', 'date'],
+            'notes' => ['nullable', 'string'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['nullable', 'integer'],
+            'items.*.product_id' => ['required', 'exists:kams_products,id'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.unit_cost' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $purchaseOrder->load(['items.product:id,name', 'warehouse:id,name']);
+        $received = $purchaseOrder->items->contains(fn ($item) => (int) $item->received_quantity > 0);
+        $before = $this->purchaseOrderSnapshot($purchaseOrder);
+
+        DB::transaction(function () use ($request, $data, $purchaseOrder, $received) {
+            if ($received) {
+                abort_unless((int) $data['warehouse_id'] === (int) $purchaseOrder->warehouse_id, 422, __('A received order cannot change warehouse.'));
+                foreach ($data['items'] as $row) {
+                    $item = $purchaseOrder->items->firstWhere('id', (int) ($row['id'] ?? 0));
+                    abort_unless($item, 422, __('Received lines cannot be removed.'));
+                    abort_unless((int) $row['product_id'] === (int) $item->product_id, 422, __('Received lines cannot change product.'));
+                    abort_unless((int) $row['quantity'] >= (int) $item->received_quantity, 422, __('Quantity cannot be lower than what was already received.'));
+                    abort_unless(round((float) $row['unit_cost'], 2) === round((float) $item->unit_cost, 2), 422, __('Received lines cannot change price.'));
+                    $item->update([
+                        'quantity' => (int) $row['quantity'],
+                        'line_total' => round((int) $row['quantity'] * (float) $item->unit_cost, 2),
+                    ]);
+                }
+                abort_unless(count($data['items']) === $purchaseOrder->items->count(), 422, __('Received lines cannot be removed.'));
+            } else {
+                $warehouse = KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $purchaseOrder->company_id)->findOrFail($data['warehouse_id']);
+                $supplier = ! empty($data['supplier_id'])
+                    ? KamsClient::query()->where('kind', 'supplier')->where('company_id', $purchaseOrder->company_id)->find($data['supplier_id'])
+                    : null;
+                $purchaseOrder->items()->delete();
+                $total = 0.0;
+                foreach ($data['items'] as $row) {
+                    $product = KamsProduct::query()->where('company_id', $purchaseOrder->company_id)->findOrFail($row['product_id']);
+                    $line = round((int) $row['quantity'] * (float) $row['unit_cost'], 2);
+                    KamsPurchaseOrderItem::query()->create([
+                        'purchase_order_id' => $purchaseOrder->id,
+                        'product_id' => $product->id,
+                        'quantity' => (int) $row['quantity'],
+                        'received_quantity' => 0,
+                        'unit_cost' => round((float) $row['unit_cost'], 2),
+                        'line_total' => $line,
+                    ]);
+                    $total += $line;
+                }
+                $purchaseOrder->fill([
+                    'warehouse_id' => $warehouse->id,
+                    'supplier_id' => $supplier?->id,
+                    'supplier_name' => $supplier?->name,
+                    'total' => round($total, 2),
+                ]);
+            }
+
+            $purchaseOrder->fill([
+                'ordered_at' => $data['ordered_at'],
+                'notes' => $data['notes'] ?? null,
+            ]);
+            if ($received) {
+                $purchaseOrder->load('items');
+                $purchaseOrder->total = round((float) $purchaseOrder->items->sum('line_total'), 2);
+                $open = $purchaseOrder->items->contains(fn ($item) => (int) $item->received_quantity < (int) $item->quantity);
+                $purchaseOrder->status = $open ? ($purchaseOrder->items->sum('received_quantity') > 0 ? 'partial' : 'ordered') : 'received';
+            }
+            $purchaseOrder->save();
+            $purchaseOrder->load(['warehouse:id,name', 'items.product:id,name']);
+            StockJournal::record('update', $purchaseOrder, $before, $this->purchaseOrderSnapshot($purchaseOrder));
+        });
+
+        return $this->ok($purchaseOrder->fresh(['warehouse:id,name', 'supplier:id,name', 'items.product:id,name,sku']));
+    }
+
+    public function destroyPurchaseOrder(Request $request, KamsPurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->assertCompany($request, (int) $purchaseOrder->company_id);
+        $purchaseOrder->load(['items.product:id,name', 'warehouse:id,name']);
+        abort_unless(
+            $purchaseOrder->items->every(fn ($item) => (int) $item->received_quantity === 0),
+            422,
+            __('A received order cannot be deleted.'),
+        );
+        $before = $this->purchaseOrderSnapshot($purchaseOrder);
+        StockJournal::record('delete', $purchaseOrder, $before, ['reference' => $purchaseOrder->reference, 'status' => 'deleted']);
+        $purchaseOrder->delete();
+
+        return $this->ok(['deleted' => true]);
+    }
+
+    public function purchaseOrderJournal(Request $request): JsonResponse
+    {
+        $companyId = $this->kamsCompanyId($request);
+        $query = KamsStockJournalEntry::query()
+            ->with('user:id,name')
+            ->where('auditable_type', KamsPurchaseOrder::class)
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($request->filled('order_id'), fn ($q) => $q->where('auditable_id', $request->integer('order_id')))
+            ->latest();
+
+        $paginator = $query->paginate(min(max($request->integer('per_page', 50), 1), 100));
+        $paginator->setCollection($paginator->getCollection()->map(fn (KamsStockJournalEntry $log) => $this->presentPurchaseJournal($log)));
+
+        return $this->paginated($paginator);
+    }
+
+    public function receivePurchaseOrder(Request $request, KamsPurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->assertCompany($request, (int) $purchaseOrder->company_id);
+        abort_unless(in_array($purchaseOrder->status, ['ordered', 'partial'], true), 422, __('This order cannot be received.'));
+
+        $data = $request->validate([
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['required', 'integer'],
+            'items.*.quantity' => ['required', 'integer', 'min:0'],
+        ]);
+
+        $purchaseOrder->load(['items.product', 'warehouse']);
+        $lines = [];
+        foreach ($data['items'] as $row) {
+            $quantity = (int) $row['quantity'];
+            if ($quantity < 1) {
+                continue;
+            }
+            $item = $purchaseOrder->items->firstWhere('id', (int) $row['id']);
+            abort_unless($item, 422, __('Unknown order line.'));
+            $remaining = (int) $item->quantity - (int) $item->received_quantity;
+            abort_unless($quantity <= $remaining, 422, __('Received quantity exceeds the order.'));
+            $lines[] = ['item' => $item, 'quantity' => $quantity];
+        }
+        abort_unless($lines !== [], 422, __('Add at least one product.'));
+
+        DB::transaction(function () use ($request, $purchaseOrder, $lines) {
+            $receipt = $this->inventory->createReceipt(
+                $purchaseOrder->warehouse,
+                array_map(fn ($line) => [
+                    'product_id' => $line['item']->product_id,
+                    'quantity' => $line['quantity'],
+                    'unit_cost' => (float) $line['item']->unit_cost,
+                ], $lines),
+                $purchaseOrder->supplier_name,
+                $request->user()?->id,
+                $purchaseOrder->reference,
+            );
+            $this->inventory->validateReceipt($receipt, (int) $request->user()->id);
+            foreach ($lines as $line) {
+                $line['item']->increment('received_quantity', $line['quantity']);
+            }
+            $purchaseOrder->refresh()->load('items');
+            $open = $purchaseOrder->items->contains(fn ($item) => (int) $item->received_quantity < (int) $item->quantity);
+            $purchaseOrder->update(['status' => $open ? 'partial' : 'received']);
+            $purchaseOrder->load(['warehouse:id,name', 'items.product:id,name']);
+            StockJournal::record('receive', $purchaseOrder, [], array_merge($this->purchaseOrderSnapshot($purchaseOrder), [
+                'received_now' => array_map(fn ($line) => [
+                    'product' => $line['item']->product?->name,
+                    'quantity' => $line['quantity'],
+                    'unit_cost' => (float) $line['item']->unit_cost,
+                ], $lines),
+            ]));
+        });
+
+        return $this->ok($purchaseOrder->fresh(['warehouse:id,name', 'supplier:id,name', 'items.product:id,name,sku']));
+    }
+
+    public function cancelPurchaseOrder(Request $request, KamsPurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $this->assertCompany($request, (int) $purchaseOrder->company_id);
+        $purchaseOrder->load('items');
+        abort_unless(
+            in_array($purchaseOrder->status, ['ordered', 'partial'], true)
+            && $purchaseOrder->items->every(fn ($item) => (int) $item->received_quantity === 0),
+            422,
+            __('This order cannot be cancelled.'),
+        );
+        $before = $this->purchaseOrderSnapshot($purchaseOrder->load(['items.product:id,name', 'warehouse:id,name']));
+        $purchaseOrder->update(['status' => 'cancelled']);
+        $purchaseOrder->load(['warehouse:id,name', 'items.product:id,name']);
+        StockJournal::record('cancel', $purchaseOrder, $before, $this->purchaseOrderSnapshot($purchaseOrder));
+
+        return $this->ok($purchaseOrder->fresh(['warehouse:id,name', 'supplier:id,name', 'items.product:id,name,sku']));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function purchaseOrderSnapshot(KamsPurchaseOrder $order): array
+    {
+        $order->loadMissing(['warehouse:id,name', 'items.product:id,name']);
+
+        return [
+            'reference' => $order->reference,
+            'status' => $order->status,
+            'supplier' => $order->supplier_name,
+            'warehouse' => $order->warehouse?->name,
+            'ordered_at' => optional($order->ordered_at)->toDateString(),
+            'total' => (float) $order->total,
+            'notes' => $order->notes,
+            'items' => $order->items->map(fn (KamsPurchaseOrderItem $item) => [
+                'product' => $item->product?->name,
+                'quantity' => (int) $item->quantity,
+                'received_quantity' => (int) $item->received_quantity,
+                'unit_cost' => (float) $item->unit_cost,
+                'line_total' => (float) $item->line_total,
+            ])->values()->all(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function presentPurchaseJournal(KamsStockJournalEntry $log): array
+    {
+        $old = is_array($log->old_values) ? $log->old_values : [];
+        $new = is_array($log->new_values) ? $log->new_values : [];
+        $changes = [];
+        foreach (['status', 'supplier', 'warehouse', 'ordered_at', 'total', 'notes'] as $field) {
+            $before = array_key_exists($field, $old) ? $old[$field] : null;
+            $after = array_key_exists($field, $new) ? $new[$field] : null;
+            if ($before != $after && ($before !== null || $after !== null)) {
+                $changes[] = ['field' => $field, 'before' => $before, 'after' => $after];
+            }
+        }
+        $oldItems = json_encode($old['items'] ?? []);
+        $newItems = json_encode($new['items'] ?? []);
+        if ($oldItems !== $newItems) {
+            $changes[] = [
+                'field' => 'items',
+                'before' => $old['items'] ?? [],
+                'after' => $new['items'] ?? [],
+            ];
+        }
+        if (! empty($new['received_now'])) {
+            $changes[] = ['field' => 'received_now', 'before' => null, 'after' => $new['received_now']];
+        }
+
+        return [
+            'id' => $log->id,
+            'action' => $log->action,
+            'order_id' => $log->auditable_id,
+            'reference' => $new['reference'] ?? $old['reference'] ?? null,
+            'created_at' => $log->created_at,
+            'user' => $log->user ? ['id' => $log->user->id, 'name' => $log->user->name] : null,
+            'changes' => $changes,
+            'items' => $new['items'] ?? $old['items'] ?? [],
+        ];
     }
 }

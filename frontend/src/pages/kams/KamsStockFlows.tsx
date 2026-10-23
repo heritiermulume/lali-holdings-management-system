@@ -23,6 +23,7 @@ type Product = {
   stock: number
   sale_price?: number
   field_price?: number
+  office_prices?: Array<{ office_id: number; sale_price: number }>
   image_url?: string | null
   /** Available qty at each office depot, keyed by office_id. */
   office_stock?: Record<string, number>
@@ -35,8 +36,9 @@ type Agent = {
   photo_url?: string | null
 }
 
-function productSalePrice(product: Product): number {
-  if (product.sale_price != null) return Number(product.sale_price)
+function productSalePrice(product: Product, officeId?: number | null): number {
+  const override = (product.office_prices || []).find((row) => row.office_id === officeId)
+  if (override && Number(override.sale_price) > 0) return Number(override.sale_price)
   const field = Number(product.field_price || 0)
   return field > 0 ? field : Number(product.price || 0)
 }
@@ -67,7 +69,7 @@ function productComboboxItem(
   return {
     id: String(product.id),
     label: product.name,
-    hint: `${stockLabel}: ${stock} · ${salePriceLabel}: ${money(productSalePrice(product))}`,
+    hint: `${stockLabel}: ${stock} · ${salePriceLabel}: ${money(productSalePrice(product, officeId))}`,
     imageUrl: product.image_url,
     icon: Package,
   }
@@ -178,7 +180,10 @@ export function KamsTransfers() {
   const receiveTransfer = async (id: number) => {
     setError('')
     try {
-      await api.post(`/modules/kams/stock/transfers/${id}/receive`)
+      const row = rows.find((item) => item.id === id)
+      await api.post(`/modules/kams/stock/transfers/${id}/receive`, {
+        items: (row?.items || []).map((item) => ({ id: item.id, quantity_received: item.quantity })),
+      })
       void load()
       void loadLookups()
     } catch (err) {
@@ -262,7 +267,7 @@ export function KamsTransfers() {
       await api.post('/modules/kams/stock/transfers', {
         from_depot_id: Number(fromId),
         to_depot_id: Number(toId),
-        auto_receive: true,
+        auto_receive: false,
         items,
       })
       setOpen(false)

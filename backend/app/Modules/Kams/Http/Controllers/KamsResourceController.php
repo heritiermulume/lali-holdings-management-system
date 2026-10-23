@@ -183,6 +183,7 @@ class KamsResourceController extends Controller
                     'balances.product:id,company_id,name,sku,price,cost,avg_cost,field_price,manager_price,company_price,tax_exempt,image_path,stock',
                     'balances.product.company:id,country_id',
                     'balances.product.company.country:id,tax_rate,tax_name',
+                    'balances.product.officePrices:id,product_id,office_id,sale_price',
                 ]),
                 $request
             )->latest()->paginate($request->integer('per_page', 50))
@@ -287,7 +288,7 @@ class KamsResourceController extends Controller
 
     public function products(Request $request): JsonResponse
     {
-        $query = $this->scoped(KamsProduct::query()->with(['balances.depot:id,name,kind,office_id']), $request);
+        $query = $this->scoped(KamsProduct::query()->with(['balances.depot:id,name,kind,office_id', 'officePrices']), $request);
         $officeState = $this->resolveOfficeFilterState($request, $this->kamsCompanyId($request));
         $officeIds = $officeState['office_ids'];
 
@@ -311,6 +312,7 @@ class KamsResourceController extends Controller
 
     public function storeProduct(Request $request, StockInventory $inventory): JsonResponse
     {
+        $this->normalizeOfficePrices($request);
         $data = $request->validate([
             'company_id' => ['required', 'exists:companies,id'],
             'sku' => ['nullable', 'string'],
@@ -334,6 +336,9 @@ class KamsResourceController extends Controller
             'depot_ids' => ['nullable', 'array'],
             'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
             'assign_all_depots' => ['nullable', 'boolean'],
+            'office_prices' => ['nullable', 'array'],
+            'office_prices.*.office_id' => ['required', 'integer', 'exists:offices,id'],
+            'office_prices.*.sale_price' => ['nullable', 'numeric', 'min:0'],
         ]);
         $data['tax_exempt'] = $request->boolean('tax_exempt');
         $initial = (int) ($data['stock'] ?? 0);
@@ -342,6 +347,7 @@ class KamsResourceController extends Controller
         $assignAllWarehouses = (bool) ($data['assign_all_warehouses'] ?? false);
         $depotIds = $data['depot_ids'] ?? null;
         $assignAll = (bool) ($data['assign_all_depots'] ?? false);
+        $officePrices = $data['office_prices'] ?? null;
         unset(
             $data['stock'],
             $data['warehouse_id'],
@@ -349,6 +355,7 @@ class KamsResourceController extends Controller
             $data['assign_all_warehouses'],
             $data['depot_ids'],
             $data['assign_all_depots'],
+            $data['office_prices'],
             $data['image'],
             $data['manager_price']
         );
@@ -400,12 +407,17 @@ class KamsResourceController extends Controller
             $this->syncProductDepots($product, $assignAll ? null : array_map('intval', $depotIds ?? []), $assignAll);
         }
 
-        return $this->created($product->fresh('balances.depot'));
+        if (is_array($officePrices)) {
+            $this->syncOfficePrices($product, $officePrices, $purchase);
+        }
+
+        return $this->created($product->fresh(['balances.depot', 'officePrices']));
     }
 
-    public function updateProduct(Request $request, KamsProduct $product): JsonResponse
+    public function updateProduct(Request $request, KamsProduct $product, StockInventory $inventory): JsonResponse
     {
         $this->assertCompany($request, (int) $product->company_id);
+        $this->normalizeOfficePrices($request);
 
         $data = $request->validate([
             'sku' => ['nullable', 'string'],
@@ -428,6 +440,11 @@ class KamsResourceController extends Controller
             'depot_ids' => ['nullable', 'array'],
             'depot_ids.*' => ['integer', 'exists:kams_depots,id'],
             'assign_all_depots' => ['nullable', 'boolean'],
+            'stock' => ['nullable', 'integer', 'min:0'],
+            'warehouse_id' => ['nullable', 'exists:kams_depots,id'],
+            'office_prices' => ['nullable', 'array'],
+            'office_prices.*.office_id' => ['required', 'integer', 'exists:offices,id'],
+            'office_prices.*.sale_price' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         if ($request->has('tax_exempt')) {
@@ -439,11 +456,17 @@ class KamsResourceController extends Controller
         $depotIds = array_key_exists('depot_ids', $data) ? $data['depot_ids'] : null;
         $assignAll = array_key_exists('assign_all_depots', $data) ? (bool) $data['assign_all_depots'] : null;
         $removeImage = (bool) ($data['remove_image'] ?? false);
+        $officePrices = array_key_exists('office_prices', $data) ? $data['office_prices'] : null;
+        $targetStock = array_key_exists('stock', $data) ? (int) $data['stock'] : null;
+        $stockWarehouseId = $data['warehouse_id'] ?? null;
         unset(
             $data['warehouse_ids'],
             $data['assign_all_warehouses'],
             $data['depot_ids'],
             $data['assign_all_depots'],
+            $data['office_prices'],
+            $data['stock'],
+            $data['warehouse_id'],
             $data['image'],
             $data['remove_image'],
             $data['manager_price']
@@ -491,7 +514,111 @@ class KamsResourceController extends Controller
             $this->syncProductDepots($product, $assignAll ? null : array_map('intval', $depotIds ?? []), (bool) $assignAll);
         }
 
-        return $this->ok($product->fresh('balances.depot'));
+        if (is_array($officePrices)) {
+            $this->syncOfficePrices($product, $officePrices, $purchase);
+        }
+
+        if ($targetStock !== null) {
+            $this->applyProductStockTarget($inventory, $request, $product, $targetStock, $stockWarehouseId ? (int) $stockWarehouseId : null);
+        }
+
+        return $this->ok($product->fresh(['balances.depot', 'officePrices']));
+    }
+
+    public function updateOfficePrice(Request $request, KamsProduct $product): JsonResponse
+    {
+        $this->assertCompany($request, (int) $product->company_id);
+        $data = $request->validate([
+            'office_id' => ['required', 'integer', 'exists:offices,id'],
+            'sale_price' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $officeId = (int) $data['office_id'];
+        $raw = $data['sale_price'] ?? null;
+        if ($raw === null || $raw === '') {
+            $product->officePrices()->where('office_id', $officeId)->delete();
+        } else {
+            $price = round((float) $raw, 2);
+            $purchase = (float) ($product->company_price ?? $product->cost ?? 0);
+            abort_unless($price >= $purchase, 422, __('Sale price must be greater than or equal to purchase price.'));
+            $product->officePrices()->updateOrCreate(
+                ['office_id' => $officeId],
+                ['sale_price' => $price],
+            );
+        }
+
+        return $this->ok($product->fresh('officePrices'));
+    }
+
+    private function normalizeOfficePrices(Request $request): void
+    {
+        if (! is_array($request->input('office_prices'))) {
+            return;
+        }
+
+        $request->merge([
+            'office_prices' => collect($request->input('office_prices'))->map(function ($row) {
+                $price = is_array($row) ? ($row['sale_price'] ?? null) : null;
+
+                return [
+                    'office_id' => is_array($row) ? ($row['office_id'] ?? null) : null,
+                    'sale_price' => $price === '' ? null : $price,
+                ];
+            })->all(),
+        ]);
+    }
+
+    /**
+     * @param  list<array{office_id:int, sale_price?:float|string|null}>  $rows
+     */
+    private function syncOfficePrices(KamsProduct $product, array $rows, float $purchase): void
+    {
+        $keep = [];
+        foreach ($rows as $row) {
+            $officeId = (int) ($row['office_id'] ?? 0);
+            $raw = $row['sale_price'] ?? null;
+            if ($officeId <= 0 || $raw === null || $raw === '') {
+                continue;
+            }
+            $price = round((float) $raw, 2);
+            abort_unless($price >= $purchase, 422, __('Sale price must be greater than or equal to purchase price.'));
+            $product->officePrices()->updateOrCreate(
+                ['office_id' => $officeId],
+                ['sale_price' => $price],
+            );
+            $keep[] = $officeId;
+        }
+
+        $product->officePrices()->when(
+            $keep !== [],
+            fn ($query) => $query->whereNotIn('office_id', $keep),
+        )->delete();
+    }
+
+    private function applyProductStockTarget(
+        StockInventory $inventory,
+        Request $request,
+        KamsProduct $product,
+        int $target,
+        ?int $warehouseId,
+    ): void {
+        $product->refresh();
+        $delta = $target - (int) $product->stock;
+        if ($delta === 0) {
+            return;
+        }
+
+        $warehouse = $warehouseId
+            ? KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->find($warehouseId)
+            : null;
+        $warehouse ??= KamsDepot::query()->where('kind', 'warehouse')->where('company_id', $product->company_id)->orderBy('name')->first();
+        abort_unless($warehouse, 422, __('Create a regional warehouse before receiving stock.'));
+
+        if ($delta > 0) {
+            $inventory->receive($warehouse, $product, $delta, $request->user()?->id, __('Product stock update'));
+        } else {
+            $inventory->adjust($warehouse, $product, 'lost', abs($delta), __('Product stock update'), $request->user()?->id);
+        }
     }
 
     public function destroyProduct(Request $request, KamsProduct $product): JsonResponse

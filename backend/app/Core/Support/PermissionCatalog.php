@@ -99,6 +99,7 @@ class PermissionCatalog
             'stock.assignments' => ['view', 'delete'],
             'stock.reports' => ['view', 'print', 'preview', 'delete'],
             'stock.journal' => ['view', 'delete'],
+            'stock.orders' => ['view', 'create', 'update', 'delete', 'receive', 'cancel'],
             'orders' => ['view'],
             'finance.dashboard' => ['view', 'update'],
             'finance.accounts' => ['view'],

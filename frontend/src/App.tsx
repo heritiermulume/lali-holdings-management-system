@@ -28,6 +28,7 @@ import { KamsAssignmentReports } from './pages/kams/KamsAssignmentReports'
 import { KamsStockJournal } from './pages/kams/KamsStockJournal'
 import { KamsDepots, KamsWarehouses } from './pages/kams/KamsStockLocations'
 import { KamsWarehouseMovements } from './pages/kams/KamsWarehouseMovements'
+import { KamsPurchaseOrders } from './pages/kams/KamsPurchaseOrders'
 import { KamsStockIndex, KamsStockWorkspace } from './pages/kams/KamsStockPages'
 import { KamsAccountPage } from './pages/kams/KamsAccountPage'
 import { KamsCompanyAccountPage } from './pages/kams/KamsCompanyAccountPage'
@@ -111,8 +112,9 @@ export default function App() {
             <Route path="suppliers" element={<RequirePermission perm="kams.suppliers.view"><KamsSuppliersList /></RequirePermission>} />
           </Route>
           <Route path="patrimoine" element={<RequirePermission perm="kams.patrimoine.view"><KamsPatrimoinePage /></RequirePermission>} />
-          <Route path="stock" element={<RequirePermission anyPerm={['kams.products.view', 'kams.stock.assignments.view', 'kams.stock.statistics.view', 'kams.stock.warehouses.view', 'kams.stock.depots.view', 'kams.stock.reports.view', 'kams.stock.journal.view']}><KamsStockWorkspace /></RequirePermission>}>
+          <Route path="stock" element={<RequirePermission anyPerm={['kams.products.view', 'kams.stock.assignments.view', 'kams.stock.statistics.view', 'kams.stock.warehouses.view', 'kams.stock.orders.view', 'kams.stock.depots.view', 'kams.stock.reports.view', 'kams.stock.journal.view']}><KamsStockWorkspace /></RequirePermission>}>
             <Route index element={<KamsStockIndex />} />
+            <Route path="orders" element={<RequirePermission perm="kams.stock.orders.view"><KamsPurchaseOrders /></RequirePermission>} />
             <Route path="warehouses" element={<RequirePermission perm="kams.stock.warehouses.view"><KamsWarehouses /></RequirePermission>} />
             <Route path="warehouses/:warehouseId/movements" element={<RequirePermission perm="kams.stock.warehouses.view"><KamsWarehouseMovements /></RequirePermission>} />
             <Route path="depots" element={<RequirePermission perm="kams.stock.depots.view"><KamsDepots /></RequirePermission>} />
@@ -132,7 +134,6 @@ export default function App() {
             <Route path="savings" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="daily" element={<Navigate to="/modules/kams/finance" replace />} />
             <Route path="hierarchy" element={<Navigate to="/modules/kams/finance" replace />} />
-            <Route path="orders" element={<Navigate to="/modules/kams/finance" replace />} />
           </Route>
           <Route path="finance" element={<RequirePermission anyPerm={['kams.finance.dashboard.view', 'kams.finance.accounts.view', 'kams.finance.account.view', 'kams.finance.company.view']}><KamsFinanceWorkspace /></RequirePermission>}>
             <Route index element={<KamsFinanceIndex />} />

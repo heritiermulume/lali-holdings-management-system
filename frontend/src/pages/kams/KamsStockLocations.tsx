@@ -30,7 +30,33 @@ type Product = {
   stock: number
   image_path?: string | null
   image_url?: string | null
+  office_prices?: Array<{ office_id: number; sale_price: number }>
   balances?: Array<{ id: number; quantity: number; depot_id?: number; depot?: { id: number; name: string; kind: string } | null }>
+}
+
+function roundInput(value: number) {
+  return String(Math.round(value * 100) / 100)
+}
+
+function managerAmountFromPercent(percent: string, price: string) {
+  const sale = Number(price)
+  const pct = Number(percent)
+  if (percent === '' || !Number.isFinite(sale) || sale <= 0 || !Number.isFinite(pct)) return ''
+  return roundInput((sale * pct) / 100)
+}
+
+function percentFromManagerAmount(amount: string, price: string) {
+  const sale = Number(price)
+  const value = Number(amount)
+  if (amount === '' || !Number.isFinite(sale) || sale <= 0 || !Number.isFinite(value)) return ''
+  const percent = Math.min(100, Math.max(0, (value / sale) * 100))
+  return roundInput(percent)
+}
+
+function warehouseForStock(product: Product) {
+  const rows = (product.balances || []).filter((row) => row.depot?.kind === 'warehouse')
+  rows.sort((a, b) => (b.quantity || 0) - (a.quantity || 0))
+  return rows[0]?.depot_id ? String(rows[0].depot_id) : ''
 }
 
 function priceLabel(label: string) {
@@ -44,6 +70,17 @@ function purchaseUnitCost(product?: Pick<Product, 'avg_cost' | 'company_price' |
   const company = Number(product?.company_price || 0)
   if (company > 0) return company
   return Number(product?.cost || 0)
+}
+
+function catalogSalePrice(product?: Product | null): number {
+  const base = Number(product?.base_sale_price ?? product?.field_price ?? product?.price ?? 0)
+  return Number.isFinite(base) ? base : 0
+}
+
+function officeSalePrice(product: Product | null | undefined, officeId?: number | null): number {
+  const override = (product?.office_prices || []).find((row) => row.office_id === officeId)
+  if (override && Number(override.sale_price) > 0) return Number(override.sale_price)
+  return catalogSalePrice(product)
 }
 
 function saleUnitPrice(product?: Pick<Product, 'sale_price' | 'field_price' | 'price'> | null): number {
@@ -99,14 +136,16 @@ function locationUnits(row: Location) {
   return (row.balances || []).filter((item) => (item.condition || 'available') === 'available').reduce((sum, item) => sum + (item.quantity || 0), 0)
 }
 
-function lineStockValue(quantity: number, product?: Product | null) {
-  return Math.round(Number(quantity || 0) * saleUnitPrice(product) * 100) / 100
+function lineStockValue(quantity: number, product?: Product | null, officeId?: number | null) {
+  const unit = officeId ? officeSalePrice(product, officeId) : saleUnitPrice(product)
+  return Math.round(Number(quantity || 0) * unit * 100) / 100
 }
 
 function locationStockValue(row: Location) {
+  const officeId = row.kind === 'depot' ? row.office_id : null
   return (row.balances || [])
     .filter((item) => (item.condition || 'available') === 'available')
-    .reduce((sum, item) => sum + lineStockValue(item.quantity, item.product), 0)
+    .reduce((sum, item) => sum + lineStockValue(item.quantity, item.product, officeId), 0)
 }
 
 function ProductThumb({ name, url, className = 'h-11 w-11' }: { name: string; url?: string | null; className?: string }) {
@@ -238,6 +277,178 @@ function productsForWarehouse(warehouse: Location, catalog: Product[]): Warehous
   return rows.sort((a, b) => a.product.name.localeCompare(b.product.name))
 }
 
+type StockTransferItem = {
+  id: number
+  quantity: number
+  quantity_received?: number | null
+  quantity_lost?: number | null
+  product?: { id: number; name: string } | null
+}
+type StockTransfer = {
+  id: number
+  reference: string
+  status?: string
+  from_depot?: { id: number; name: string } | null
+  to_depot_id?: number
+  to_depot?: { id: number; name: string } | null
+  items?: StockTransferItem[]
+}
+
+function AcceptTransferModal({
+  transfer,
+  onClose,
+  onAccepted,
+}: {
+  transfer: StockTransfer | null
+  onClose: () => void
+  onAccepted: () => void
+}) {
+  const { t } = useTranslation()
+  const [quantities, setQuantities] = useState<Record<number, string>>({})
+  const [error, setError] = useState('')
+  const [confirmLoss, setConfirmLoss] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setQuantities({})
+    setError('')
+    setConfirmLoss(false)
+    setSaving(false)
+  }, [transfer?.id])
+
+  const parsed = () => {
+    const items = transfer?.items || []
+    return items.map((item) => ({
+      id: item.id,
+      transferred: item.quantity,
+      name: item.product?.name || '—',
+      raw: quantities[item.id] ?? '',
+      received: Number(quantities[item.id]),
+    }))
+  }
+
+  const submit = async (withLoss: boolean) => {
+    if (!transfer) return
+    const lines = parsed()
+    if (lines.some((line) => line.raw.trim() === '' || !Number.isInteger(line.received) || line.received < 0)) {
+      setError(t('kams.quantityReceivedRequired'))
+      setConfirmLoss(false)
+      return
+    }
+    if (lines.some((line) => line.received > line.transferred)) {
+      setError(t('kams.receivedExceedsTransferred'))
+      setConfirmLoss(false)
+      return
+    }
+    const short = lines.some((line) => line.received < line.transferred)
+    if (short && !withLoss) {
+      setError('')
+      setConfirmLoss(true)
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      await api.post(`/modules/kams/stock/transfers/${transfer.id}/receive`, {
+        confirm_loss: short,
+        items: lines.map((line) => ({ id: line.id, quantity_received: line.received })),
+      })
+      onAccepted()
+      onClose()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+      setConfirmLoss(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const lines = parsed()
+  const shortage = lines
+    .filter((line) => Number.isInteger(line.received) && line.received < line.transferred)
+    .map((line) => `${line.name}: ${line.transferred - line.received}`)
+    .join(', ')
+
+  return (
+    <Modal open={Boolean(transfer)} title={t('kams.acceptTransfer')} onClose={onClose}>
+      <form className="space-y-3" noValidate onSubmit={(e) => { e.preventDefault(); void submit(confirmLoss) }}>
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <p className="text-sm text-muted">
+          <span className="font-semibold text-ink">{transfer?.reference}</span>
+          {' · '}{transfer?.from_depot?.name} → {transfer?.to_depot?.name}
+        </p>
+        {(transfer?.items || []).map((item) => (
+          <div key={item.id} className="grid gap-2 sm:grid-cols-[1fr_140px] sm:items-end">
+            <div className="text-sm">
+              <div className="font-semibold">{item.product?.name}</div>
+              <div className="text-xs text-muted">{t('kams.quantityTransferred')}: {item.quantity}</div>
+            </div>
+            <Field
+              label={t('kams.quantityReceived')}
+              type="number"
+              min="0"
+              max={String(item.quantity)}
+              step="1"
+              value={quantities[item.id] ?? ''}
+              onChange={(e) => {
+                setConfirmLoss(false)
+                setQuantities((current) => ({ ...current, [item.id]: e.target.value }))
+              }}
+              required
+            />
+          </div>
+        ))}
+        {confirmLoss ? (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {t('kams.transferLossConfirm', { shortage })}
+          </p>
+        ) : (
+          <p className="text-xs text-muted">{t('kams.quantityReceivedHint')}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" disabled={saving}>
+            {confirmLoss ? t('kams.confirmLoss') : t('kams.acceptTransfer')}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function IncomingTransferList({
+  transfers,
+  canAccept,
+  onAccept,
+}: {
+  transfers: StockTransfer[]
+  canAccept: boolean
+  onAccept: (row: StockTransfer) => void
+}) {
+  const { t } = useTranslation()
+  if (transfers.length === 0) return null
+  return (
+    <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div className="text-sm font-semibold text-amber-950">{t('kams.incomingTransfers')}</div>
+      {transfers.map((row) => (
+        <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2">
+          <div className="min-w-0 text-sm">
+            <div className="font-semibold">{row.reference}</div>
+            <div className="text-muted">{t('kams.fromWarehouse')}: {row.from_depot?.name || '—'}</div>
+            <div className="text-xs text-muted">
+              {(row.items || []).map((item) => `${item.product?.name || '—'} × ${item.quantity}`).join(' · ')}
+            </div>
+          </div>
+          {canAccept ? (
+            <Button type="button" onClick={() => onAccept(row)}>{t('kams.acceptTransfer')}</Button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function KamsWarehouses() {
   const { t, i18n } = useTranslation()
   const { hasPermission, user } = useAuth()
@@ -272,19 +483,24 @@ export function KamsWarehouses() {
   const [transferForm, setTransferForm] = useState<Record<string, string>>({})
   const [transferError, setTransferError] = useState('')
   const [transferLines, setTransferLines] = useState<Array<{ to_depot_id: string; quantity: string }>>([{ to_depot_id: '', quantity: '1' }])
+  const [incoming, setIncoming] = useState<StockTransfer[]>([])
+  const [accepting, setAccepting] = useState<StockTransfer | null>(null)
 
   const loadWarehouses = () => api.get('/modules/kams/depots', { params: { kind: 'warehouse', per_page: 100 } }).then((res) => setRows(res.data.data || []))
   const loadProducts = () => api.get('/modules/kams/products', { params: { per_page: 200 } }).then((res) => setProducts(res.data.data || []))
+  const loadIncoming = () => api.get('/modules/kams/stock/transfers', { params: { status: 'in_transit', per_page: 100 } }).then((res) => setIncoming(res.data.data || [])).catch(() => setIncoming([]))
 
   useEffect(() => {
     void loadWarehouses()
     void loadProducts()
+    void loadIncoming()
     api.get('/modules/kams/stock/lookups').then((res) => setLookups(res.data.data))
   }, [])
 
   useLiveData(() => {
     void loadWarehouses()
     void loadProducts()
+    void loadIncoming()
   })
 
   const resetProductForm = () => {
@@ -322,6 +538,7 @@ export function KamsWarehouses() {
     setProductForm({
       warehouse_id: originId ? String(originId) : (allIds[0] ? String(allIds[0]) : ''),
       manager_share_percent: '20',
+      manager_share_amount: '',
     })
     setProductOpen(true)
   }
@@ -331,15 +548,20 @@ export function KamsWarehouses() {
     const depotIds = assignedDepotIds(product)
     const allWarehouseIds = warehouseOptions.map((row) => row.id)
     const allDepotIds = (lookups?.depots || []).map((depot) => depot.id)
+    const price = String(product.base_sale_price ?? product.field_price ?? product.price ?? '')
+    const percent = product.manager_share_percent != null ? String(product.manager_share_percent) : ''
     setEditingProduct(product)
     setOriginWarehouseId(null)
     setTaxExempt(Boolean(product.tax_exempt))
     setProductForm({
       name: product.name,
       sku: product.sku || '',
-      price: String(product.base_sale_price ?? product.field_price ?? product.price ?? ''),
+      price,
       cost: String(product.company_price || product.cost || ''),
-      manager_share_percent: product.manager_share_percent != null ? String(product.manager_share_percent) : '',
+      stock: String(product.stock ?? ''),
+      warehouse_id: warehouseForStock(product),
+      manager_share_percent: percent,
+      manager_share_amount: managerAmountFromPercent(percent, price),
     })
     setSelectedWarehouseIds(warehouseIds)
     setAssignAllWarehouses(allWarehouseIds.length > 0 && allWarehouseIds.every((id) => warehouseIds.includes(id)))
@@ -482,10 +704,8 @@ export function KamsWarehouses() {
         payload.append('cost', productForm.cost || '0')
         payload.append('manager_share_percent', productForm.manager_share_percent || '0')
         payload.append('tax_exempt', taxExempt ? '1' : '0')
-        if (!editingProduct) {
-          payload.append('stock', productForm.stock || '0')
-          if (initialWarehouseId) payload.append('warehouse_id', String(initialWarehouseId))
-        }
+        if (productForm.stock !== '') payload.append('stock', productForm.stock || '0')
+        if (initialWarehouseId) payload.append('warehouse_id', String(initialWarehouseId))
         payload.append('assign_all_warehouses', sendAssignAllWarehouses ? '1' : '0')
         warehouseIds.forEach((id) => payload.append('warehouse_ids[]', String(id)))
         payload.append('assign_all_depots', assignAllDepots ? '1' : '0')
@@ -518,7 +738,7 @@ export function KamsWarehouses() {
           depot_ids: depotIds,
         }
         if (editingProduct) {
-          const { company_id: _c, stock: _s, warehouse_id: _w, ...updateBody } = body
+          const { company_id: _c, ...updateBody } = body
           await api.put(`/modules/kams/products/${editingProduct.id}`, updateBody)
         } else {
           await api.post('/modules/kams/products', body)
@@ -596,7 +816,7 @@ export function KamsWarehouses() {
           from_depot_id: transferTarget.warehouse.id,
           to_depot_id: line.to_depot_id,
           notes: transferForm.notes || null,
-          auto_receive: true,
+          auto_receive: false,
           items: [{ product_id: transferTarget.product.id, quantity: line.quantity }],
         })
       }
@@ -605,6 +825,7 @@ export function KamsWarehouses() {
       setTransferLines([{ to_depot_id: '', quantity: '1' }])
       void loadWarehouses()
       void loadProducts()
+      void loadIncoming()
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setTransferError(response?.message || t('kams.saveError'))
@@ -639,7 +860,14 @@ export function KamsWarehouses() {
                     <Home size={24} strokeWidth={2.25} />
                   </span>
                   <div className="min-w-0">
-                    <div className="font-semibold">{row.name}</div>
+                    <div className="font-semibold">
+                      {row.name}
+                      {incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id).length > 0 ? (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
+                          {incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id).length}
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="text-sm text-muted">
                       {row.code || '—'} · {i18n.language.startsWith('fr') ? row.province?.name_fr || row.province?.name : row.province?.name || t('kams.noRegion')}
                     </div>
@@ -725,6 +953,11 @@ export function KamsWarehouses() {
                       </>
                     ) : null}
                   </div>
+                  <IncomingTransferList
+                    transfers={incoming.filter((item) => item.to_depot?.id === row.id || item.to_depot_id === row.id)}
+                    canAccept={Boolean(lookups?.can_manage_warehouses && hasPermission('kams.stock.update'))}
+                    onAccept={setAccepting}
+                  />
                   {warehouseProducts.length === 0 ? (
                     <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p>
                   ) : (
@@ -988,7 +1221,22 @@ export function KamsWarehouses() {
           <Field label="SKU" value={productForm.sku || ''} onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })} />
           <div className="grid grid-cols-2 gap-3">
             <Field label={priceLabel(t('kams.purchasePrice'))} type="number" min="0" step="0.01" value={productForm.cost || ''} onChange={(e) => setProductForm({ ...productForm, cost: e.target.value })} required />
-            <Field label={priceLabel(t('kams.salePrice'))} type="number" min="0" step="0.01" value={productForm.price || ''} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} required />
+            <Field
+              label={priceLabel(t('kams.salePrice'))}
+              type="number"
+              min="0"
+              step="0.01"
+              value={productForm.price || ''}
+              onChange={(e) => {
+                const price = e.target.value
+                setProductForm({
+                  ...productForm,
+                  price,
+                  manager_share_amount: managerAmountFromPercent(productForm.manager_share_percent || '', price),
+                })
+              }}
+              required
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field
@@ -998,11 +1246,32 @@ export function KamsWarehouses() {
               max="100"
               step="0.01"
               value={productForm.manager_share_percent || ''}
-              onChange={(e) => setProductForm({ ...productForm, manager_share_percent: e.target.value })}
+              onChange={(e) => {
+                const percent = e.target.value
+                setProductForm({
+                  ...productForm,
+                  manager_share_percent: percent,
+                  manager_share_amount: managerAmountFromPercent(percent, productForm.price || ''),
+                })
+              }}
               required
             />
+            <Field
+              label={t('kams.managerShareAmount', { currency: reportingCurrency() || 'CDF' })}
+              type="number"
+              min="0"
+              step="0.01"
+              value={productForm.manager_share_amount || ''}
+              onChange={(e) => {
+                const amount = e.target.value
+                setProductForm({
+                  ...productForm,
+                  manager_share_amount: amount,
+                  manager_share_percent: percentFromManagerAmount(amount, productForm.price || ''),
+                })
+              }}
+            />
           </div>
-          <p className="-mt-1 text-xs text-muted">{t('kams.managerSharePercentHint')}</p>
           <label className="flex items-start gap-2 rounded-xl border border-line px-3 py-2.5 text-sm">
             <input
               type="checkbox"
@@ -1015,21 +1284,23 @@ export function KamsWarehouses() {
               <span className="mt-0.5 block text-xs text-muted">{t('kams.taxExemptHint')}</span>
             </span>
           </label>
-          {!editingProduct ? (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label={t('kams.initialStock')} type="number" min="0" value={productForm.stock || ''} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} />
-              </div>
-              <p className="text-xs text-muted">{t('kams.initialStockHint')}</p>
-              {!originWarehouseId && (assignAllWarehouses ? assignableWarehouses.map((row) => row.id) : selectedWarehouseIds).length > 1 ? (
-                <Select label={t('kams.initialStockWarehouse')} value={productForm.warehouse_id || ''} onChange={(e) => setProductForm({ ...productForm, warehouse_id: e.target.value })}>
-                  <option value="">—</option>
-                  {(lookups?.warehouses || [])
-                    .filter((row) => assignAllWarehouses || selectedWarehouseIds.includes(row.id))
-                    .map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-                </Select>
-              ) : null}
-            </>
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label={editingProduct ? t('kams.stock') : t('kams.initialStock')}
+              type="number"
+              min="0"
+              value={productForm.stock || ''}
+              onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })}
+            />
+          </div>
+          {!editingProduct ? <p className="text-xs text-muted">{t('kams.initialStockHint')}</p> : null}
+          {!originWarehouseId && (assignAllWarehouses ? assignableWarehouses.map((row) => row.id) : selectedWarehouseIds).length > 1 ? (
+            <Select label={editingProduct ? t('kams.stockWarehouse') : t('kams.initialStockWarehouse')} value={productForm.warehouse_id || ''} onChange={(e) => setProductForm({ ...productForm, warehouse_id: e.target.value })}>
+              <option value="">—</option>
+              {(lookups?.warehouses || [])
+                .filter((row) => editingProduct || assignAllWarehouses || selectedWarehouseIds.includes(row.id))
+                .map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+            </Select>
           ) : null}
           <div className="space-y-2 rounded-xl border border-line p-3">
             <div className="flex items-center justify-between gap-3">
@@ -1209,10 +1480,19 @@ export function KamsWarehouses() {
             value={transferForm.notes || ''}
             onChange={(e) => setTransferForm({ ...transferForm, notes: e.target.value })}
           />
-          <p className="text-xs text-muted">{t('kams.transferStockHint')}</p>
-          <Button type="submit" className="w-full">{t('kams.transferStock')}</Button>
+          <p className="text-xs text-muted">{t('kams.transferRequestHint')}</p>
+          <Button type="submit" className="w-full">{t('kams.requestTransfer')}</Button>
         </form>
       </Modal>
+      <AcceptTransferModal
+        transfer={accepting}
+        onClose={() => setAccepting(null)}
+        onAccepted={() => {
+          void loadWarehouses()
+          void loadProducts()
+          void loadIncoming()
+        }}
+      />
     </div>
   )
 }
@@ -1231,7 +1511,7 @@ export function KamsDepots() {
   const [receiveTarget, setReceiveTarget] = useState<Location | null>(null)
   const [receiveForm, setReceiveForm] = useState<Record<string, string>>({})
   const [receiveError, setReceiveError] = useState('')
-  const [infoProduct, setInfoProduct] = useState<{ product: Product; quantity: number; depotName: string; depotId: number } | null>(null)
+  const [infoProduct, setInfoProduct] = useState<{ product: Product; quantity: number; depotName: string; depotId: number; officeId: number | null } | null>(null)
   const [infoAdjustments, setInfoAdjustments] = useState<Adjustment[]>([])
   const [supplyTarget, setSupplyTarget] = useState<{ depot: Location; product: Product } | null>(null)
   const [adjustTarget, setAdjustTarget] = useState<{ location: Location; product: Product; quantity: number } | null>(null)
@@ -1245,15 +1525,55 @@ export function KamsDepots() {
   const [adjustError, setAdjustError] = useState('')
   const [removeError, setRemoveError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({})
+  const [incoming, setIncoming] = useState<StockTransfer[]>([])
+  const [accepting, setAccepting] = useState<StockTransfer | null>(null)
 
   const load = () => api.get('/modules/kams/depots', { params: { kind: 'depot', per_page: 50 } }).then((res) => setRows(res.data.data))
+  const loadIncoming = () => api.get('/modules/kams/stock/transfers', { params: { status: 'in_transit', per_page: 100 } }).then((res) => setIncoming(res.data.data || [])).catch(() => setIncoming([]))
+
+  const saveOfficePrice = async (depot: Location, product: Product, raw: string) => {
+    if (!depot.office_id) return
+    const key = `${depot.id}:${product.id}`
+    const fallback = catalogSalePrice(product)
+    const trimmed = raw.trim()
+    const next = trimmed === '' ? fallback : Number(trimmed)
+    if (!Number.isFinite(next) || next < 0) return
+    if (Math.abs(next - officeSalePrice(product, depot.office_id)) < 0.001) {
+      setPriceDrafts((current) => {
+        const copy = { ...current }
+        delete copy[key]
+        return copy
+      })
+      return
+    }
+    try {
+      await api.put(`/modules/kams/products/${product.id}/office-price`, {
+        office_id: depot.office_id,
+        sale_price: Math.abs(next - fallback) < 0.001 ? null : next,
+      })
+      setPriceDrafts((current) => {
+        const copy = { ...current }
+        delete copy[key]
+        return copy
+      })
+      void load()
+    } catch (err) {
+      const response = (err as { response?: { data?: { message?: string } } }).response?.data
+      setError(response?.message || t('kams.saveError'))
+    }
+  }
 
   useEffect(() => {
     void load()
+    void loadIncoming()
     api.get('/modules/kams/stock/lookups').then((res) => setLookups(res.data.data))
   }, [])
 
-  useLiveData(load)
+  useLiveData(() => {
+    void load()
+    void loadIncoming()
+  })
 
   const assignedOfficeId = () => {
     if (user?.primary_office?.id && (lookups?.offices || []).some((office) => office.id === user.primary_office?.id)) {
@@ -1337,7 +1657,7 @@ export function KamsDepots() {
   }
 
   const openInfo = (depot: Location, product: Product, quantity: number) => {
-    setInfoProduct({ product, quantity, depotName: depot.name, depotId: depot.id })
+    setInfoProduct({ product, quantity, depotName: depot.name, depotId: depot.id, officeId: depot.office_id ?? null })
     setInfoAdjustments([])
     api.get('/modules/kams/stock/adjustments', {
       params: { depot_id: depot.id, product_id: product.id, per_page: 10 },
@@ -1410,12 +1730,13 @@ export function KamsDepots() {
       await api.post('/modules/kams/stock/transfers', {
         from_depot_id: Number(supplyForm.warehouse_id),
         to_depot_id: supplyTarget.depot.id,
-        auto_receive: true,
+        auto_receive: false,
         items: [{ product_id: supplyTarget.product.id, quantity: Number(supplyForm.quantity) }],
       })
       setSupplyTarget(null)
       setSupplyForm({})
       void load()
+      void loadIncoming()
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setSupplyError(response?.message || t('kams.saveError'))
@@ -1507,7 +1828,14 @@ export function KamsDepots() {
                     <Home size={16} />
                   </span>
                   <div className="min-w-0">
-                    <div className="font-semibold">{row.name}</div>
+                    <div className="font-semibold">
+                      {row.name}
+                      {incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id).length > 0 ? (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
+                          {incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id).length}
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="text-sm text-muted">{row.office?.name || '—'} · {row.code || '—'}</div>
                     <div className="mt-1 hidden text-xs text-muted sm:block">
                       {t('kams.products')}: {products.length}
@@ -1582,6 +1910,11 @@ export function KamsDepots() {
                       </>
                     ) : null}
                   </div>
+                  <IncomingTransferList
+                    transfers={incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id)}
+                    canAccept={hasPermission('kams.stock.update')}
+                    onAccept={setAccepting}
+                  />
                   {products.length === 0 ? (
                     <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p>
                   ) : (
@@ -1608,9 +1941,30 @@ export function KamsDepots() {
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-1.5 whitespace-nowrap">{item.product ? money(saleUnitPrice(item.product)) : '—'}</td>
+                          <td className="px-4 py-1.5 whitespace-nowrap">
+                            {item.product && row.office_id && hasPermission('kams.products.update') ? (
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                aria-label={t('kams.salePrice')}
+                                title={t('kams.officePricesHint')}
+                                className="w-32 rounded-lg border border-line bg-white px-2 py-1 text-sm tabular-nums"
+                                value={priceDrafts[`${row.id}:${item.product.id}`] ?? String(officeSalePrice(item.product, row.office_id))}
+                                onChange={(e) => {
+                                  const key = `${row.id}:${item.product?.id}`
+                                  setPriceDrafts((current) => ({ ...current, [key]: e.target.value }))
+                                }}
+                                onBlur={(e) => {
+                                  if (item.product) void saveOfficePrice(row, item.product, e.target.value)
+                                }}
+                              />
+                            ) : (
+                              item.product ? money(officeSalePrice(item.product, row.office_id)) : '—'
+                            )}
+                          </td>
                           <td className="px-4 py-1.5 text-right font-semibold tabular-nums">{item.quantity}</td>
-                          <td className="px-4 py-1.5 text-right tabular-nums">{money(lineStockValue(item.quantity, item.product))}</td>
+                          <td className="px-4 py-1.5 text-right tabular-nums">{money(lineStockValue(item.quantity, item.product, row.office_id))}</td>
                           <td className="px-4 py-1.5">
                             <div className="flex flex-nowrap items-center justify-end gap-1">
                               <button
@@ -1868,10 +2222,10 @@ export function KamsDepots() {
             </div>
             <div className="grid gap-2 text-sm sm:grid-cols-2">
               <div>{t('kams.purchasePrice')}: <strong>{money(purchaseUnitCost(infoProduct.product))}</strong></div>
-              <div>{t('kams.salePrice')}: <strong>{money(saleUnitPrice(infoProduct.product))}</strong></div>
-              <div>{t('kams.grossProfit')}: <strong>{money(Math.max(0, saleUnitPrice(infoProduct.product) - purchaseUnitCost(infoProduct.product)))}</strong></div>
+              <div>{t('kams.salePrice')}: <strong>{money(officeSalePrice(infoProduct.product, infoProduct.officeId))}</strong></div>
+              <div>{t('kams.grossProfit')}: <strong>{money(Math.max(0, officeSalePrice(infoProduct.product, infoProduct.officeId) - purchaseUnitCost(infoProduct.product)))}</strong></div>
               <div>{t('kams.quantity')}: <strong>{infoProduct.quantity}</strong></div>
-              <div>{t('kams.inventoryValue')}: <strong>{money(lineStockValue(infoProduct.quantity, infoProduct.product))}</strong></div>
+              <div>{t('kams.inventoryValue')}: <strong>{money(lineStockValue(infoProduct.quantity, infoProduct.product, infoProduct.officeId))}</strong></div>
             </div>
             <div className="space-y-2">
               <div className="text-sm font-medium">{t('kams.adjustmentHistory')}</div>
@@ -1947,6 +2301,14 @@ export function KamsDepots() {
           <Button type="submit" className="w-full">{t('common.save')}</Button>
         </form>
       </Modal>
+      <AcceptTransferModal
+        transfer={accepting}
+        onClose={() => setAccepting(null)}
+        onAccepted={() => {
+          void load()
+          void loadIncoming()
+        }}
+      />
     </div>
   )
 }
