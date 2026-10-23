@@ -11,7 +11,6 @@ import {
   Store,
   Trash2,
   Truck,
-  UserRound,
   Warehouse,
   ClipboardCheck,
   CircleDollarSign,
@@ -22,14 +21,13 @@ import {
 } from 'lucide-react'
 import { Badge, Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
 import { trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
-import { initials } from '../../lib/format'
 import type { OperationsOfficeFilter } from './KamsStockFlows'
 
 type JournalEntry = {
@@ -80,27 +78,11 @@ function eventIcon(event: string, entity: string): LucideIcon {
   return ScrollText
 }
 
-const toneStyles: Record<Tone, { icon: string; rail: string; chip: string }> = {
-  green: {
-    icon: 'bg-lhms-soft text-lhms ring-lhms/15',
-    rail: 'bg-lhms/25',
-    chip: 'bg-lhms-soft text-lhms',
-  },
-  amber: {
-    icon: 'bg-amber-50 text-warn ring-amber-100',
-    rail: 'bg-amber-200/70',
-    chip: 'bg-amber-50 text-warn',
-  },
-  red: {
-    icon: 'bg-danger-soft text-danger ring-red-100',
-    rail: 'bg-red-200/70',
-    chip: 'bg-danger-soft text-danger',
-  },
-  slate: {
-    icon: 'bg-slate-100 text-slate-600 ring-slate-200',
-    rail: 'bg-slate-200',
-    chip: 'bg-slate-100 text-slate-600',
-  },
+const toneStyles: Record<Tone, { icon: string; text: string }> = {
+  green: { icon: 'bg-lhms-soft text-lhms', text: 'text-lhms' },
+  amber: { icon: 'bg-amber-50 text-warn', text: 'text-warn' },
+  red: { icon: 'bg-danger-soft text-danger', text: 'text-danger' },
+  slate: { icon: 'bg-slate-100 text-slate-600', text: 'text-slate-600' },
 }
 
 function dayKey(value?: string | null) {
@@ -229,6 +211,7 @@ export function KamsStockJournal() {
   const [to, setTo] = useState('')
   const [page, setPage] = useState(1)
   const [lastPage, setLastPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [selected, setSelected] = useState<JournalEntry | null>(null)
   const [deleting, setDeleting] = useState<JournalEntry | null>(null)
@@ -269,11 +252,13 @@ export function KamsStockJournal() {
       startTransition(() => {
         setRows(res.data.data || [])
         setLastPage(res.data.meta?.last_page || 1)
+        setTotal(Number(res.data.meta?.total ?? (res.data.data || []).length))
       })
     }).catch(() => {
       startTransition(() => {
         setRows([])
         setLastPage(1)
+        setTotal(0)
       })
     }).finally(stop)
   }
@@ -388,7 +373,7 @@ export function KamsStockJournal() {
                 <div className="text-xs font-medium text-muted">{items.length}</div>
               </div>
 
-              <div className="relative space-y-3 pl-2 sm:pl-3">
+              <div className="overflow-hidden rounded-2xl border border-line bg-white">
                 {items.map((row, index) => {
                   const tone = eventTone(row.event)
                   const styles = toneStyles[tone]
@@ -396,77 +381,40 @@ export function KamsStockJournal() {
                   const eventLabel = t(`kams.journalEvents.${row.event}`, { defaultValue: row.event })
                   const entityLabel = t(`kams.journalEntities.${row.entity}`, { defaultValue: row.entity })
                   const userName = row.user?.name || t('common.system')
-                  const isLast = index === items.length - 1
+                  const title = row.subject && !/^#\d+$/.test(row.subject) ? row.subject : eventLabel
 
                   return (
-                    <article key={row.id} className="relative flex gap-3 sm:gap-4">
-                      <div className="relative flex w-10 shrink-0 flex-col items-center sm:w-12">
-                        {!isLast ? (
-                          <span className={cn('absolute top-11 bottom-[-12px] w-px', styles.rail)} />
-                        ) : null}
-                        <span className={cn('relative z-10 grid h-10 w-10 place-items-center rounded-2xl ring-4 ring-white sm:h-11 sm:w-11', styles.icon)}>
-                          <Icon size={18} strokeWidth={2.2} />
-                        </span>
-                      </div>
-
-                      <div className="min-w-0 flex-1 rounded-2xl border border-line bg-white p-4 shadow-[0_1px_0_rgba(15,23,42,0.03)] transition hover:border-lhms/25 hover:shadow-[0_10px_30px_rgba(15,23,42,0.05)] sm:p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 space-y-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={cn('inline-flex rounded-full px-2.5 py-1 text-xs font-semibold', styles.chip)}>
-                                {eventLabel}
-                              </span>
-                              <Badge tone="slate">{entityLabel}</Badge>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setSelected(row)}
-                              className="block max-w-full truncate text-left text-base font-semibold tracking-tight text-lhms underline-offset-2 hover:underline"
-                            >
-                              {row.subject && !/^#\d+$/.test(row.subject) ? row.subject : eventLabel}
-                            </button>
-                            {row.details.length > 0 ? (
-                              <div className="flex flex-wrap gap-2">
-                                {row.details.map((detail) => (
-                                  <span
-                                    key={`${row.id}-${detail}`}
-                                    className="inline-flex max-w-full truncate rounded-lg bg-surface px-2.5 py-1 text-xs font-medium text-muted"
-                                  >
-                                    {detail}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
-                            <div className="hidden text-right sm:block">
-                              <div className="text-sm font-semibold text-ink">{formatClock(row.created_at, locale)}</div>
-                              {row.ip_address ? <div className="mt-0.5 text-[11px] text-muted">{row.ip_address}</div> : null}
-                            </div>
-                            <div className="flex items-center gap-2 rounded-full bg-surface py-1.5 pr-3 pl-1.5">
-                              <span className="grid h-8 w-8 place-items-center rounded-full bg-lhms text-[11px] font-bold text-white">
-                                {row.user ? initials(userName) : <UserRound size={14} />}
-                              </span>
-                              <div className="min-w-0">
-                                <div className="max-w-[9rem] truncate text-xs font-semibold text-ink">{userName}</div>
-                                <div className="text-[11px] text-muted sm:hidden">{formatClock(row.created_at, locale)}</div>
-                              </div>
-                            </div>
-                            {canDelete ? (
-                              <button
-                                type="button"
-                                aria-label={t('kams.deleteJournalEntry')}
-                                title={t('kams.deleteJournalEntry')}
-                                className="grid h-9 w-9 place-items-center rounded-xl text-danger hover:bg-danger/10"
-                                onClick={() => { setDeleteError(''); setDeleting(row) }}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            ) : null}
-                          </div>
+                    <article key={row.id} className={cn('flex items-start gap-3 px-4 py-3', index > 0 && 'border-t border-line')}>
+                      <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl', styles.icon)}>
+                        <Icon size={18} strokeWidth={2.2} />
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelected(row)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="truncate font-semibold text-ink">{title}</div>
+                        <div className="mt-0.5 truncate text-xs text-muted">
+                          <span className={cn('font-semibold', styles.text)}>{eventLabel}</span>
+                          {' · '}{entityLabel}
+                          {' · '}{formatClock(row.created_at, locale)}
+                          {' · '}{userName}
                         </div>
-                      </div>
+                        {row.details.length > 0 ? (
+                          <div className="mt-1 truncate text-xs text-muted">{row.details.join(' · ')}</div>
+                        ) : null}
+                      </button>
+                      {canDelete ? (
+                        <button
+                          type="button"
+                          aria-label={t('kams.deleteJournalEntry')}
+                          title={t('kams.deleteJournalEntry')}
+                          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-danger hover:bg-danger/10"
+                          onClick={() => { setDeleteError(''); setDeleting(row) }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      ) : null}
                     </article>
                   )
                 })}
@@ -503,7 +451,7 @@ export function KamsStockJournal() {
         </div>
       </Modal>
 
-      {lastPage > 1 ? (
+      {showListPagination(total) ? (
         <div className="mt-6 flex justify-end rounded-2xl border border-line bg-white px-4 py-3">
           <PaginationButtons
             page={page}

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Card, Empty, Field } from '../../components/ui'
-import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
@@ -109,6 +108,7 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
     if (!from || !to) return
     return api.get('/dashboard/module-performance', {
       params: { group_by: period, from, to, module: slug || undefined },
+      skipBusy: true,
     }).then((res) => {
       setData(res.data.data)
     }).catch(() => {
@@ -129,7 +129,13 @@ export function ModuleOfficePerformance({ slug }: { slug?: string }) {
     setTo(next.to)
   }
 
-  if (!data) return <LoadingScreen />
+  if (!data) {
+    return (
+      <Card className="p-5 text-center text-sm text-muted">
+        {t('common.loading')}
+      </Card>
+    )
+  }
 
   const modules = data.modules.filter((item) => canAccessModule(user, item.slug))
   const currency = data.currency || ''

@@ -1130,10 +1130,6 @@ class KamsRecruitmentController extends Controller
 
     private function isDistributorMember(KamsMember $member): bool
     {
-        if ($member->rank === 'Distributor') {
-            return true;
-        }
-
         if (! $member->role_id) {
             return false;
         }

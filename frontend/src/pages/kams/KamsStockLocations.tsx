@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { PhotoSourcePicker } from '../../components/PhotoSourcePicker'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { useAuth } from '../../context/AuthContext'
@@ -131,7 +131,7 @@ function PagedTable<T extends { id: number | string }>({
   const [perPage, setPerPage] = useState(10)
   const lastPage = Math.max(1, Math.ceil(rows.length / perPage) || 1)
   const safePage = Math.min(page, lastPage)
-  const pageRows = rows.slice((safePage - 1) * perPage, safePage * perPage)
+  const pageRows = showListPagination(rows.length) ? rows.slice((safePage - 1) * perPage, safePage * perPage) : rows
   const rangeStart = rows.length === 0 ? 0 : (safePage - 1) * perPage + 1
   const rangeEnd = Math.min(safePage * perPage, rows.length)
 
@@ -151,7 +151,7 @@ function PagedTable<T extends { id: number | string }>({
           </tbody>
         </table>
       </div>
-      <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+      {showListPagination(rows.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: rows.length })}</p>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-sm text-muted">
@@ -167,7 +167,7 @@ function PagedTable<T extends { id: number | string }>({
             onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
           />
         </div>
-      </div>
+      </div> : null}
     </div>
   )
 }
@@ -627,7 +627,7 @@ export function KamsWarehouses() {
           const warehouseValue = warehouseProducts.reduce((sum, item) => sum + lineStockValue(item.quantity, item.product), 0)
           return (
             <Card key={row.id} className="overflow-hidden">
-              <div className="flex w-full items-start justify-between gap-3 p-5">
+              <div className="flex w-full flex-wrap items-start gap-x-3 gap-y-1 p-5">
               <button
                 type="button"
                 onClick={() => toggleWarehouseOpen(row.id)}
@@ -643,7 +643,7 @@ export function KamsWarehouses() {
                     <div className="text-sm text-muted">
                       {row.code || '—'} · {i18n.language.startsWith('fr') ? row.province?.name_fr || row.province?.name : row.province?.name || t('kams.noRegion')}
                     </div>
-                    <div className="mt-1 text-xs text-muted">
+                    <div className="mt-1 hidden text-xs text-muted sm:block">
                       {t('kams.products')}: {warehouseProducts.length}
                       {' · '}
                       {t('kams.quantity')}: {warehouseUnits}
@@ -685,12 +685,22 @@ export function KamsWarehouses() {
                     <ChevronDown size={18} className={cn('transition', expanded ? 'rotate-0' : '-rotate-90')} />
                   </button>
                 </div>
+                <div className="w-full text-xs text-muted sm:hidden">
+                  {t('kams.products')}: {warehouseProducts.length}
+                  {' · '}
+                  {t('kams.quantity')}: {warehouseUnits}
+                  {' · '}
+                  {t('kams.inventoryValue')}: {money(warehouseValue)}
+                </div>
               </div>
               {expanded ? (
                 <div className="space-y-4 border-t border-line bg-surface px-5 py-4">
                   <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
                     {hasPermission('kams.products.create') ? (
-                      <Button onClick={() => openCreateProduct(row)}>{t('kams.addProduct')}</Button>
+                      <Button onClick={() => openCreateProduct(row)}>
+                        <span className="sm:hidden">{t('common.add')}</span>
+                        <span className="hidden sm:inline">{t('kams.addProduct')}</span>
+                      </Button>
                     ) : null}
                     {lookups?.can_manage_warehouses && hasPermission('kams.stock.update') ? (
                       <Button
@@ -1486,7 +1496,7 @@ export function KamsDepots() {
           const products = (row.balances || []).filter((item) => (item.condition || 'available') === 'available' && item.product && item.quantity > 0)
           return (
             <Card key={row.id} className="overflow-hidden">
-              <div className="flex w-full items-start justify-between gap-3 p-5">
+              <div className="flex w-full flex-wrap items-start gap-x-3 gap-y-1 p-5">
                 <button
                   type="button"
                   onClick={() => toggleDepot(row.id)}
@@ -1499,7 +1509,7 @@ export function KamsDepots() {
                   <div className="min-w-0">
                     <div className="font-semibold">{row.name}</div>
                     <div className="text-sm text-muted">{row.office?.name || '—'} · {row.code || '—'}</div>
-                    <div className="mt-1 text-xs text-muted">
+                    <div className="mt-1 hidden text-xs text-muted sm:block">
                       {t('kams.products')}: {products.length}
                       {' · '}
                       {t('kams.quantity')}: {locationUnits(row)}
@@ -1540,6 +1550,13 @@ export function KamsDepots() {
                   >
                     <ChevronDown size={18} className={cn('transition', isOpen ? 'rotate-0' : '-rotate-90')} />
                   </button>
+                </div>
+                <div className="w-full text-xs text-muted sm:hidden">
+                  {t('kams.products')}: {products.length}
+                  {' · '}
+                  {t('kams.quantity')}: {locationUnits(row)}
+                  {' · '}
+                  {t('kams.inventoryValue')}: {money(locationStockValue(row))}
                 </div>
               </div>
               {isOpen ? (

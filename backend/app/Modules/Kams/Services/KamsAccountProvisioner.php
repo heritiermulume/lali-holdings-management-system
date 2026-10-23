@@ -175,10 +175,13 @@ class KamsAccountProvisioner
     private function isManagerial(KamsMember $member): bool
     {
         $slug = $member->role?->slug ?: Role::query()->whereKey($member->role_id)->value('slug');
+        if ($slug) {
+            return in_array($slug, ['manager', 'assistant_manager', 'secretary', 'divisionnaire', 'vice_president', 'partner', 'president', 'super_administrator'], true);
+        }
+
         $rank = strtolower((string) $member->rank);
 
-        return in_array($slug, ['manager', 'assistant_manager', 'secretary', 'divisionnaire', 'vice_president', 'partner', 'president', 'super_administrator'], true)
-            || str_contains($rank, 'manager')
+        return str_contains($rank, 'manager')
             || str_contains($rank, 'président')
             || str_contains($rank, 'president')
             || str_contains($rank, 'partner')

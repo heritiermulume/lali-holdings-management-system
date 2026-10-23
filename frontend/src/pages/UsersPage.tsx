@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PhotoSourcePicker } from '../components/PhotoSourcePicker'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
-import { PaginationButtons } from '../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal, Select } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
@@ -874,7 +874,7 @@ export function UsersPage() {
             </div>
           </div>
         ))}
-            <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            {showListPagination(total) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted">{t('common.pageRange', { from: rangeStart, to: rangeEnd, total })}</p>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-2 text-sm text-muted">
@@ -900,7 +900,7 @@ export function UsersPage() {
                   onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
                 />
               </div>
-            </div>
+            </div> : null}
           </>
         )}
       </Card>

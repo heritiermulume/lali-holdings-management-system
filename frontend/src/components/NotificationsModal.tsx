@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Badge, Button, Empty, Modal } from './ui'
 import { LoadingScreen } from './LoadingScreen'
-import { PaginationButtons } from './PaginationButtons'
+import { PaginationButtons, showListPagination } from './PaginationButtons'
 import { useLiveData } from '../hooks/useLiveData'
 import { cn } from '../lib/cn'
 import api from '../lib/api'
@@ -233,7 +233,7 @@ export function NotificationsModal({
               })}
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
+            {showListPagination(meta.total) ? <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted">
                 {t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: meta.total })}
               </p>
@@ -261,7 +261,7 @@ export function NotificationsModal({
                   onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
                 />
               </div>
-            </div>
+            </div> : null}
           </>
         ) : null}
       </div>

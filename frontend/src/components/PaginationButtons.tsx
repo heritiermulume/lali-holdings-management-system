@@ -2,6 +2,13 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/cn'
 
+/** Page size and page controls stay hidden until a list has at least this many rows. */
+export const PAGINATION_MIN_ROWS = 11
+
+export function showListPagination(total: number) {
+  return total >= PAGINATION_MIN_ROWS
+}
+
 export function PaginationButtons({
   page,
   lastPage,

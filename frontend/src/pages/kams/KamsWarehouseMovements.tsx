@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../../i18n/locales'
 import { Link, useParams } from 'react-router-dom'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { Badge, Button, Empty, Field, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
@@ -180,7 +180,7 @@ export function KamsWarehouseMovements() {
 
   const lastPage = Math.max(1, Math.ceil(rows.length / perPage) || 1)
   const safePage = Math.min(page, lastPage)
-  const visible = rows.slice((safePage - 1) * perPage, safePage * perPage)
+  const visible = showListPagination(rows.length) ? rows.slice((safePage - 1) * perPage, safePage * perPage) : rows
   const rangeStart = rows.length === 0 ? 0 : (safePage - 1) * perPage + 1
   const rangeEnd = Math.min(safePage * perPage, rows.length)
 
@@ -456,7 +456,7 @@ export function KamsWarehouseMovements() {
               </tbody>
             </table>
           </div>
-          <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          {showListPagination(rows.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: rows.length })}</p>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-sm text-muted">
@@ -479,7 +479,7 @@ export function KamsWarehouseMovements() {
                 onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
               />
             </div>
-          </div>
+          </div> : null}
         </div>
       )}
 

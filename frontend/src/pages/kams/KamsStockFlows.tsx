@@ -401,7 +401,7 @@ export function KamsAssignmentsWorkspace() {
   return (
     <div>
       {showOfficeFilter ? (
-        <div className="mb-4">
+        <div className="mb-4 max-w-44">
           <OfficeFilterSelect
             value={officeId}
             offices={offices}

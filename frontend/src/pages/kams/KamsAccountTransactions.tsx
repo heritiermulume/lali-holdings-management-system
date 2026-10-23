@@ -2,7 +2,7 @@ import { Eye, Info, ListFilter, Printer } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { dateTime, money } from '../../lib/format'
@@ -336,7 +336,7 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
 
   const lastPage = Math.max(1, Math.ceil(filtered.length / perPage) || 1)
   const safePage = Math.min(page, lastPage)
-  const visible = filtered.slice((safePage - 1) * perPage, safePage * perPage)
+  const visible = showListPagination(filtered.length) ? filtered.slice((safePage - 1) * perPage, safePage * perPage) : filtered
   const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * perPage + 1
   const rangeEnd = Math.min(safePage * perPage, filtered.length)
 
@@ -562,7 +562,7 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
             </tbody>
           </table>
         </div>
-        <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(filtered.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: filtered.length })}</p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-muted">
@@ -578,7 +578,7 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
               onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
       </div>
 
       <PrintPreviewModal

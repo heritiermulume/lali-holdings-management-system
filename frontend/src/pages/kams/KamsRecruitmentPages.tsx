@@ -7,7 +7,7 @@ import { PhotoSourcePicker } from '../../components/PhotoSourcePicker'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Badge, Button, Card, Field, Modal, Select } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
 import { SearchCombobox, type SearchComboboxItem } from '../../components/SearchCombobox'
 import { showAlert } from '../../lib/alert'
@@ -860,7 +860,7 @@ export function KamsAgents() {
   })
   const coachedLastPage = Math.max(1, Math.ceil(filteredCoached.length / coachedPerPage) || 1)
   const coachedCurrentPage = Math.min(coachedPage, coachedLastPage)
-  const coachedSlice = filteredCoached.slice((coachedCurrentPage - 1) * coachedPerPage, coachedCurrentPage * coachedPerPage)
+  const coachedSlice = showListPagination(filteredCoached.length) ? filteredCoached.slice((coachedCurrentPage - 1) * coachedPerPage, coachedCurrentPage * coachedPerPage) : filteredCoached
   const coachedFrom = filteredCoached.length === 0 ? 0 : (coachedCurrentPage - 1) * coachedPerPage + 1
   const coachedTo = Math.min(coachedCurrentPage * coachedPerPage, filteredCoached.length)
 
@@ -1300,7 +1300,7 @@ export function KamsAgents() {
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
                 </tr>
-              ) : rows.slice((agentPage - 1) * perPage, agentPage * perPage).map((row, index) => (
+              ) : (showListPagination(rows.length) ? rows.slice((agentPage - 1) * perPage, agentPage * perPage) : rows).map((row, index) => (
           <tr
             key={row.id}
             className={cn(
@@ -1378,7 +1378,7 @@ export function KamsAgents() {
             </tbody>
           </table>
         </div>
-        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(rows.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{t('kams.pageRange', { from: agentRangeStart, to: agentRangeEnd, total: rows.length })}</p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-muted">
@@ -1398,7 +1398,7 @@ export function KamsAgents() {
               onNext={() => setPage((value) => Math.min(agentLastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
           </>
         )}
       </div>
@@ -1597,6 +1597,7 @@ export function KamsAgents() {
             <div>{t('kams.phoneWhatsapp')}: <strong>{memberDetail.phone || '—'}</strong></div>
             <div>{t('kams.joinedOn')}: {memberDetail.joined_on || '—'}</div>
             {memberDetail.migrated_at ? <div>{t('kams.migratedOn')}: {String(memberDetail.migrated_at)}</div> : null}
+            <div>{t('kams.office')}: <strong>{memberDetail.office?.name || '—'}</strong></div>
             <div>{t('users.role')}: <strong>{memberRoleLabel}</strong></div>
             {memberDetail.can_be_certified ? (
               <div>{t('users.certified')}: <strong>{memberDetail.is_certified ? t('users.certified') : t('users.notCertified')}</strong></div>
@@ -1646,7 +1647,7 @@ export function KamsAgents() {
           ))}
           {filteredCoached.length === 0 ? <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p> : null}
         </div>
-        <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(filteredCoached.length) ? <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{t('kams.pageRange', { from: coachedFrom, to: coachedTo, total: filteredCoached.length })}</p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-muted">
@@ -1666,7 +1667,7 @@ export function KamsAgents() {
               onNext={() => setCoachedPage((value) => Math.min(coachedLastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
         <Button className="mt-4 w-full" variant="secondary" onClick={() => setCoachedOpen(false)}>{t('common.close')}</Button>
       </Modal>
 
@@ -1745,7 +1746,6 @@ export function KamsCandidates() {
   const [lastPage, setLastPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [action, setAction] = useState<'interview' | 'observation' | null>(null)
-  const [pickingSupervisor, setPickingSupervisor] = useState(false)
   const [credentials, setCredentials] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -2009,7 +2009,6 @@ export function KamsCandidates() {
       }
       setAction(null)
       setDetail(null)
-      setPickingSupervisor(false)
       void load()
     } catch (error) {
       const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message
@@ -2054,12 +2053,11 @@ export function KamsCandidates() {
     }))
   const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
   const companyPeople = people.filter((person) => !detail?.company_id || String(person.company_id) === String(detail.company_id))
-  // Encadreur becomes the member upline on approval.
   const supervisorPeople = companyPeople
     .filter((person) => (
       Boolean(person.user_id)
-      && person.rank !== 'Distributor'
-      && !(person.role_id != null && distributorRoleIds.has(person.role_id))
+      && !isDistributorRole(person)
+      && (!detail?.office_id || String(person.office_id) === String(detail.office_id))
     ))
     .map((person): SearchComboboxItem => ({
       id: String(person.id),
@@ -2067,11 +2065,6 @@ export function KamsCandidates() {
       hint: [person.member_code, person.phone].filter(Boolean).join(' · '),
     }))
   const selectedSupervisor = supervisorPeople.find((item) => item.id === form.supervisor_member_id) ?? null
-  const supervisorQuery = (form.supervisor_query || '').trim().toLowerCase()
-  const supervisorResults = supervisorPeople.filter((item) => {
-    if (!supervisorQuery) return true
-    return [item.label, item.hint ?? ''].join(' ').toLowerCase().includes(supervisorQuery)
-  })
   const interviewerOptions = people
     .filter((person) => (
       Boolean(person.user_id)
@@ -2110,9 +2103,9 @@ export function KamsCandidates() {
           </Button>
         ) : null}
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 justify-start gap-3 sm:grid-cols-[repeat(auto-fill,24rem)]">
         {loading && rows.length === 0 ? (
-          <div className="md:col-span-2">
+          <div className="col-span-full">
             <LoadingScreen />
           </div>
         ) : (
@@ -2178,18 +2171,18 @@ export function KamsCandidates() {
           ]
 
           return (
-          <Card key={row.id} className="p-5">
+          <Card key={row.id} className="flex h-44 w-full shrink-0 flex-col overflow-hidden p-5 sm:w-96">
             <div className="flex min-w-0 items-start gap-3">
               <PersonPhoto name={personName(row)} url={row.photo_url} />
               <div className="min-w-0 flex-1">
-                <div className="font-semibold leading-snug">{personName(row)}</div>
+                <div className="truncate font-semibold leading-snug">{personName(row)}</div>
                 <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="min-w-0 flex-1 text-sm text-muted">{t(`kams.source.${row.source}`)}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-muted">{t(`kams.source.${row.source}`)}</span>
                   <Badge tone={toneFor(row.status)}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
                 </div>
               </div>
             </div>
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-auto flex items-center gap-3 pt-4">
               {canUpdate || canDelete ? (
               <>
               <div className="flex shrink-0 items-center gap-0.5">
@@ -2257,11 +2250,11 @@ export function KamsCandidates() {
           </Card>
           )
         })}
-        {rows.length === 0 ? <p className="py-8 text-center text-sm text-muted md:col-span-2">{t('common.empty')}</p> : null}
+        {rows.length === 0 ? <p className="col-span-full py-8 text-center text-sm text-muted">{t('common.empty')}</p> : null}
           </>
         )}
       </div>
-      <div className="mt-4 flex items-center justify-center gap-2 overflow-x-auto whitespace-nowrap text-xs sm:gap-3 sm:text-sm">
+      {showListPagination(total) ? <div className="mt-4 flex items-center justify-center gap-2 overflow-x-auto whitespace-nowrap text-xs sm:gap-3 sm:text-sm">
         <p className="shrink-0 text-muted">
           {t('kams.pageRange', {
             from: total === 0 ? 0 : (page - 1) * perPage + 1,
@@ -2289,7 +2282,7 @@ export function KamsCandidates() {
           onPrev={() => setPage((value) => Math.max(1, value - 1))}
           onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
         />
-      </div>
+      </div> : null}
 
       <Modal open={open} title={editingId ? t('kams.editCandidate') : t('kams.newCandidate')} onClose={() => { setOpen(false); resetCandidateForm() }}>
         <form className="space-y-3" onSubmit={(e) => void submit(e)}>
@@ -2384,7 +2377,7 @@ export function KamsCandidates() {
       <Modal
         open={Boolean(detail && action)}
         title={action === 'observation' ? t('kams.observation') : t('kams.interview')}
-        onClose={() => { setDetail(null); setAction(null); setPickingSupervisor(false) }}
+        onClose={() => { setDetail(null); setAction(null) }}
       >
         <form className="space-y-3" onSubmit={(e) => void saveStage(e)}>
           <p className="text-base font-semibold sm:text-lg">{personName(detail as Candidate)}</p>
@@ -2453,26 +2446,16 @@ export function KamsCandidates() {
                   ? t('kams.observationHoursHint', { hours: recruitmentSettings.observation_hours })
                   : t('kams.observationHours')}
               </p>
-              {form.observation_starts_at && form.observation_ends_at ? (
-                <p className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
-                  {t('kams.scheduledObservation')}: {form.observation_starts_at.replace('T', ' ')} → {form.observation_ends_at.replace('T', ' ')}
-                </p>
-              ) : null}
               <Field label={t('kams.observationDate')} type="date" value={form.observation_date || ''} onChange={(e) => setForm({ ...form, observation_date: e.target.value })} required />
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium">{t('kams.supervisor')} <span className="text-danger">*</span></span>
-                <button
-                  type="button"
-                  className="flex min-h-11 w-full items-center justify-between rounded-xl border border-line bg-white px-3 text-left text-sm"
-                  onClick={() => setPickingSupervisor(true)}
-                >
-                  <span className={selectedSupervisor ? 'font-medium' : 'text-muted'}>
-                    {selectedSupervisor ? selectedSupervisor.label : t('kams.pickSupervisor')}
-                  </span>
-                  <Search size={16} className="text-muted" />
-                </button>
-                {selectedSupervisor?.hint ? <p className="text-xs text-muted">{selectedSupervisor.hint}</p> : null}
-              </div>
+              <SearchCombobox
+                label={t('kams.supervisor')}
+                required
+                value={selectedSupervisor}
+                items={supervisorPeople}
+                placeholder={t('kams.searchPerson')}
+                emptyLabel={supervisorPeople.length === 0 ? t('kams.noEligibleSupervisor') : t('common.empty')}
+                onSelect={(item) => setForm({ ...form, supervisor_member_id: item?.id ?? '' })}
+              />
               <Select label={t('kams.attendance')} value={form.attended || '1'} onChange={(e) => setForm({ ...form, attended: e.target.value })}>
                 <option value="1">{t('kams.present')}</option>
                 <option value="0">{t('kams.absent')}</option>
@@ -2499,40 +2482,6 @@ export function KamsCandidates() {
           ) : null}
           <Button type="submit" className="w-full">{t('common.save')}</Button>
         </form>
-      </Modal>
-      <Modal open={pickingSupervisor} title={t('kams.pickSupervisor')} onClose={() => setPickingSupervisor(false)}>
-        <div className="space-y-3">
-          <label className="flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-3">
-            <Search size={16} className="shrink-0 text-muted" />
-            <input
-              value={form.supervisor_query || ''}
-              onChange={(e) => setForm({ ...form, supervisor_query: e.target.value })}
-              placeholder={t('kams.searchPerson')}
-              className="w-full bg-transparent py-2 text-sm outline-none placeholder:text-muted"
-            />
-          </label>
-          <div className="max-h-64 space-y-1 overflow-auto">
-            {supervisorResults.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="flex w-full flex-col rounded-xl px-3 py-2 text-left hover:bg-surface"
-                onClick={() => {
-                  setForm({ ...form, supervisor_member_id: item.id, supervisor_query: '' })
-                  setPickingSupervisor(false)
-                }}
-              >
-                <span className="text-sm font-semibold">{item.label}</span>
-                {item.hint ? <span className="text-xs text-muted">{item.hint}</span> : null}
-              </button>
-            ))}
-            {supervisorResults.length === 0 ? (
-              <p className="text-sm text-muted">
-                {supervisorPeople.length === 0 ? t('kams.noEligibleSupervisor') : t('common.empty')}
-              </p>
-            ) : null}
-          </div>
-        </div>
       </Modal>
       <Modal open={credentials.length > 0} title={t('kams.loginCredentials')} onClose={() => setCredentials([])}>
         <p className="mb-3 text-sm text-muted">{t('kams.credentialsHint')}</p>
@@ -2847,7 +2796,7 @@ export function KamsRecruitmentReports() {
             </table>
           </div>
         )}
-        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(total) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">
             {t('kams.pageRange', { from: rangeStart, to: rangeEnd, total })}
           </p>
@@ -2872,7 +2821,7 @@ export function KamsRecruitmentReports() {
               onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
       </div>
       <Modal open={Boolean(viewing)} title={t('kams.candidateDetails')} onClose={() => { setViewing(null); setDetail(null) }}>
         {detailLoading || !detailCandidate ? (

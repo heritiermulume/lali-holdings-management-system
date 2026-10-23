@@ -1,7 +1,7 @@
 import { Ban, Pencil, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PaginationButtons } from '../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal } from '../components/ui'
 import { LoadingScreen } from '../components/LoadingScreen'
 import { WorldCountryCombobox } from '../components/WorldCountryCombobox'
@@ -321,7 +321,7 @@ export function OrganizationPage() {
             </div>
           )
         })}
-        <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(total) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">
             {t('common.pageRange', {
               from: total === 0 ? 0 : (page - 1) * perPage + 1,
@@ -353,7 +353,7 @@ export function OrganizationPage() {
               onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
       </Card>
       )}
 

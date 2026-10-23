@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom'
 import { OfficeFilterSelect } from '../../components/OfficeFilterSelect'
 import { Button, Card } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import { usePayloadOfficeFilter } from '../../hooks/useOfficeScope'
@@ -136,7 +136,7 @@ export function KamsMemberAccountsPage() {
         })
         const lastPage = Math.max(1, Math.ceil(members.length / perPage) || 1)
         const safePage = Math.min(page, lastPage)
-        const pageRows = members.slice((safePage - 1) * perPage, safePage * perPage)
+        const pageRows = showListPagination(members.length) ? members.slice((safePage - 1) * perPage, safePage * perPage) : members
         const rangeStart = members.length === 0 ? 0 : (safePage - 1) * perPage + 1
         const rangeEnd = Math.min(safePage * perPage, members.length)
         return (
@@ -189,7 +189,7 @@ export function KamsMemberAccountsPage() {
             </tbody>
           </table>
         </div>
-        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(members.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: members.length })}</p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-muted">
@@ -205,7 +205,7 @@ export function KamsMemberAccountsPage() {
               onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
       </div>
         )
       })()}

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { intlLocale } from '../../i18n/locales'
 import { ChevronDown, Info, Package, Trash2 } from 'lucide-react'
 import { PrintPreviewModal } from '../../components/PrintPreviewModal'
-import { PaginationButtons } from '../../components/PaginationButtons'
+import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { Badge, Button, Card, Field, Modal } from '../../components/ui'
 import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
@@ -132,11 +132,11 @@ function formatDateTime(value: string, locale: string) {
   })
 }
 
-function formatDay(value: string, locale: string) {
+function formatDay(value: string, locale: string, style: 'long' | 'short' = 'long') {
   return new Date(`${value}T12:00:00`).toLocaleDateString(locale, {
-    weekday: 'long',
+    weekday: style,
     day: 'numeric',
-    month: 'long',
+    month: style,
     year: 'numeric',
   })
 }
@@ -322,11 +322,11 @@ export function KamsAssignmentReports() {
   const totalsHtml = (totals: DayTotals) => `
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px;">
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.agents'))}: <b>${totals.agents}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.assignments'))}: <b>${totals.assignments}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.sold'))}: <b>${totals.sold_units}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.amountDue'))}: <b>${escapeHtml(money(totals.expected_amount))}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.cashCollected'))}: <b>${escapeHtml(money(totals.collected_amount))}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.shortfall'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.shortfall))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.surplus'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.surplus))}</b></div>
     </div>
   `
 
@@ -425,7 +425,6 @@ export function KamsAssignmentReports() {
       meta: [
         { label: t('kams.filterOffice'), value: officeScopeLabel },
         { label: t('common.printedOn'), value: new Date().toLocaleString(locale) },
-        { label: t('kams.assignments'), value: String(days.reduce((sum, day) => sum + day.totals.assignments, 0)) },
         { label: t('kams.sold'), value: String(days.reduce((sum, day) => sum + day.totals.sold_units, 0)) },
         { label: t('kams.cashCollected'), value: money(days.reduce((sum, day) => sum + day.totals.collected_amount, 0)) },
       ],
@@ -460,13 +459,13 @@ export function KamsAssignmentReports() {
   const lines = (data?.days || []).flatMap((day) => sortReportAssignments(day.assignments || [], reportSort).map((assignment) => ({ date: day.date, assignment })))
   const lastPage = Math.max(1, Math.ceil(lines.length / perPage) || 1)
   const safePage = Math.min(page, lastPage)
-  const pageRows = lines.slice((safePage - 1) * perPage, safePage * perPage)
+  const pageRows = showListPagination(lines.length) ? lines.slice((safePage - 1) * perPage, safePage * perPage) : lines
   const rangeStart = lines.length === 0 ? 0 : (safePage - 1) * perPage + 1
   const rangeEnd = Math.min(safePage * perPage, lines.length)
   const days = data?.days || []
   const dayLastPage = Math.max(1, Math.ceil(days.length / perPage) || 1)
   const safeDayPage = Math.min(page, dayLastPage)
-  const dayRows = days.slice((safeDayPage - 1) * perPage, safeDayPage * perPage)
+  const dayRows = showListPagination(days.length) ? days.slice((safeDayPage - 1) * perPage, safeDayPage * perPage) : days
   const dayRangeStart = days.length === 0 ? 0 : (safeDayPage - 1) * perPage + 1
   const dayRangeEnd = Math.min(safeDayPage * perPage, days.length)
 
@@ -544,8 +543,8 @@ export function KamsAssignmentReports() {
             <table className="min-w-full text-sm">
               <thead className="bg-lhms text-white">
                 <tr className="text-left text-xs font-semibold tracking-wide">
-                  <th className="bg-lhms px-4 py-2 font-semibold">{t('common.date')}</th>
-                  <th className="bg-lhms px-4 py-2 font-semibold">{t('kams.dayClosedBy')}</th>
+                  <th className="min-w-36 bg-lhms px-4 py-2 font-semibold">{t('common.date')}</th>
+                  <th className="min-w-44 bg-lhms px-4 py-2 font-semibold">{t('kams.dayClosedBy')}</th>
                   <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.assignments')}</th>
                   <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.sold')}</th>
                   <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.amountDue')}</th>
@@ -560,8 +559,8 @@ export function KamsAssignmentReports() {
                   </tr>
                 ) : dayRows.map((day, index) => (
                   <tr key={day.date} className={cn('border-t border-line', index % 2 === 1 ? 'bg-emerald-50' : 'bg-white')}>
-                    <td className="px-4 py-2 font-semibold capitalize">{formatDay(day.date, locale)}</td>
-                    <td className="px-4 py-2">{day.day_closed_by || '—'}</td>
+                    <td className="min-w-36 whitespace-nowrap px-4 py-2 font-semibold capitalize">{formatDay(day.date, locale, 'short')}</td>
+                    <td className="min-w-44 px-4 py-2">{day.day_closed_by || '—'}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{day.totals.assignments}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{day.totals.sold_units}</td>
                     <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.expected_amount)}</td>
@@ -593,7 +592,7 @@ export function KamsAssignmentReports() {
               </tbody>
             </table>
           </div>
-          <div className="flex flex-col gap-3 border-t border-line px-4 py-2 sm:flex-row sm:items-center sm:justify-between">
+          {showListPagination(days.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted">{t('kams.pageRange', { from: dayRangeStart, to: dayRangeEnd, total: days.length })}</p>
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-2 text-sm text-muted">
@@ -613,7 +612,7 @@ export function KamsAssignmentReports() {
                 onNext={() => setPage((value) => Math.min(dayLastPage, value + 1))}
               />
             </div>
-          </div>
+          </div> : null}
         </div>
         <PrintPreviewModal
           open={Boolean(printPreviewHtml)}
@@ -668,7 +667,6 @@ export function KamsAssignmentReports() {
       {totals ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <Card className="p-4 text-sm">{t('kams.agents')}: <b>{totals.agents}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.assignments')}: <b>{totals.assignments}</b></Card>
           <Card className="p-4 text-sm">{t('kams.sold')}: <b>{totals.sold_units}</b></Card>
           <Card className="flex flex-col gap-1 p-4 text-sm">
             <span className="whitespace-nowrap">{t('kams.amountDue')}:</span>
@@ -681,6 +679,10 @@ export function KamsAssignmentReports() {
           <Card className="flex flex-col gap-1 p-4 text-sm">
             <span className="whitespace-nowrap">{t('kams.shortfall')}:</span>
             <b>{money(totals.shortfall)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.surplus')}:</span>
+            <b>{money(totals.surplus)}</b>
           </Card>
         </div>
       ) : null}
@@ -794,7 +796,7 @@ export function KamsAssignmentReports() {
             </tbody>
           </table>
         </div>
-        <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
+        {showListPagination(lines.length) ? <div className="flex flex-col gap-3 border-t border-line px-4 py-1.5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">{t('kams.pageRange', { from: rangeStart, to: rangeEnd, total: lines.length })}</p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-muted">
@@ -819,7 +821,7 @@ export function KamsAssignmentReports() {
               onNext={() => setPage((value) => Math.min(lastPage, value + 1))}
             />
           </div>
-        </div>
+        </div> : null}
       </div>
 
       <PrintPreviewModal

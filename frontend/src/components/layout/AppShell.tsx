@@ -127,11 +127,27 @@ export function AppShell() {
   const visible = links.filter(canSeeItem)
   const moduleItems = sourceItems.filter(canSeeItem)
   const plusItems = (plusModule?.items ?? []).filter(canSeeItem)
-  const needsMore = Boolean(currentModule && currentModule.slug !== 'administration' && (moduleItems.length > 3 || isDashboardWorkspace))
+  const needsMore = Boolean(
+    currentModule
+    && currentModule.slug !== 'administration'
+    && (moduleItems.length > 3 || isDashboardWorkspace),
+  )
+  let bottomModuleItems = moduleItems.slice(0, needsMore ? 2 : 4)
+  if (needsMore && currentModule?.slug === 'kams') {
+    const stock = moduleItems.find((item) => item.to === '/modules/kams/stock')
+    const membersIndex = bottomModuleItems.findIndex((item) => item.to === '/modules/kams/members')
+    if (stock && membersIndex >= 0 && !bottomModuleItems.some((item) => item.to === stock.to)) {
+      bottomModuleItems = [
+        ...bottomModuleItems.slice(0, membersIndex + 1),
+        stock,
+        ...bottomModuleItems.slice(membersIndex + 1),
+      ]
+    }
+  }
   const bottomItems = currentModule
     ? [
         { to: '/', key: 'nav.home', icon: House, end: true },
-        ...moduleItems.slice(0, needsMore ? 2 : 4).map((item) => ({
+        ...bottomModuleItems.map((item) => ({
           to: item.to,
           key: item.labelKey,
           icon: item.icon,

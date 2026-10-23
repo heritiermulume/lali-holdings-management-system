@@ -75,8 +75,8 @@ class SavingsLedger
             ->where('office_id', $seller->office_id)
             ->where('id', '!=', $seller->id)
             ->where(function ($q) {
-                $q->where('rank', 'Manager')
-                    ->orWhereHas('role', fn ($role) => $role->where('slug', 'manager'));
+                $q->whereHas('role', fn ($role) => $role->where('slug', 'manager'))
+                    ->orWhere(fn ($legacy) => $legacy->whereNull('role_id')->where('rank', 'Manager'));
             })
             ->first();
     }

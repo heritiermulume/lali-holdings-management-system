@@ -628,6 +628,14 @@ class KamsStockController extends Controller
         $posted = $this->inventory->closeDay($companyId, $officeId, $request->user()->id, $request->user()->isOfficeScoped() ? ($request->user()->accessibleOfficeIds() ?: [0]) : null);
         foreach ($posted as $settled) {
             StockJournal::record('update', $settled, ['status' => 'closed'], ['status' => 'settled']);
+            if ($sale = $settled->getAttribute('posted_sale')) {
+                StockJournal::record('create', $sale, [], [
+                    'reason' => 'assignment_sale',
+                    'assignment_id' => $settled->id,
+                    'office_id' => $settled->office_id,
+                    'reference' => $sale->reference,
+                ]);
+            }
             if ($settled->getAttribute('surplus_entry')) {
                 $entryId = data_get($settled->getAttribute('surplus_entry'), 'id');
                 if ($entryId) {
@@ -636,6 +644,7 @@ class KamsStockController extends Controller
                         StockJournal::record('create', $entry, [], [
                             'reason' => 'day_closing_surplus',
                             'assignment_id' => $settled->id,
+                            'office_id' => $settled->office_id,
                             'amount' => $settled->getAttribute('surplus_deposited'),
                         ]);
                     }
@@ -1021,10 +1030,9 @@ class KamsStockController extends Controller
             KamsStockAdjustment::class,
             KamsStockSale::class,
             KamsProduct::class,
-            KamsDepot::class,
-            KamsDailySettlement::class,
             KamsSellerCommission::class,
             KamsSavingsEntry::class,
+            'system',
         ];
 
         $companyId = $this->kamsCompanyId($request);
@@ -1045,6 +1053,10 @@ class KamsStockController extends Controller
                     ->orWhere(function ($assignment) use ($assignmentIds) {
                         $assignment->where('auditable_type', KamsStockAssignment::class)
                             ->whereIn('auditable_id', $assignmentIds);
+                    })
+                    ->orWhere(function ($savings) use ($assignmentIds) {
+                        $savings->where('auditable_type', KamsSavingsEntry::class)
+                            ->whereIn('new_values->assignment_id', $assignmentIds);
                     });
             });
         }

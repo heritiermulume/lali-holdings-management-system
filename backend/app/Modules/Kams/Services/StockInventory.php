@@ -1544,6 +1544,9 @@ class StockInventory
             ]);
 
             $fresh = $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            if ($sale) {
+                $fresh->setAttribute('posted_sale', $sale);
+            }
             if ($surplusEntry) {
                 $fresh->setAttribute('surplus_deposited', round($surplus, 2));
                 $fresh->setAttribute('surplus_entry', $this->savings->serializeEntry($surplusEntry));

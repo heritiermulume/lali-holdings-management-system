@@ -261,9 +261,13 @@ class OfficeHierarchy
             ->where('office_id', $office->id)
             ->where(function ($q) {
                 $q->whereHas('role', fn ($role) => $role->where('slug', 'secretary'))
-                    ->orWhere('rank', 'like', '%Secretary%')
-                    ->orWhere('rank', 'like', '%Secrétaire%')
-                    ->orWhere('rank', 'like', '%Secretaire%');
+                    ->orWhere(function ($legacy) {
+                        $legacy->whereNull('role_id')->where(function ($rank) {
+                            $rank->where('rank', 'like', '%Secretary%')
+                                ->orWhere('rank', 'like', '%Secrétaire%')
+                                ->orWhere('rank', 'like', '%Secretaire%');
+                        });
+                    });
             })
             ->get();
     }
