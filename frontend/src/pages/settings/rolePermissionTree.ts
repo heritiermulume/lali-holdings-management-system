@@ -21,7 +21,8 @@ export type PermissionNode = PermissionLeaf | PermissionSection
 
 const ACTION_ORDER = [
   'view', 'create', 'deposit', 'withdraw', 'expense', 'update', 'delete',
-  'import', 'export', 'print', 'preview', 'activate', 'approve', 'manage',
+  'import', 'export', 'print', 'preview', 'activate', 'approve',
+  'receive', 'transfer', 'supply', 'remove', 'adjust', 'price', 'cancel', 'manage',
 ]
 
 const ADMIN_VIEW_SLUG = 'administration.view'
@@ -243,12 +244,19 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
           leaves(byExact(kams, 'kams.stock.statistics.view')),
         ),
         pageSection(
+          'kams.stock.orders',
+          'kams.orders',
+          'Orders',
+          leaves(byExact(kams, 'kams.stock.orders.view')),
+          actionLeavesOnly(kams, 'kams.stock.orders', ['create', 'update', 'delete', 'receive', 'cancel'], true),
+        ),
+        pageSection(
           'kams.stock.warehouses',
           'kams.warehouses',
           'Warehouses',
           leaves(byExact(kams, 'kams.stock.warehouses.view')),
           [
-            ...actionLeavesOnly(kams, 'kams.stock.warehouses', ['update', 'delete'], true),
+            ...actionLeavesOnly(kams, 'kams.stock.warehouses', ['create', 'update', 'delete', 'receive', 'transfer'], true),
             ...leaves(byExact(kams, 'kams.products.view'), true),
             ...actionLeavesOnly(kams, 'kams.products', ['create', 'update', 'delete'], true),
             ...leaves(byExact(kams, 'kams.stock.update'), true),
@@ -260,7 +268,7 @@ function buildKamsTree(permissions: Permission[]): PermissionSection | null {
           'Depots',
           leaves(byExact(kams, 'kams.stock.depots.view')),
           [
-            ...actionLeavesOnly(kams, 'kams.stock.depots', ['delete'], true),
+            ...actionLeavesOnly(kams, 'kams.stock.depots', ['create', 'update', 'delete', 'receive', 'supply', 'remove', 'adjust', 'price'], true),
             ...leaves(byExact(kams, 'kams.products.view'), true),
             ...actionLeavesOnly(kams, 'kams.products', ['create', 'update', 'delete'], true),
             ...leaves(byExact(kams, 'kams.stock.update'), true),

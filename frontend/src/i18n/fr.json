@@ -1188,6 +1188,9 @@
     "transferRequestHint": "Cela crée une demande. Le stock quitte cet entrepôt, et la destination doit accepter en indiquant la quantité reçue.",
     "requestTransfer": "Demander le transfert",
     "incomingTransfers": "Transferts à recevoir",
+    "outgoingTransfers": "Transferts en attente",
+    "cancelTransfer": "Annuler le transfert",
+    "cancelTransferConfirm": "Annuler {{reference}} ? Le stock revient dans l'entrepôt d'origine.",
     "acceptTransfer": "Accepter",
     "quantityTransferred": "Quantité transférée",
     "quantityReceived": "Quantité reçue",
@@ -1797,12 +1800,22 @@
           },
           "warehouses": {
             "view": "Consulter les entrepôts",
+            "create": "Créer un entrepôt",
             "update": "Modifier un entrepôt",
-            "delete": "Supprimer un entrepôt"
+            "delete": "Supprimer un entrepôt",
+            "receive": "Réceptionner dans un entrepôt",
+            "transfer": "Transférer depuis un entrepôt"
           },
           "depots": {
             "view": "Consulter les dépôts",
-            "delete": "Supprimer un dépôt"
+            "create": "Créer un dépôt",
+            "update": "Modifier un dépôt",
+            "delete": "Supprimer un dépôt",
+            "receive": "Réceptionner dans un dépôt",
+            "supply": "Approvisionner un dépôt",
+            "remove": "Retirer du dépôt",
+            "adjust": "Ajuster le stock d'un dépôt",
+            "price": "Modifier le prix de vente du dépôt"
           },
           "reports": {
             "view": "Consulter la page Rapports d'affectations",

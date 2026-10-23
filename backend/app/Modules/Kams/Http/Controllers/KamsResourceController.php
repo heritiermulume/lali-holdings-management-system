@@ -203,6 +203,18 @@ class KamsResourceController extends Controller
         ]);
         $data['kind'] = $data['kind'] ?? 'depot';
         $data['status'] = $data['status'] ?? 'active';
+        $user = $request->user();
+        if ($data['kind'] === 'warehouse') {
+            abort_unless(
+                $user->hasPermission('kams.stock.warehouses.create') || $user->hasPermission('kams.products.create'),
+                403
+            );
+        } else {
+            abort_unless(
+                $user->hasPermission('kams.stock.depots.create') || $user->hasPermission('kams.products.create'),
+                403
+            );
+        }
 
         if ($data['kind'] === 'warehouse') {
             abort_unless($this->canManageWarehouses($request), 403);
@@ -238,7 +250,10 @@ class KamsResourceController extends Controller
         if ($depot->kind === 'warehouse') {
             abort_unless($request->user()->hasPermission('kams.stock.warehouses.update'), 403);
         } else {
-            abort_unless($request->user()->hasPermission('kams.products.update'), 403);
+            abort_unless(
+                $request->user()->hasPermission('kams.stock.depots.update') || $request->user()->hasPermission('kams.products.update'),
+                403
+            );
         }
 
         $data = $request->validate([

@@ -185,7 +185,8 @@ trait HasLhmsPermissions
         $roots = Office::query()
             ->where(function ($query) {
                 $query->where('creator_user_id', $this->id)
-                    ->orWhere('manager_user_id', $this->id);
+                    ->orWhere('manager_user_id', $this->id)
+                    ->orWhere('recorded_by_user_id', $this->id);
             })
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
@@ -230,7 +231,7 @@ trait HasLhmsPermissions
                 return $this->ownedOfficeIds();
             }
             if ($this->isOfficeScoped()) {
-                $assigned = array_values(array_unique(array_merge($assigned, Office::descendantIdsFor($assigned))));
+                $assigned = array_values(array_unique(array_merge($assigned, Office::descendantIdsFor($assigned), $this->ownedOfficeIds())));
             }
 
             return $assigned;

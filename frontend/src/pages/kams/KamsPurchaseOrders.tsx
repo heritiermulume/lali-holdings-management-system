@@ -1,4 +1,4 @@
-import { ChevronDown, Info, Pencil, ScrollText, Trash2 } from 'lucide-react'
+import { Ban, ChevronDown, Info, PackagePlus, Pencil, ScrollText, Trash2 } from 'lucide-react'
 import { useEffect, useState, type FormEvent, Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
@@ -443,10 +443,10 @@ function OrdersTable({
     { label: t('kams.supplier'), className: 'min-w-48' },
     { label: t('kams.warehouse'), className: 'min-w-48' },
     { label: t('kams.orderDate'), className: 'min-w-40' },
-    { label: t('common.status'), className: 'min-w-44' },
+    { label: t('common.status'), className: 'w-px whitespace-nowrap' },
     { label: t('kams.orderedAmount'), className: 'min-w-44' },
     { label: t('kams.receivedAmount'), className: 'min-w-48' },
-    { label: t('common.actions'), className: 'min-w-80 text-right' },
+    { label: t('common.actions'), className: 'w-px whitespace-nowrap text-right' },
   ]
 
   return (
@@ -473,10 +473,10 @@ function OrdersTable({
                     <td className="min-w-48 px-4 py-1.5">{order.supplier_name || '—'}</td>
                     <td className="min-w-48 px-4 py-1.5">{order.warehouse?.name || '—'}</td>
                     <td className="min-w-40 px-4 py-1.5 whitespace-nowrap">{String(order.ordered_at).slice(0, 10)}</td>
-                    <td className="min-w-44 px-4 py-1.5">{t(`kams.purchaseStatus.${order.status}`)}</td>
+                    <td className="w-px whitespace-nowrap px-4 py-1.5">{t(`kams.purchaseStatus.${order.status}`)}</td>
                     <td className="min-w-44 px-4 py-1.5 whitespace-nowrap tabular-nums">{money(order.total)}</td>
                     <td className="min-w-48 px-4 py-1.5 whitespace-nowrap tabular-nums">{money(received)}</td>
-                    <td className="min-w-80 px-4 py-1.5">
+                    <td className="w-px whitespace-nowrap px-4 py-1.5">
                       <div className="flex flex-nowrap items-center justify-end gap-1">
                         <button type="button" title={t('kams.orderDetails')} aria-label={t('kams.orderDetails')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface" onClick={() => onDetails(order)}>
                           <Info size={16} />
@@ -491,8 +491,16 @@ function OrdersTable({
                             <Trash2 size={16} />
                           </button>
                         ) : null}
-                        {showReceive ? <Button variant="secondary" onClick={() => onReceive(order)}>{t('kams.receiveOrder')}</Button> : null}
-                        {showCancel ? <Button variant="secondary" onClick={() => onCancel(order)}>{t('common.cancel')}</Button> : null}
+                        {showReceive ? (
+                          <button type="button" title={t('kams.receiveOrder')} aria-label={t('kams.receiveOrder')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface" onClick={() => onReceive(order)}>
+                            <PackagePlus size={16} />
+                          </button>
+                        ) : null}
+                        {showCancel ? (
+                          <button type="button" title={t('common.cancel')} aria-label={t('common.cancel')} className="grid h-9 w-9 place-items-center rounded-lg text-ink hover:bg-surface" onClick={() => onCancel(order)}>
+                            <Ban size={16} />
+                          </button>
+                        ) : null}
                         <button type="button" className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-surface" onClick={() => onToggle(order.id)}>
                           <ChevronDown size={18} className={cn('transition', isOpen ? 'rotate-0' : '-rotate-90')} />
                         </button>

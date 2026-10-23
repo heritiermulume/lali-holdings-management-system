@@ -231,8 +231,13 @@ class KamsStockController extends Controller
                 }
                 $q->where('to_depot_id', $depot->id);
             })
-            ->when(! $request->filled('to_depot_id') && $officeState['office_ids'] !== [], function ($q) use ($officeState) {
-                $q->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']));
+            ->when(! $request->filled('to_depot_id') && $officeState['office_ids'] !== [], function ($q) use ($officeState, $request) {
+                $q->where(function ($inner) use ($officeState, $request) {
+                    $inner->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']));
+                    if ($this->canManageWarehouses($request)) {
+                        $inner->orWhereHas('fromDepot', fn ($depot) => $depot->where('kind', 'warehouse'));
+                    }
+                });
             })
             ->latest();
 
@@ -309,6 +314,18 @@ class KamsStockController extends Controller
         ]);
 
         return $this->ok($received);
+    }
+
+    public function cancelTransfer(Request $request, KamsStockTransfer $transfer): JsonResponse
+    {
+        $this->assertCompany($request, (int) $transfer->company_id);
+        $transfer->loadMissing('fromDepot');
+        abort_unless($transfer->fromDepot?->isWarehouse(), 422, __('Transfers start from a regional warehouse.'));
+        abort_unless($this->canManageWarehouses($request), 403);
+        $cancelled = $this->inventory->cancelTransfer($transfer, $request->user()->id);
+        StockJournal::record('update', $cancelled, [], ['status' => 'cancelled']);
+
+        return $this->ok($cancelled);
     }
 
     public function assignments(Request $request): JsonResponse
@@ -893,6 +910,9 @@ class KamsStockController extends Controller
         $paginator->getCollection()->transform(function (KamsStockMovement $movement) use ($depotId) {
             $document = $movement->reference;
             $movement->setAttribute('document_reference', is_object($document) ? ($document->reference ?? null) : null);
+            if ($movement->type === 'transfer' && $document instanceof KamsStockTransfer && $document->status) {
+                $movement->setAttribute('status', $document->status);
+            }
             $movement->setAttribute(
                 'direction',
                 (int) $movement->to_depot_id === $depotId && (int) $movement->from_depot_id !== $depotId

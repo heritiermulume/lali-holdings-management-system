@@ -27,12 +27,13 @@ Route::delete('patrimoine/{asset}', [KamsAssetController::class, 'destroy'])->mi
 Route::get('stock/lookups', [KamsStockController::class, 'lookups'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.assignments.view,kams.orders.view,kams.stock.statistics.view,kams.stock.warehouses.view,kams.stock.depots.view,kams.stock.reports.view,kams.stock.journal.view,kams.stock.orders.view');
 Route::get('stock/dashboard', [KamsStockController::class, 'dashboard'])->middleware(EnsurePermission::class.':kams.stock.statistics.view');
 Route::get('stock/receipts', [KamsStockController::class, 'receipts'])->middleware(EnsurePermission::class.':kams.stock.warehouses.view,kams.stock.depots.view');
-Route::post('stock/receipts', [KamsStockController::class, 'receive'])->middleware(EnsurePermission::class.':kams.stock.update');
+Route::post('stock/receipts', [KamsStockController::class, 'receive'])->middleware(EnsurePermission::class.':kams.stock.update,kams.stock.warehouses.receive,kams.stock.depots.receive');
 Route::post('stock/receipts/{receipt}/validate', [KamsStockController::class, 'validateReceipt'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::post('stock/receipts/{receipt}/cancel', [KamsStockController::class, 'cancelReceipt'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::get('stock/transfers', [KamsStockController::class, 'transfers'])->middleware(EnsurePermission::class.':kams.stock.warehouses.view,kams.stock.depots.view');
-Route::post('stock/transfers', [KamsStockController::class, 'storeTransfer'])->middleware(EnsurePermission::class.':kams.stock.update');
-Route::post('stock/transfers/{transfer}/receive', [KamsStockController::class, 'receiveTransfer'])->middleware(EnsurePermission::class.':kams.stock.update');
+Route::post('stock/transfers', [KamsStockController::class, 'storeTransfer'])->middleware(EnsurePermission::class.':kams.stock.update,kams.stock.warehouses.transfer,kams.stock.depots.supply');
+Route::post('stock/transfers/{transfer}/receive', [KamsStockController::class, 'receiveTransfer'])->middleware(EnsurePermission::class.':kams.stock.update,kams.stock.depots.receive,kams.stock.warehouses.receive');
+Route::post('stock/transfers/{transfer}/cancel', [KamsStockController::class, 'cancelTransfer'])->middleware(EnsurePermission::class.':kams.stock.update,kams.stock.warehouses.transfer');
 Route::get('stock/assignments', [KamsStockController::class, 'assignments'])->middleware(EnsurePermission::class.':kams.stock.assignments.view');
 Route::get('stock/assignments/report', [KamsStockController::class, 'assignmentsReport'])->middleware(EnsurePermission::class.':kams.stock.reports.view');
 Route::delete('stock/assignments/report', [KamsStockController::class, 'destroyAssignmentsReport'])->middleware(EnsurePermission::class.':kams.stock.reports.delete');
@@ -47,10 +48,10 @@ Route::delete('stock/assignments/{assignment}', [KamsStockController::class, 'de
 Route::get('stock/sales', [KamsStockController::class, 'sales'])->middleware(EnsurePermission::class.':kams.stock.assignments.view,kams.orders.view');
 Route::post('stock/sales/{sale}/pay', [KamsStockController::class, 'paySale'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::get('stock/returns', [KamsStockController::class, 'returns'])->middleware(EnsurePermission::class.':kams.stock.warehouses.view,kams.stock.depots.view,kams.stock.assignments.view');
-Route::post('stock/returns', [KamsStockController::class, 'storeReturn'])->middleware(EnsurePermission::class.':kams.stock.update');
+Route::post('stock/returns', [KamsStockController::class, 'storeReturn'])->middleware(EnsurePermission::class.':kams.stock.update,kams.stock.depots.remove');
 Route::post('stock/returns/{stockReturn}/accept', [KamsStockController::class, 'acceptReturn'])->middleware(EnsurePermission::class.':kams.stock.update');
 Route::get('stock/adjustments', [KamsStockController::class, 'adjustments'])->middleware(EnsurePermission::class.':kams.stock.warehouses.view,kams.stock.depots.view,kams.stock.assignments.view');
-Route::post('stock/adjustments', [KamsStockController::class, 'storeAdjustment'])->middleware(EnsurePermission::class.':kams.stock.update');
+Route::post('stock/adjustments', [KamsStockController::class, 'storeAdjustment'])->middleware(EnsurePermission::class.':kams.stock.update,kams.stock.depots.adjust');
 Route::get('stock/movements', [KamsStockController::class, 'movements'])->middleware(EnsurePermission::class.':kams.stock.warehouses.view,kams.stock.depots.view');
 Route::get('stock/commissions', [KamsStockController::class, 'commissions'])->middleware(EnsurePermission::class.':kams.stock.assignments.view');
 Route::post('stock/commissions/{commission}/pay', [KamsStockController::class, 'payCommission'])->middleware(EnsurePermission::class.':kams.stock.update');
@@ -93,14 +94,14 @@ Route::post('finance/company-accounts/{treasuryAccount}/expense', [KamsFinanceCo
 
 Route::get('depots/lookups', [KamsStockController::class, 'lookups'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.warehouses.view,kams.stock.depots.view');
 Route::get('depots', [KamsResourceController::class, 'depots'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.warehouses.view,kams.stock.depots.view');
-Route::post('depots', [KamsResourceController::class, 'storeDepot'])->middleware(EnsurePermission::class.':kams.products.create');
-Route::put('depots/{depot}', [KamsResourceController::class, 'updateDepot'])->middleware(EnsurePermission::class.':kams.stock.warehouses.update,kams.products.update');
+Route::post('depots', [KamsResourceController::class, 'storeDepot'])->middleware(EnsurePermission::class.':kams.products.create,kams.stock.warehouses.create,kams.stock.depots.create');
+Route::put('depots/{depot}', [KamsResourceController::class, 'updateDepot'])->middleware(EnsurePermission::class.':kams.stock.warehouses.update,kams.products.update,kams.stock.depots.update');
 Route::delete('depots/{depot}', [KamsResourceController::class, 'destroyDepot'])->middleware(EnsurePermission::class.':kams.stock.warehouses.delete,kams.stock.depots.delete');
 
 Route::get('products', [KamsResourceController::class, 'products'])->middleware(EnsurePermission::class.':kams.products.view,kams.stock.warehouses.view,kams.stock.depots.view');
 Route::post('products', [KamsResourceController::class, 'storeProduct'])->middleware(EnsurePermission::class.':kams.products.create');
 Route::match(['put', 'post'], 'products/{product}', [KamsResourceController::class, 'updateProduct'])->middleware(EnsurePermission::class.':kams.products.update');
-Route::put('products/{product}/office-price', [KamsResourceController::class, 'updateOfficePrice'])->middleware(EnsurePermission::class.':kams.products.update');
+Route::put('products/{product}/office-price', [KamsResourceController::class, 'updateOfficePrice'])->middleware(EnsurePermission::class.':kams.products.update,kams.stock.depots.price');
 Route::delete('products/{product}', [KamsResourceController::class, 'destroyProduct'])->middleware(EnsurePermission::class.':kams.products.delete');
 
 Route::get('orders', [KamsResourceController::class, 'orders'])->middleware(EnsurePermission::class.':kams.orders.view');

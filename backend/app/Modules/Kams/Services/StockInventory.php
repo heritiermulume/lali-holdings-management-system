@@ -215,6 +215,7 @@ class StockInventory
                     $autoReceive ? 'available' : 'in_transit',
                     $userId,
                     $cost,
+                    $autoReceive ? 'received' : 'in_transit',
                 );
                 $this->syncProductStock($product);
             }
@@ -286,11 +287,39 @@ class StockInventory
                 ]);
                 $this->syncProductStock($line->product);
             }
+            $this->syncTransferMovementStatus($transfer, 'received');
             $transfer->update([
                 'status' => 'received',
                 'received_at' => now(),
                 'received_by' => $userId,
             ]);
+
+            return $transfer->fresh([
+                'fromDepot',
+                'toDepot.office',
+                'items.product',
+                'createdBy:id,name',
+                'dispatchedBy:id,name',
+                'receivedBy:id,name',
+            ]);
+        });
+    }
+
+    public function cancelTransfer(KamsStockTransfer $transfer, int $userId): KamsStockTransfer
+    {
+        abort_unless($transfer->status === 'in_transit', 422, __('This transfer is not in transit.'));
+
+        return DB::transaction(function () use ($transfer, $userId) {
+            $transfer = KamsStockTransfer::query()->whereKey($transfer->id)->lockForUpdate()->firstOrFail();
+            abort_unless($transfer->status === 'in_transit', 422, __('This transfer is not in transit.'));
+            $from = $transfer->fromDepot;
+            foreach ($transfer->items()->with('product')->get() as $line) {
+                $this->changeBalance($from, $line->product, -(int) $line->quantity, 'in_transit');
+                $this->changeBalance($from, $line->product, (int) $line->quantity, 'available');
+                $this->syncProductStock($line->product);
+            }
+            $this->syncTransferMovementStatus($transfer, 'cancelled');
+            $transfer->update(['status' => 'cancelled']);
 
             return $transfer->fresh([
                 'fromDepot',
@@ -1666,6 +1695,7 @@ class StockInventory
         string $condition = 'available',
         ?int $approvedBy = null,
         ?float $unitCost = null,
+        string $status = 'posted',
     ): void {
         KamsStockMovement::query()->create([
             'company_id' => $product->company_id,
@@ -1675,7 +1705,7 @@ class StockInventory
             'member_id' => $memberId,
             'quantity' => $quantity,
             'type' => $type,
-            'status' => 'posted',
+            'status' => $status,
             'condition' => $condition,
             'reference_type' => $reference ? $reference::class : null,
             'reference_id' => $reference?->id,
@@ -1685,6 +1715,15 @@ class StockInventory
             'approved_by' => $approvedBy,
             'occurred_at' => now(),
         ]);
+    }
+
+    private function syncTransferMovementStatus(KamsStockTransfer $transfer, string $status): void
+    {
+        KamsStockMovement::query()
+            ->where('reference_type', $transfer::class)
+            ->where('reference_id', $transfer->id)
+            ->where('type', 'transfer')
+            ->update(['status' => $status]);
     }
 
     private function syncProductStock(KamsProduct $product): void

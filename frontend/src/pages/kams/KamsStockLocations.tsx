@@ -417,6 +417,38 @@ function AcceptTransferModal({
   )
 }
 
+function OutgoingTransferList({
+  transfers,
+  canCancel,
+  onCancel,
+}: {
+  transfers: StockTransfer[]
+  canCancel: boolean
+  onCancel: (row: StockTransfer) => void
+}) {
+  const { t } = useTranslation()
+  if (transfers.length === 0) return null
+  return (
+    <div className="space-y-2 rounded-xl border border-line bg-surface p-3">
+      <div className="text-sm font-semibold">{t('kams.outgoingTransfers')}</div>
+      {transfers.map((row) => (
+        <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2">
+          <div className="min-w-0 text-sm">
+            <div className="font-semibold">{row.reference}</div>
+            <div className="text-muted">{t('kams.transferDestination')}: {row.to_depot?.name || '—'}</div>
+            <div className="text-xs text-muted">
+              {(row.items || []).map((item) => `${item.product?.name || '—'} × ${item.quantity}`).join(' · ')}
+            </div>
+          </div>
+          {canCancel ? (
+            <Button type="button" variant="secondary" onClick={() => onCancel(row)}>{t('common.cancel')}</Button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function IncomingTransferList({
   transfers,
   canAccept,
@@ -485,6 +517,8 @@ export function KamsWarehouses() {
   const [transferLines, setTransferLines] = useState<Array<{ to_depot_id: string; quantity: string }>>([{ to_depot_id: '', quantity: '1' }])
   const [incoming, setIncoming] = useState<StockTransfer[]>([])
   const [accepting, setAccepting] = useState<StockTransfer | null>(null)
+  const [cancelling, setCancelling] = useState<StockTransfer | null>(null)
+  const [cancelError, setCancelError] = useState('')
 
   const loadWarehouses = () => api.get('/modules/kams/depots', { params: { kind: 'warehouse', per_page: 100 } }).then((res) => setRows(res.data.data || []))
   const loadProducts = () => api.get('/modules/kams/products', { params: { per_page: 200 } }).then((res) => setProducts(res.data.data || []))
@@ -836,7 +870,7 @@ export function KamsWarehouses() {
     <div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">{t('kams.warehousesHint')}</p>
-        {lookups?.can_manage_warehouses && hasPermission('kams.products.create') ? (
+        {lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.create') || hasPermission('kams.products.create')) ? (
           <Button className="shrink-0 self-end sm:self-auto" onClick={() => { setEditing(null); setForm({}); setError(''); setOpen(true) }}>{t('kams.addWarehouse')}</Button>
         ) : null}
       </div>
@@ -865,6 +899,11 @@ export function KamsWarehouses() {
                       {incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id).length > 0 ? (
                         <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
                           {incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id).length}
+                        </span>
+                      ) : null}
+                      {incoming.filter((item) => item.from_depot?.id === row.id).length > 0 ? (
+                        <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-ink ring-1 ring-line">
+                          {incoming.filter((item) => item.from_depot?.id === row.id).length}
                         </span>
                       ) : null}
                     </div>
@@ -930,7 +969,7 @@ export function KamsWarehouses() {
                         <span className="hidden sm:inline">{t('kams.addProduct')}</span>
                       </Button>
                     ) : null}
-                    {lookups?.can_manage_warehouses && hasPermission('kams.stock.update') ? (
+                    {lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.receive') || hasPermission('kams.stock.update')) ? (
                       <Button
                         variant="secondary"
                         onClick={() => openReplenish(row)}
@@ -940,7 +979,7 @@ export function KamsWarehouses() {
                     ) : null}
                     {hasPermission('kams.products.view') || hasPermission('kams.stock.warehouses.view') || hasPermission('kams.stock.depots.view') ? (
                       <>
-                        {(lookups?.can_manage_warehouses && hasPermission('kams.stock.update')) || hasPermission('kams.products.create') ? (
+                        {(lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.receive') || hasPermission('kams.stock.update'))) || hasPermission('kams.products.create') || hasPermission('kams.stock.warehouses.create') ? (
                           <span className="mx-1 hidden h-8 w-px bg-line sm:inline-block" aria-hidden />
                         ) : null}
                         <Button
@@ -953,9 +992,14 @@ export function KamsWarehouses() {
                       </>
                     ) : null}
                   </div>
+                  <OutgoingTransferList
+                    transfers={incoming.filter((item) => item.from_depot?.id === row.id)}
+                    canCancel={Boolean(lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.transfer') || hasPermission('kams.stock.update')))}
+                    onCancel={(order) => { setCancelError(''); setCancelling(order) }}
+                  />
                   <IncomingTransferList
                     transfers={incoming.filter((item) => item.to_depot?.id === row.id || item.to_depot_id === row.id)}
-                    canAccept={Boolean(lookups?.can_manage_warehouses && hasPermission('kams.stock.update'))}
+                    canAccept={Boolean(lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.receive') || hasPermission('kams.stock.update')))}
                     onAccept={setAccepting}
                   />
                   {warehouseProducts.length === 0 ? (
@@ -989,7 +1033,7 @@ export function KamsWarehouses() {
                           <td className="px-4 py-1.5 text-right tabular-nums">{money(lineStockValue(item.quantity, item.product))}</td>
                           <td className="px-4 py-1.5">
                             <div className="flex flex-nowrap items-center justify-end gap-1">
-                              {lookups?.can_manage_warehouses && hasPermission('kams.stock.update') ? (
+                              {lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.receive') || hasPermission('kams.stock.update')) ? (
                                 <button
                                   type="button"
                                   aria-label={t('kams.replenishStock')}
@@ -1000,7 +1044,7 @@ export function KamsWarehouses() {
                                   <PackagePlus size={16} />
                                 </button>
                               ) : null}
-                              {hasPermission('kams.stock.update') && item.quantity > 0 ? (
+                              {(hasPermission('kams.stock.warehouses.transfer') || hasPermission('kams.stock.update')) && item.quantity > 0 ? (
                                 <button
                                   type="button"
                                   aria-label={t('kams.transferStock')}
@@ -1493,6 +1537,28 @@ export function KamsWarehouses() {
           void loadIncoming()
         }}
       />
+      <Modal open={Boolean(cancelling)} title={t('kams.cancelTransfer')} onClose={() => setCancelling(null)}>
+        <div className="space-y-4">
+          {cancelError ? <p className="text-sm text-red-600">{cancelError}</p> : null}
+          <p className="text-sm text-muted">{t('kams.cancelTransferConfirm', { reference: cancelling?.reference })}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCancelling(null)}>{t('common.cancel')}</Button>
+            <Button onClick={() => {
+              if (!cancelling) return
+              setCancelError('')
+              void api.post(`/modules/kams/stock/transfers/${cancelling.id}/cancel`).then(() => {
+                setCancelling(null)
+                void loadWarehouses()
+                void loadProducts()
+                void loadIncoming()
+              }).catch((err) => {
+                const response = (err as { response?: { data?: { message?: string } } }).response?.data
+                setCancelError(response?.message || t('kams.saveError'))
+              })
+            }}>{t('kams.cancelTransfer')}</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -1807,7 +1873,7 @@ export function KamsDepots() {
     <div>
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">{t('kams.depotsHint')}</p>
-        {hasPermission('kams.products.create') ? (
+        {hasPermission('kams.stock.depots.create') || hasPermission('kams.products.create') ? (
           <Button className="shrink-0 self-end sm:self-auto" onClick={openCreate}>{t('kams.addDepot')}</Button>
         ) : null}
       </div>
@@ -1847,7 +1913,7 @@ export function KamsDepots() {
                   </div>
                 </button>
                 <div className="flex shrink-0 items-center gap-1">
-                  {hasPermission('kams.products.update') ? (
+                  {hasPermission('kams.stock.depots.update') || hasPermission('kams.products.update') ? (
                     <button
                       type="button"
                       aria-label={t('kams.editDepot')}
@@ -1890,14 +1956,14 @@ export function KamsDepots() {
               {isOpen ? (
                 <div className="space-y-4 border-t border-line bg-surface px-5 py-4">
                   <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
-                    {hasPermission('kams.stock.update') ? (
+                    {hasPermission('kams.stock.depots.receive') || hasPermission('kams.stock.update') ? (
                       <Button variant="secondary" onClick={() => openReceive(row)}>
                         {t('kams.receiveStock')}
                       </Button>
                     ) : null}
                     {hasPermission('kams.products.view') || hasPermission('kams.stock.warehouses.view') || hasPermission('kams.stock.depots.view') ? (
                       <>
-                        {hasPermission('kams.stock.update') ? (
+                        {hasPermission('kams.stock.depots.receive') || hasPermission('kams.stock.update') ? (
                           <span className="mx-1 hidden h-8 w-px bg-line sm:inline-block" aria-hidden />
                         ) : null}
                         <Button
@@ -1912,7 +1978,7 @@ export function KamsDepots() {
                   </div>
                   <IncomingTransferList
                     transfers={incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id)}
-                    canAccept={hasPermission('kams.stock.update')}
+                    canAccept={hasPermission('kams.stock.depots.receive') || hasPermission('kams.stock.update')}
                     onAccept={setAccepting}
                   />
                   {products.length === 0 ? (
@@ -1942,7 +2008,7 @@ export function KamsDepots() {
                             </div>
                           </td>
                           <td className="px-4 py-1.5 whitespace-nowrap">
-                            {item.product && row.office_id && hasPermission('kams.products.update') ? (
+                            {item.product && row.office_id && (hasPermission('kams.stock.depots.price') || hasPermission('kams.products.update')) ? (
                               <input
                                 type="number"
                                 min="0"
@@ -1976,7 +2042,7 @@ export function KamsDepots() {
                               >
                                 <Info size={16} />
                               </button>
-                              {hasPermission('kams.stock.update') ? (
+                              {hasPermission('kams.stock.depots.supply') || hasPermission('kams.stock.update') ? (
                                 <button
                                   type="button"
                                   aria-label={t('kams.supplyStock')}
@@ -1995,7 +2061,7 @@ export function KamsDepots() {
                                   <PackagePlus size={16} />
                                 </button>
                               ) : null}
-                              {item.product && item.quantity > 0 && hasPermission('kams.stock.update') ? (
+                              {item.product && item.quantity > 0 && (hasPermission('kams.stock.depots.remove') || hasPermission('kams.stock.update')) ? (
                                 <button
                                   type="button"
                                   aria-label={t('kams.removeFromDepot')}
@@ -2006,7 +2072,7 @@ export function KamsDepots() {
                                   <Truck size={16} />
                                 </button>
                               ) : null}
-                              {hasPermission('kams.stock.update') ? (
+                              {hasPermission('kams.stock.depots.adjust') || hasPermission('kams.stock.update') ? (
                                 <button
                                   type="button"
                                   aria-label={t('kams.adjustStock')}

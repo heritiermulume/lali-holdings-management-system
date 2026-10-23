@@ -173,6 +173,13 @@ export function KamsWarehouseMovements() {
   }, [])
 
   const typeLabel = (value: string) => t(`kams.movementType.${value}`, { defaultValue: value })
+  const statusLabel = (value: string) => t(`kams.status.${value}`, { defaultValue: value })
+  const statusTone = (value: string): 'green' | 'amber' | 'red' | 'slate' => {
+    if (value === 'in_transit' || value === 'partial') return 'amber'
+    if (value === 'cancelled') return 'red'
+    if (value === 'received' || value === 'posted') return 'green'
+    return 'slate'
+  }
   const directionLabel = (value?: string | null) => {
     if (!value) return '—'
     return t(`kams.movementDirection.${value}`, { defaultValue: value })
@@ -187,6 +194,7 @@ export function KamsWarehouseMovements() {
   const headers = () => [
     t('kams.occurredAt'),
     t('kams.movementTypeLabel'),
+    t('common.status'),
     t('kams.direction'),
     t('kams.product'),
     t('kams.quantity'),
@@ -200,6 +208,7 @@ export function KamsWarehouseMovements() {
   const columns = (row: Movement) => [
     formatDateTime(row.occurred_at, locale),
     typeLabel(row.type),
+    statusLabel(row.status),
     directionLabel(row.direction),
     row.product?.name || '—',
     String(row.quantity),
@@ -411,6 +420,7 @@ export function KamsWarehouseMovements() {
                 <tr className="text-left text-xs font-semibold tracking-wide">
                   <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.occurredAt')}</th>
                   <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.movementTypeLabel')}</th>
+                  <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('common.status')}</th>
                   <th className="bg-lhms px-3 py-3 font-semibold whitespace-nowrap">{t('kams.direction')}</th>
                   <th className="bg-lhms px-3 py-3 font-semibold">{t('kams.product')}</th>
                   <th className="bg-lhms px-3 py-3 text-right font-semibold whitespace-nowrap">{t('kams.quantity')}</th>
@@ -424,7 +434,7 @@ export function KamsWarehouseMovements() {
               <tbody>
                 {visible.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-3 py-8 text-center text-muted">{t('common.empty')}</td>
+                    <td colSpan={11} className="px-3 py-8 text-center text-muted">{t('common.empty')}</td>
                   </tr>
                 ) : visible.map((row, index) => (
                   <tr
@@ -436,6 +446,9 @@ export function KamsWarehouseMovements() {
                   >
                     <td className="w-px whitespace-nowrap px-3 py-1.5 text-muted">{formatDateTime(row.occurred_at, locale)}</td>
                     <td className="px-3 py-1.5 font-semibold whitespace-nowrap">{typeLabel(row.type)}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      <Badge tone={statusTone(row.status)}>{statusLabel(row.status)}</Badge>
+                    </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <Badge tone={row.direction === 'in' ? 'green' : row.direction === 'out' ? 'amber' : 'slate'}>
                         {directionLabel(row.direction)}

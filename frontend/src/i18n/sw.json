@@ -1189,6 +1189,9 @@
     "transferRequestHint": "Hii inaunda ombi. Hisa huondoka ghala hili, na mahali pa kwenda lazima likubali kwa kuingiza kiasi kilichopokelewa.",
     "requestTransfer": "Omba uhamisho",
     "incomingTransfers": "Uhamisho wa kupokea",
+    "outgoingTransfers": "Uhamisho unaosubiri",
+    "cancelTransfer": "Ghairi uhamisho",
+    "cancelTransferConfirm": "Ghairi {{reference}}? Hisa inarudi kwenye ghala la asili.",
     "acceptTransfer": "Kubali",
     "quantityTransferred": "Kiasi kilichohamishwa",
     "quantityReceived": "Kiasi kilichopokelewa",
@@ -1802,12 +1805,22 @@
           },
           "warehouses": {
             "view": "Tazama maghala",
+            "create": "Unda ghala",
             "update": "Hariri ghala",
-            "delete": "Futa ghala"
+            "delete": "Futa ghala",
+            "receive": "Pokea hisa ghala",
+            "transfer": "Hamisha hisa kutoka ghala"
           },
           "depots": {
             "view": "Angalia bohari",
-            "delete": "Futa bohari"
+            "create": "Unda bohari",
+            "update": "Hariri bohari",
+            "delete": "Futa bohari",
+            "receive": "Pokea hisa bohari",
+            "supply": "Sambaza bohari",
+            "remove": "Ondoa hisa kwenye bohari",
+            "adjust": "Rekebisha hisa ya bohari",
+            "price": "Hariri bei ya bohari"
           },
           "reports": {
             "view": "Tazama ukurasa wa ripoti za Mgawo",

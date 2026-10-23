@@ -56,7 +56,7 @@ type LookupOffice = { id: number; company_id: number; name: string; code: string
 type OfficeLink = { id: number; company_id: number; parent_office_id?: number | null; creator_user_id?: number | null; manager_user_id?: number | null }
 type LookupCompany = { id: number; name: string; code: string }
 type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null; rank?: string | null }
-type LookupRole = { id: number; name: string; slug?: string; offices?: Array<{ id: number; company_id: number }> }
+type LookupRole = { id: number; name: string; slug?: string; level?: number; offices?: Array<{ id: number; company_id: number }> }
 type Candidate = {
   id: number
   company_id?: number
@@ -165,6 +165,7 @@ function roleIsCertifiable(role?: { slug?: string } | null) {
 }
 
 const HIERARCHY_ENCADREUR_SLUGS = new Set(['divisionnaire', 'manager'])
+const OPENER_AS_ENCADREUR_SLUGS = new Set(['partner', 'vice_president', 'divisionnaire', 'manager'])
 
 function personRoleSlug(person: LookupPerson, roles: LookupRole[]) {
   const slug = roles.find((role) => String(role.id) === String(person.role_id))?.slug
@@ -782,7 +783,12 @@ export function KamsAgents() {
   const openCreate = () => {
     resetForm()
     const companyId = resolveKamsCompanyId()
-    const defaultOffice = offices.length === 1 ? String(offices[0].id) : officeId
+    const primaryOfficeId = user?.primary_office?.id ? String(user.primary_office.id) : ''
+    const defaultOffice = (primaryOfficeId && offices.some((office) => String(office.id) === primaryOfficeId))
+      ? primaryOfficeId
+      : (officeId && offices.some((office) => String(office.id) === officeId))
+        ? officeId
+        : (offices.length === 1 ? String(offices[0].id) : '')
     setForm({
       company_id: companyId,
       ...(defaultOffice ? { office_id: defaultOffice } : {}),
@@ -800,7 +806,9 @@ export function KamsAgents() {
         : '')
     setForm({
       company_id: row.company_id ? String(row.company_id) : resolveKamsCompanyId(),
-      office_id: row.office_id ? String(row.office_id) : '',
+      office_id: !showOfficeFilter && offices.length === 1
+        ? String(offices[0].id)
+        : (row.office_id ? String(row.office_id) : ''),
       first_name: row.first_name || '',
       last_name: row.last_name || '',
       gender: row.gender || '',
@@ -897,7 +905,8 @@ export function KamsAgents() {
     if (form.birth_date) payload.append('birth_date', form.birth_date)
     if (form.address) payload.append('address', form.address)
     // Encadreur is the parrain; backend syncs trainer_user_id for finance.
-    payload.append('coach_member_id', form.coach_member_id || '')
+    const coachAllowed = !form.coach_member_id || coachOptions.some((item) => item.id === form.coach_member_id)
+    payload.append('coach_member_id', coachAllowed ? (form.coach_member_id || '') : '')
     payload.append('manager_member_id', form.manager_member_id || '')
     payload.append('assistant_manager_member_id', form.assistant_manager_member_id || '')
     if (form.fixed_salary) payload.append('fixed_salary', form.fixed_salary)
@@ -1102,6 +1111,16 @@ export function KamsAgents() {
     (!form.company_id || String(person.company_id) === form.company_id)
     && (!form.office_id || !person.office_id || String(person.office_id) === form.office_id)
   ))
+  const officeLink = officeLinks.find((link) => String(link.id) === form.office_id)
+  const officeOpener = officeLink?.creator_user_id
+    ? people.find((person) => String(person.user_id) === String(officeLink.creator_user_id))
+    : undefined
+  const openerOutsideOffice = Boolean(
+    officeOpener
+    && form.office_id
+    && String(officeOpener.office_id || '') !== String(form.office_id),
+  )
+  const hideRemoteOpener = openerOutsideOffice && !OPENER_AS_ENCADREUR_SLUGS.has(formRole?.slug || '')
   const hierarchyCoaches = hierarchicalEncadreurs(form.office_id, form.company_id, officeLinks, people, roles)
     .filter((person) => !editing || String(person.id) !== String(editing.id))
   const coachPeople = [
@@ -1111,7 +1130,11 @@ export function KamsAgents() {
       && (!editing || String(person.id) !== String(editing.id))
       && !hierarchyCoaches.some((coach) => String(coach.id) === String(person.id))
     )),
-  ]
+  ].filter((person) => !hideRemoteOpener || !officeOpener || String(person.id) !== String(officeOpener.id))
+  const actorLevel = Math.max(0, ...(user?.roles ?? []).map((role) => role.level ?? 0))
+  const assignableRoles = (user?.is_super_admin || user?.is_group_admin)
+    ? roles
+    : roles.filter((role) => role.level == null || role.level <= actorLevel)
   const coachOptions = coachPeople
     .map((person): SearchComboboxItem => ({
       id: String(person.id),
@@ -1455,15 +1478,30 @@ export function KamsAgents() {
               disabled={!companySelected}
               placeholder={companySelected ? t('kams.searchOffice') : t('kams.selectCompanyFirst')}
               emptyLabel={t('common.empty')}
-              onSelect={(item) => setForm({ ...form, office_id: item?.id ?? '' })}
+              onSelect={(item) => {
+                const sameOffice = item?.id === form.office_id
+                setForm({
+                  ...form,
+                  office_id: item?.id ?? '',
+                  role_id: sameOffice ? form.role_id : '',
+                  coach_member_id: sameOffice ? form.coach_member_id : '',
+                })
+              }}
             />
           ) : null}
-          <Select label={t('users.role')} value={form.role_id || ''} onChange={(e) => setForm({ ...form, role_id: e.target.value })}>
+          <Select
+            label={t('users.role')}
+            required
+            disabled={!form.office_id}
+            value={form.role_id || ''}
+            onChange={(e) => setForm({ ...form, role_id: e.target.value })}
+          >
             <option value="">—</option>
-            {roles.map((role) => (
+            {assignableRoles.map((role) => (
               <option key={role.id} value={role.id}>{roleLabel(t, role, form.gender)}</option>
             ))}
           </Select>
+          <fieldset disabled={!form.office_id || !form.role_id} className="space-y-3 disabled:opacity-60">
           {formCanBeCertified ? (
             <div className="space-y-1.5">
               <Select
@@ -1510,8 +1548,9 @@ export function KamsAgents() {
               </Button>
             ) : null}
           </div>
+          </fieldset>
           {formError ? <p className="text-sm text-danger">{formError}</p> : null}
-          <Button type="submit" className="w-full" disabled={saving}>{saving ? t('common.loading') : t('common.save')}</Button>
+          <Button type="submit" className="w-full" disabled={saving || !form.office_id || !form.role_id}>{saving ? t('common.loading') : t('common.save')}</Button>
         </form>
       </Modal>
 

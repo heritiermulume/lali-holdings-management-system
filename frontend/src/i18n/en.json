@@ -1189,6 +1189,9 @@
     "transferRequestHint": "This creates a request. Stock leaves this warehouse, and the destination must accept it by entering the quantity received.",
     "requestTransfer": "Request transfer",
     "incomingTransfers": "Transfers to receive",
+    "outgoingTransfers": "Pending transfers",
+    "cancelTransfer": "Cancel transfer",
+    "cancelTransferConfirm": "Cancel {{reference}}? The stock returns to the source warehouse.",
     "acceptTransfer": "Accept",
     "quantityTransferred": "Quantity transferred",
     "quantityReceived": "Quantity received",
@@ -1802,12 +1805,22 @@
           },
           "warehouses": {
             "view": "View warehouses",
+            "create": "Create a warehouse",
             "update": "Edit a warehouse",
-            "delete": "Delete a warehouse"
+            "delete": "Delete a warehouse",
+            "receive": "Receive stock into a warehouse",
+            "transfer": "Transfer stock from a warehouse"
           },
           "depots": {
             "view": "View depots",
-            "delete": "Delete a depot"
+            "create": "Create a depot",
+            "update": "Edit a depot",
+            "delete": "Delete a depot",
+            "receive": "Receive stock into a depot",
+            "supply": "Supply a depot",
+            "remove": "Remove stock from a depot",
+            "adjust": "Adjust depot stock",
+            "price": "Edit the depot sale price"
           },
           "reports": {
             "view": "View the Assignment reports page",
