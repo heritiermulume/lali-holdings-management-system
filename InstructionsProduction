@@ -1,0 +1,11 @@
+cd /var/www/lali-holdings-management-system/backend
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force
+php artisan optimize:clear
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+
+cd ../frontend
+npm ci
+npm run build
