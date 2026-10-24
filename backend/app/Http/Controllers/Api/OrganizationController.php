@@ -440,8 +440,9 @@ class OrganizationController extends Controller
             ->with('role:id,name,slug')
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->whereIn('status', ['active', 'verified'])
+            ->whereNotNull('user_id')
+            ->whereHas('role', fn ($q) => $q->whereIn('slug', ['manager', 'divisionnaire', 'vice_president', 'partner']))
             ->orderBy('full_name')
-            ->limit(400)
             ->get(['id', 'company_id', 'user_id', 'full_name', 'member_code', 'role_id', 'office_id']);
 
         return $this->ok([

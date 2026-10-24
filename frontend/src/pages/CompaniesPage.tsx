@@ -91,6 +91,8 @@ function idOrNull(value: string) {
   return value ? Number(value) : null
 }
 
+const officeLeaderRoles = new Set(['manager', 'divisionnaire', 'vice_president', 'partner'])
+
 function officeRoots(offices: Office[]) {
   return offices.filter((office) => !office.parent_office_id || !offices.some((item) => item.id === office.parent_office_id))
 }
@@ -280,12 +282,24 @@ export function CompaniesPage() {
 
   const loadLookups = (companyId: number) => {
     api.get('/offices/lookups', { params: { company_id: companyId } }).then((res) => {
-      const users = (res.data.data?.users ?? []) as Array<{ id: number; name: string; email?: string | null }>
-      setPeople(users.map((user) => ({
-        id: String(user.id),
-        label: user.name,
-        hint: user.email || undefined,
-      })))
+      const members = (res.data.data?.members ?? []) as Array<{
+        user_id?: number | null
+        full_name: string
+        member_code?: string | null
+        role?: { name?: string; slug?: string } | null
+      }>
+      const leaders = members.filter((member) => member.user_id && officeLeaderRoles.has(member.role?.slug || ''))
+      const seen = new Set<number>()
+      setPeople(leaders.flatMap((member) => {
+        const userId = member.user_id as number
+        if (seen.has(userId)) return []
+        seen.add(userId)
+        return [{
+          id: String(userId),
+          label: member.full_name,
+          hint: member.role?.name || member.member_code || undefined,
+        }]
+      }))
       setParentOptions(res.data.data?.offices ?? [])
     })
   }

@@ -158,7 +158,8 @@ class RevenueShareService
             ->where('amount', '!=', 0)
             ->get();
 
-        $salaryKind = RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug)
+        $salaryKind = ! $this->hierarchy->remuneratedAsAssistant($member)
+            && RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug)
             ? 'salary'
             : 'secretary';
 
@@ -460,7 +461,8 @@ class RevenueShareService
             $member->loadMissing('role:id,slug');
             $this->savings->postCompensation(
                 $member,
-                RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug) ? 'salary' : 'secretary',
+                ! $this->hierarchy->remuneratedAsAssistant($member)
+                    && RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug) ? 'salary' : 'secretary',
                 $amount,
                 'salary',
                 $entry,

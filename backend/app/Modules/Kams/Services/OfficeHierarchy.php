@@ -90,6 +90,49 @@ class OfficeHierarchy
     }
 
     /**
+     * The member linked as the office's Responsable / manager.
+     */
+    public function isOfficeResponsible(KamsMember $member): bool
+    {
+        if (! $member->office_id || ! $member->user_id) {
+            return false;
+        }
+
+        $managerUserId = $member->relationLoaded('office')
+            ? $member->office?->manager_user_id
+            : \App\Models\Office::query()->whereKey($member->office_id)->value('manager_user_id');
+
+        return $managerUserId && (int) $managerUserId === (int) $member->user_id;
+    }
+
+    /**
+     * A manager who is not the bureau's responsible is paid like an assistant manager.
+     */
+    public function remuneratedAsAssistant(KamsMember $member): bool
+    {
+        $slug = $this->roleSlug($member);
+        if ($slug === 'assistant_manager') {
+            return true;
+        }
+
+        return $slug === 'manager' && ! $this->isOfficeResponsible($member);
+    }
+
+    /**
+     * Office-manager package (product share and opened-office %) for this person.
+     * Several agents can hold the manager role; only the linked responsible receives it.
+     */
+    public function receivesOfficeManagerPackage(KamsMember $member): bool
+    {
+        $slug = $this->roleSlug($member);
+        if ($slug === 'manager') {
+            return $this->isOfficeResponsible($member);
+        }
+
+        return $this->isOfficeManagerRole($slug);
+    }
+
+    /**
      * The person chosen as office manager joins that bureau's agents.
      * A higher grade is kept. They stop being manager of any other bureau.
      */
@@ -167,7 +210,7 @@ class OfficeHierarchy
     {
         // A member who is already an assistant manager leaves their former AM's direct team
         // for base remuneration — their own production is not included there.
-        if ($this->roleSlug($seller) === 'assistant_manager') {
+        if ($this->remuneratedAsAssistant($seller)) {
             return null;
         }
 
@@ -194,7 +237,7 @@ class OfficeHierarchy
         $sponsor = null;
         if ($assistant->assistant_manager_member_id) {
             $linked = KamsMember::query()->with('role:id,name,slug')->find($assistant->assistant_manager_member_id);
-            if ($linked && $this->roleSlug($linked) === 'assistant_manager') {
+            if ($linked && $this->remuneratedAsAssistant($linked)) {
                 $sponsor = $linked;
             }
         }
@@ -214,7 +257,7 @@ class OfficeHierarchy
     public function excludedFromRemoteEncadreurTeam(KamsMember $member, KamsMember $encadreur): bool
     {
         $slug = $this->roleSlug($member);
-        $paidOnOffice = $slug === 'divisionnaire' || $this->isOfficeManagerRole($slug);
+        $paidOnOffice = $slug === 'divisionnaire' || $this->receivesOfficeManagerPackage($member);
         if (! $paidOnOffice || ! $member->office_id || ! $encadreur->office_id) {
             return false;
         }
@@ -227,13 +270,13 @@ class OfficeHierarchy
         // Encadreur is the parrain / upline used by finance.
         if ($member->coach_member_id) {
             $coach = KamsMember::query()->with('role:id,name,slug')->find($member->coach_member_id);
-            if ($coach && $this->roleSlug($coach) === 'assistant_manager') {
+            if ($coach && $this->remuneratedAsAssistant($coach)) {
                 return $coach;
             }
         }
         if ($member->trainer_user_id) {
             $trainer = $this->memberForUser((int) $member->trainer_user_id, (int) $member->company_id);
-            if ($trainer && $this->roleSlug($trainer) === 'assistant_manager') {
+            if ($trainer && $this->remuneratedAsAssistant($trainer)) {
                 return $trainer;
             }
         }
@@ -309,8 +352,8 @@ class OfficeHierarchy
         $office?->loadMissing(['parent:id,name,code', 'creator:id,name', 'manager:id,name']);
 
         $officeManager = $office
-            ? ($this->memberForUser($office->manager_user_id ? (int) $office->manager_user_id : null, (int) $office->company_id) ?: $sale->manager)
-            : $sale->manager;
+            ? $this->memberForUser($office->manager_user_id ? (int) $office->manager_user_id : null, (int) $office->company_id)
+            : null;
         $officeCreator = $office
             ? $this->memberForUser($office->creator_user_id ? (int) $office->creator_user_id : null, (int) $office->company_id)
             : null;
@@ -370,7 +413,7 @@ class OfficeHierarchy
                 $divisionnaires[] = $member;
             }
             // VP / partner share the same opened-office remuneration path as managers.
-            if ($this->isOfficeManagerRole($slug)) {
+            if ($this->receivesOfficeManagerPackage($member)) {
                 $managers[] = ['member' => $member, 'direct' => $direct];
             }
         };

@@ -32,6 +32,10 @@ class SavingsLedger
 
     public function defaultManualKind(KamsMember $member): string
     {
+        if (app(OfficeHierarchy::class)->remuneratedAsAssistant($member)) {
+            return 'guy';
+        }
+
         $slug = $member->role?->slug ?: \App\Models\Role::query()->whereKey($member->role_id)->value('slug');
 
         return RevenueRuleCatalog::usesSplitCompensationAccounts($slug) ? 'salary' : 'guy';
@@ -41,6 +45,15 @@ class SavingsLedger
     {
         $hierarchy = app(OfficeHierarchy::class);
         $seller->loadMissing('role:id,name,slug');
+        if ($seller->office_id) {
+            $managerUserId = \App\Models\Office::query()->whereKey($seller->office_id)->value('manager_user_id');
+            $responsible = $managerUserId
+                ? $hierarchy->memberForUser((int) $managerUserId, (int) $seller->company_id)
+                : null;
+            if ($responsible) {
+                return $responsible;
+            }
+        }
         if ($seller->manager_member_id) {
             $linked = KamsMember::query()->find($seller->manager_member_id);
             if ($linked && ! $hierarchy->excludedFromRemoteEncadreurTeam($seller, $linked)) {
@@ -70,14 +83,7 @@ class SavingsLedger
                 ->first();
         }
 
-        return KamsMember::query()
-            ->where('company_id', $seller->company_id)
-            ->where('office_id', $seller->office_id)
-            ->where('id', '!=', $seller->id)
-            ->where(function ($q) {
-                $q->whereHas('role', fn ($role) => $role->where('slug', 'manager'));
-            })
-            ->first();
+        return null;
     }
 
     public function postSale(KamsStockSale $sale): void
@@ -96,7 +102,9 @@ class SavingsLedger
 
         if ((float) $sale->seller_margin != 0.0) {
             $seller->loadMissing('role:id,slug');
-            $sellerKind = RevenueRuleCatalog::usesSplitCompensationAccounts($seller->role?->slug) ? 'salary' : 'guy';
+            $sellerKind = app(OfficeHierarchy::class)->remuneratedAsAssistant($seller)
+                ? 'guy'
+                : (RevenueRuleCatalog::usesSplitCompensationAccounts($seller->role?->slug) ? 'salary' : 'guy');
             $this->postUnique($seller, $sellerKind, (float) $sale->seller_margin, 'settlement', $sale, $sale->sold_at?->toDateString(), 'Guy margin on '.$sale->reference);
         }
         app(RevenueShareService::class)->post($sale);
@@ -377,7 +385,8 @@ class SavingsLedger
     {
         $member->loadMissing(['office:id,name,code', 'role:id,name,slug']);
         app(RevenueShareService::class)->syncMemberLedger($member);
-        if (RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug)) {
+        $paidAsAssistant = app(OfficeHierarchy::class)->remuneratedAsAssistant($member);
+        if (! $paidAsAssistant && RevenueRuleCatalog::usesSplitCompensationAccounts($member->role?->slug)) {
             $this->account($member, 'salary');
             $this->account($member, 'percentage');
         }
@@ -442,7 +451,8 @@ class SavingsLedger
 
         $balance = round((float) (clone $posted)->sum('amount'), 2);
         $roleSlug = $member->role?->slug;
-        $splitAccounts = RevenueRuleCatalog::usesSplitCompensationAccounts($roleSlug);
+        $splitAccounts = ! app(OfficeHierarchy::class)->remuneratedAsAssistant($member)
+            && RevenueRuleCatalog::usesSplitCompensationAccounts($roleSlug);
         $walletKinds = $splitAccounts ? ['salary', 'percentage'] : ['guy'];
         $wallets = [];
         foreach ($walletKinds as $walletKind) {

@@ -108,13 +108,14 @@ class KamsAccountProvisioner
     {
         $this->ledger->account($member, 'guy');
         $slug = $member->role?->slug ?: Role::query()->whereKey($member->role_id)->value('slug');
-        if (RevenueRuleCatalog::usesSplitCompensationAccounts($slug)) {
+        $paidAsAssistant = app(OfficeHierarchy::class)->remuneratedAsAssistant($member);
+        if (! $paidAsAssistant && RevenueRuleCatalog::usesSplitCompensationAccounts($slug)) {
             $this->ledger->account($member, 'salary');
             $this->ledger->account($member, 'percentage');
-        } elseif ($this->isManagerial($member)) {
+        } elseif (! $paidAsAssistant && $this->isManagerial($member)) {
             $this->ledger->account($member, 'manager');
         }
-        if ($slug === 'assistant_manager') {
+        if ($paidAsAssistant || $slug === 'assistant_manager') {
             $this->ledger->account($member, 'assistant_manager');
         }
         if ($member->company_id) {
