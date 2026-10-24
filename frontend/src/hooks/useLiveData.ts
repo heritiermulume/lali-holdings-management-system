@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { subscribeDataSync, withSoftRefresh, type DataSyncReason } from '../lib/dataSync'
 
-const DEFAULT_POLL_MS = 30_000
+const DEFAULT_POLL_MS = 12_000
 const DEFAULT_COOLDOWN_MS = 8_000
 
 type LiveDataOptions = {

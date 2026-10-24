@@ -204,7 +204,7 @@ export function NotificationsModal({
                           <div className="flex flex-wrap items-center gap-2">
                             {canOpen ? (
                               <Button variant="secondary" className="h-9 px-3" onClick={() => void openTarget(item)}>
-                                {t('notifications.open')}
+                                {item.type === 'stock_transfer' ? t('notifications.viewTransfer') : item.type === 'stock_return' ? t('notifications.viewReturn') : t('notifications.open')}
                               </Button>
                             ) : null}
                             {unread ? (

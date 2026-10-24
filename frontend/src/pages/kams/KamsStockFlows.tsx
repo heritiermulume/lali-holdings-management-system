@@ -132,6 +132,7 @@ type Assignment = {
   status: string
   member_id?: number | null
   assigned_at?: string | null
+  closed_at?: string | null
   settled_at?: string | null
   expected_amount: number
   collected_amount: number
@@ -139,7 +140,19 @@ type Assignment = {
   loss_amount: number
   member?: { id?: number; full_name: string; member_code: string; phone?: string | null; photo_url?: string | null; office_id?: number | null } | null
   office?: { id?: number; name: string } | null
+  created_by?: Actor | null
+  updated_by?: Actor | null
+  added_by?: Actor | null
+  closed_by?: Actor | null
+  day_closed_by?: Actor | null
   items?: AssignmentItem[]
+}
+
+function formatAssignmentWhen(value?: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 }
 
 function emptyLine(): Line {
@@ -458,6 +471,13 @@ function AssignmentDetails({ assignment }: { assignment: Assignment }) {
         {assignment.office?.name ? <AssignmentDetailLine label={t('kams.filterOffice')} value={assignment.office.name} /> : null}
         <AssignmentDetailLine label={t('kams.reference')} value={assignment.reference} />
         <AssignmentDetailLine label={t('common.status')} value={t(`kams.status.${assignment.status}`, { defaultValue: assignment.status })} />
+        <AssignmentDetailLine label={t('kams.assignedAt')} value={formatAssignmentWhen(assignment.assigned_at)} />
+        <AssignmentDetailLine label={t('kams.closedAt')} value={formatAssignmentWhen(assignment.closed_at)} />
+        <AssignmentDetailLine label={t('kams.assignedBy')} value={assignment.created_by?.name || '—'} />
+        <AssignmentDetailLine label={t('kams.assignmentUpdatedBy')} value={assignment.updated_by?.name || '—'} />
+        <AssignmentDetailLine label={t('kams.assignmentAddedBy')} value={assignment.added_by?.name || '—'} />
+        <AssignmentDetailLine label={t('kams.assignmentClosedBy')} value={assignment.closed_by?.name || '—'} />
+        <AssignmentDetailLine label={t('kams.dayClosedBy')} value={assignment.day_closed_by?.name || '—'} />
       </div>
       {items.length === 0 ? <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p> : (
         <div className="overflow-hidden rounded-2xl border border-line">
@@ -571,6 +591,13 @@ export function KamsAssignments() {
           ? { ...current.member, ...updated.member }
           : current.member,
         office: updated.office ?? current.office,
+        created_by: updated.created_by ?? current.created_by,
+        updated_by: updated.updated_by ?? current.updated_by,
+        added_by: updated.added_by ?? current.added_by,
+        closed_by: updated.closed_by ?? current.closed_by,
+        day_closed_by: updated.day_closed_by ?? current.day_closed_by,
+        assigned_at: updated.assigned_at ?? current.assigned_at,
+        closed_at: updated.closed_at ?? current.closed_at,
         items: updated.items ?? current.items,
       }
       return next
@@ -582,6 +609,13 @@ export function KamsAssignments() {
         ...updated,
         member: updated.member ? { ...prev.member, ...updated.member } : prev.member,
         office: updated.office ?? prev.office,
+        created_by: updated.created_by ?? prev.created_by,
+        updated_by: updated.updated_by ?? prev.updated_by,
+        added_by: updated.added_by ?? prev.added_by,
+        closed_by: updated.closed_by ?? prev.closed_by,
+        day_closed_by: updated.day_closed_by ?? prev.day_closed_by,
+        assigned_at: updated.assigned_at ?? prev.assigned_at,
+        closed_at: updated.closed_at ?? prev.closed_at,
         items: updated.items ?? prev.items,
       }
     })
@@ -949,7 +983,7 @@ export function KamsAssignments() {
           const quantityTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0), 0)
           const valueTotal = items.reduce((sum, item) => sum + Number(item.quantity_out || 0) * Number(item.unit_price || 0), 0)
           return (
-            <Card key={row.id} className={cn('flex h-48 w-96 max-w-full flex-col overflow-hidden', row.status === 'closed' && 'border-emerald-200 bg-emerald-50')}>
+            <Card key={row.id} className={cn('flex h-56 w-96 max-w-full flex-col overflow-hidden', row.status === 'closed' && 'border-emerald-200 bg-emerald-50')}>
               <div className="flex min-h-0 flex-1 items-start justify-between gap-2 px-4 pb-2 pt-3">
                 <div className="flex min-w-0 items-start gap-3">
                   <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-lhms-soft text-lhms">
@@ -967,6 +1001,8 @@ export function KamsAssignments() {
                       {[row.member?.phone, showOfficeOnCards ? row.office?.name : null].filter(Boolean).join(' · ') || '—'}
                     </div>
                     <div className="mt-1 space-y-0 text-xs leading-4 text-muted">
+                      <div className="truncate">{t('kams.assignedAt')}: {formatAssignmentWhen(row.assigned_at)}</div>
+                      <div className="truncate">{t('kams.closedAt')}: {formatAssignmentWhen(row.closed_at)}</div>
                       <div className="truncate">{t('kams.products')}: {itemCount}</div>
                       <div className="truncate">{t('kams.totalQuantity')}: {quantityTotal}</div>
                       <div className="truncate">{t('kams.assignmentValue')}: {money(valueTotal)}</div>

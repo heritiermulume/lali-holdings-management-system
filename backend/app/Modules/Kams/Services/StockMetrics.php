@@ -18,6 +18,7 @@ use App\Modules\Kams\Models\KamsStockReturnItem;
 use App\Modules\Kams\Models\KamsStockSale;
 use App\Modules\Kams\Models\KamsStockSaleItem;
 use App\Modules\Kams\Models\KamsStockTransfer;
+use App\Modules\Kams\Models\KamsStockTransferItem;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
@@ -129,16 +130,28 @@ class StockMetrics
                 ->where('kind', 'seller')
                 ->when($officeScoped, fn ($inner) => $inner->whereIn('office_id', $officeIds)))
             ->sum('quantity');
-        $inTransit = (int) KamsStockBalance::query()
-            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->where('condition', 'in_transit')
-            ->whereHas('depot', fn ($depot) => $depot
-                ->when(
-                    $officeScoped,
-                    fn ($inner) => $inner->whereIn('office_id', $officeIds)->where('kind', '!=', 'warehouse'),
-                    fn ($inner) => $inner->whereIn('kind', ['warehouse', 'depot', 'seller']),
-                ))
-            ->sum('quantity');
+        $inTransit = (int) KamsStockTransferItem::query()
+            ->whereHas('transfer', function ($transfer) use ($companyId, $officeIds, $officeScoped) {
+                $transfer->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+                    ->where('status', 'in_transit')
+                    ->when($officeScoped, function ($query) use ($officeIds) {
+                        $query->where(function ($inner) use ($officeIds) {
+                            $inner->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeIds))
+                                ->orWhereHas('fromDepot', fn ($depot) => $depot->whereIn('office_id', $officeIds));
+                        });
+                    });
+            })
+            ->sum('quantity')
+            + (int) KamsStockReturnItem::query()
+                ->whereHas('stockReturn', function ($return) use ($companyId, $officeIds, $officeScoped) {
+                    $return->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+                        ->where('type', 'depot_to_warehouse')
+                        ->where('status', 'requested')
+                        ->when($officeScoped, function ($query) use ($officeIds) {
+                            $query->whereHas('fromDepot', fn ($depot) => $depot->whereIn('office_id', $officeIds));
+                        });
+                })
+                ->sum('quantity');
         $quarantine = (int) KamsStockBalance::query()
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
             ->whereIn('condition', ['quarantine', 'damaged'])
@@ -176,6 +189,13 @@ class StockMetrics
                 ->whereBetween('validated_at', [$start, $end]))
             ->sum('quantity');
         $soldUnits = max(0, $soldUnits - $returnedSold);
+        $issuedUnits = (int) KamsStockAssignmentItem::query()
+            ->whereHas('assignment', function ($assignment) use ($companyId, $officeIds, $start, $end) {
+                $assignment->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+                    ->when($officeIds !== [], fn ($query) => $query->whereIn('office_id', $officeIds))
+                    ->whereBetween('assigned_at', [$start, $end]);
+            })
+            ->sum('quantity_out');
         $lostUnits = (int) KamsStockAssignmentItem::query()
             ->whereHas('assignment', function ($assignment) use ($companyId, $officeIds, $start, $end) {
                 $assignment->when($companyId, fn ($query) => $query->where('company_id', $companyId))
@@ -251,6 +271,7 @@ class StockMetrics
                 'inventory_value' => round($inventoryValue, 2),
                 'open_assignments' => (clone $assignments)->where('status', 'open')->count(),
                 'sold_units' => $soldUnits,
+                'issued_units' => $issuedUnits,
                 'lost_units' => $lostUnits,
                 'active_sellers' => $activeSellers,
                 'commissions_payable' => round($commissionsPayable, 2),

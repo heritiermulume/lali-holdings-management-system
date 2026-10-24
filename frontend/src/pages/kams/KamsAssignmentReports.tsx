@@ -44,6 +44,7 @@ type Assignment = {
   reference: string
   status: string
   assigned_at?: string | null
+  closed_at?: string | null
   settled_at?: string | null
   expected_amount: number
   collected_amount: number
@@ -51,6 +52,9 @@ type Assignment = {
   loss_amount: number
   member?: { full_name: string; member_code: string; phone?: string | null } | null
   office?: { name: string } | null
+  created_by?: { id: number; name: string } | null
+  updated_by?: { id: number; name: string } | null
+  added_by?: { id: number; name: string } | null
   closed_by?: { id: number; name: string } | null
   day_closed_by?: { id: number; name: string } | null
   items?: AssignmentItem[]
@@ -69,6 +73,14 @@ type DayTotals = {
   lost_units: number
   surplus: number
   shortfall: number
+  hierarchy_savings?: number
+  expenses?: number
+  net_sales?: number
+  agent_savings?: number
+  manager_share?: number
+  manual_deposits?: number
+  withdrawals?: number
+  remaining_total?: number
 }
 
 type DayReport = {
@@ -163,6 +175,14 @@ function assignmentSoldUnits(row: Assignment) {
   return (row.items || []).reduce((sum, item) => sum + soldQty(item), 0)
 }
 
+function assignmentOutUnits(row: Assignment) {
+  return (row.items || []).reduce((sum, item) => sum + Number(item.quantity_out || 0), 0)
+}
+
+function whenLabel(value: string | null | undefined, locale: string) {
+  return value ? formatDateTime(value, locale) : '—'
+}
+
 function sortAssignments(rows: Assignment[], sort: DaySort) {
   const list = [...rows]
   const cmpText = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' })
@@ -229,7 +249,6 @@ export function KamsAssignmentReports() {
     }).then((res) => {
       const payload = res.data.data as ReportPayload
       setData(payload)
-      setPage(1)
     }).catch(() => {
       setData({
         period,
@@ -259,6 +278,7 @@ export function KamsAssignmentReports() {
   }
 
   useEffect(() => {
+    setPage(1)
     void load()
   }, [from, to, period, officeId, reloadKey])
 
@@ -321,12 +341,20 @@ export function KamsAssignmentReports() {
 
   const totalsHtml = (totals: DayTotals) => `
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px;">
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.agents'))}: <b>${totals.agents}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.sold'))}: <b>${totals.sold_units}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.fieldAgents'))}: <b>${totals.agents}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.quantityOut'))}: <b>${totals.assigned_units}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.soldQuantity'))}: <b>${totals.sold_units}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.amountDue'))}: <b>${escapeHtml(money(totals.expected_amount))}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.cashCollected'))}: <b>${escapeHtml(money(totals.collected_amount))}</b></div>
       <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.shortfall'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.shortfall))}</b></div>
-      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.surplus'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.surplus))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.agentSavings'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.agent_savings || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.managerShare'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.manager_share || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.netSales'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.net_sales || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.hierarchySavings'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.hierarchy_savings || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.dayExpenses'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.expenses || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.manualDeposits'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.manual_deposits || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.withdrawals'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.withdrawals || 0))}</b></div>
+      <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.remainingTotal'))}:<b style="display:block;margin-top:2px;">${escapeHtml(money(totals.remaining_total || 0))}</b></div>
     </div>
   `
 
@@ -349,9 +377,18 @@ export function KamsAssignmentReports() {
           <div>
             <div style="font-weight:700;font-size:13px;">${escapeHtml(agentLabel(row))}</div>
             <div style="color:#5d6b62;font-size:11px;">${escapeHtml([row.member?.phone, row.office?.name].filter(Boolean).join(' · '))}</div>
+            <div style="color:#5d6b62;font-size:11px;">${escapeHtml(t('kams.assignedAt'))}: ${escapeHtml(whenLabel(row.assigned_at, locale))} · ${escapeHtml(t('kams.closedAt'))}: ${escapeHtml(whenLabel(row.closed_at, locale))}</div>
+            <div style="color:#5d6b62;font-size:11px;margin-top:4px;line-height:1.45;">
+              ${escapeHtml(t('kams.assignedBy'))}: ${escapeHtml(row.created_by?.name || '—')}<br>
+              ${escapeHtml(t('kams.assignmentUpdatedBy'))}: ${escapeHtml(row.updated_by?.name || '—')}<br>
+              ${escapeHtml(t('kams.assignmentAddedBy'))}: ${escapeHtml(row.added_by?.name || '—')}<br>
+              ${escapeHtml(t('kams.assignmentClosedBy'))}: ${escapeHtml(row.closed_by?.name || '—')}<br>
+              ${escapeHtml(t('kams.dayClosedBy'))}: ${escapeHtml(row.day_closed_by?.name || '—')}
+            </div>
           </div>
           <div style="text-align:right;font-size:11px;line-height:1.5;">
-            <div>${escapeHtml(t('kams.sold'))}: <b>${assignmentSoldUnits(row)}</b></div>
+            <div>${escapeHtml(t('kams.quantityOut'))}: <b>${assignmentOutUnits(row)}</b></div>
+            <div>${escapeHtml(t('kams.soldQuantity'))}: <b>${assignmentSoldUnits(row)}</b></div>
             <div>${escapeHtml(t('kams.amountDue'))}: <b>${escapeHtml(money(row.expected_amount))}</b></div>
             <div>${escapeHtml(t('kams.cashCollected'))}: <b>${escapeHtml(money(row.collected_amount))}</b></div>
           </div>
@@ -363,7 +400,7 @@ export function KamsAssignmentReports() {
               <th style="text-align:right;">${escapeHtml(t('kams.quantity'))}</th>
               <th style="text-align:right;">${escapeHtml(t('kams.returned'))}</th>
               <th style="text-align:right;">${escapeHtml(t('kams.lost'))}</th>
-              <th style="text-align:right;">${escapeHtml(t('kams.sold'))}</th>
+              <th style="text-align:right;">${escapeHtml(t('kams.soldQuantity'))}</th>
               <th style="text-align:right;">${escapeHtml(t('kams.salePrice'))}</th>
               <th style="text-align:right;">${escapeHtml(t('kams.lineDue'))}</th>
             </tr>
@@ -376,10 +413,53 @@ export function KamsAssignmentReports() {
     `
   }
 
-  const dayHtml = (day: DayReport, simplified = false) => `
+  const performanceRows = (day: DayReport) => {
+    const grouped = new Map<string, { name: string; office: string; out: number; sold: number }>()
+    for (const row of day.assignments) {
+      const key = String(row.member?.member_code || row.id)
+      const current = grouped.get(key) || {
+        name: row.member?.full_name || '—',
+        office: row.office?.name || '—',
+        out: 0,
+        sold: 0,
+      }
+      current.out += assignmentOutUnits(row)
+      current.sold += assignmentSoldUnits(row)
+      grouped.set(key, current)
+    }
+    return [...grouped.values()]
+  }
+
+  const dayHtml = (day: DayReport, simplified = false, performance = false) => `
     <section style="margin:0 0 22px;break-inside:avoid;">
       <h2 style="margin:0 0 8px;color:#043711;font-size:16px;font-weight:800;text-transform:capitalize;">${escapeHtml(formatDay(day.date, locale))}</h2>
-      ${totalsHtml(day.totals)}
+      ${performance ? `
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 14px;">
+          <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.fieldAgents'))}: <b>${performanceRows(day).length}</b></div>
+          <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.quantityOut'))}: <b>${day.totals.assigned_units}</b></div>
+          <div style="border:1px solid #e4ece6;border-radius:10px;padding:8px 10px;font-size:11px;">${escapeHtml(t('kams.soldQuantity'))}: <b>${day.totals.sold_units}</b></div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>${escapeHtml(t('kams.agent'))}</th>
+              <th>${escapeHtml(t('kams.office'))}</th>
+              <th style="text-align:right;">${escapeHtml(t('kams.quantityOut'))}</th>
+              <th style="text-align:right;">${escapeHtml(t('kams.soldQuantity'))}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${performanceRows(day).map((row) => `
+              <tr>
+                <td>${escapeHtml(row.name)}</td>
+                <td>${escapeHtml(row.office)}</td>
+                <td style="text-align:right;">${row.out}</td>
+                <td style="text-align:right;">${row.sold}</td>
+              </tr>
+            `).join('') || `<tr><td class="empty" colspan="4">${escapeHtml(t('common.empty'))}</td></tr>`}
+          </tbody>
+        </table>
+      ` : `${totalsHtml(day.totals)}
       ${simplified
         ? (day.assignments.length
           ? `<table>
@@ -387,7 +467,8 @@ export function KamsAssignmentReports() {
                 <tr>
                   <th>${escapeHtml(t('kams.agent'))}</th>
                   <th>${escapeHtml(t('kams.office'))}</th>
-                  <th style="text-align:right;">${escapeHtml(t('kams.sold'))}</th>
+                  <th style="text-align:right;">${escapeHtml(t('kams.quantityOut'))}</th>
+                  <th style="text-align:right;">${escapeHtml(t('kams.soldQuantity'))}</th>
                   <th style="text-align:right;">${escapeHtml(t('kams.amountDue'))}</th>
                   <th style="text-align:right;">${escapeHtml(t('kams.cashCollected'))}</th>
                 </tr>
@@ -397,6 +478,7 @@ export function KamsAssignmentReports() {
                   <tr>
                     <td>${escapeHtml(row.member?.full_name || '—')}</td>
                     <td>${escapeHtml(row.office?.name || '—')}</td>
+                    <td style="text-align:right;">${assignmentOutUnits(row)}</td>
                     <td style="text-align:right;">${assignmentSoldUnits(row)}</td>
                     <td style="text-align:right;">${escapeHtml(money(row.expected_amount))}</td>
                     <td style="text-align:right;">${escapeHtml(money(row.collected_amount))}</td>
@@ -405,14 +487,14 @@ export function KamsAssignmentReports() {
               </tbody>
             </table>`
           : `<p style="color:#5d6b62;font-size:12px;text-align:center;">${escapeHtml(t('common.empty'))}</p>`)
-        : (day.assignments.map(assignmentHtml).join('') || `<p style="color:#5d6b62;font-size:12px;text-align:center;">${escapeHtml(t('common.empty'))}</p>`)}
+        : (day.assignments.map(assignmentHtml).join('') || `<p style="color:#5d6b62;font-size:12px;text-align:center;">${escapeHtml(t('common.empty'))}</p>`)}`}
     </section>
   `
 
   const officeScopeLabel = data?.office_name || t('kams.allOffices')
   const withOffice = (title: string) => `${title} — ${officeScopeLabel}`
 
-  const buildDaysHtml = (days: DayReport[], title: string, subtitle?: string, simplified = false) => {
+  const buildDaysHtml = (days: DayReport[], title: string, subtitle?: string, simplified = false, performance = false) => {
     if (!data) return ''
     const periodLabel = t('kams.periodRange', {
       start: new Date(`${data.range.from}T12:00:00`).toLocaleDateString(locale),
@@ -425,22 +507,23 @@ export function KamsAssignmentReports() {
       meta: [
         { label: t('kams.filterOffice'), value: officeScopeLabel },
         { label: t('common.printedOn'), value: new Date().toLocaleString(locale) },
-        { label: t('kams.sold'), value: String(days.reduce((sum, day) => sum + day.totals.sold_units, 0)) },
-        { label: t('kams.cashCollected'), value: money(days.reduce((sum, day) => sum + day.totals.collected_amount, 0)) },
+        { label: t('kams.quantityOut'), value: String(days.reduce((sum, day) => sum + day.totals.assigned_units, 0)) },
+        { label: t('kams.soldQuantity'), value: String(days.reduce((sum, day) => sum + day.totals.sold_units, 0)) },
+        ...(performance ? [] : [{ label: t('kams.cashCollected'), value: money(days.reduce((sum, day) => sum + day.totals.collected_amount, 0)) }]),
       ],
       footerNote: t('common.confidential'),
       orientation: 'landscape',
-      body: days.map((day) => dayHtml(day, simplified)).join('') || `<p class="empty">${escapeHtml(t('common.empty'))}</p>`,
+      body: days.map((day) => dayHtml(day, simplified, performance)).join('') || `<p class="empty">${escapeHtml(t('common.empty'))}</p>`,
     })
   }
 
-  const printDays = (days: DayReport[], title: string, subtitle?: string, simplified = false) => {
-    const html = buildDaysHtml(days, title, subtitle, simplified)
+  const printDays = (days: DayReport[], title: string, subtitle?: string, simplified = false, performance = false) => {
+    const html = buildDaysHtml(days, title, subtitle, simplified, performance)
     if (html) printHtml(html)
   }
 
-  const previewDays = (days: DayReport[], title: string, subtitle?: string, simplified = false) => {
-    const html = buildDaysHtml(days, title, subtitle, simplified)
+  const previewDays = (days: DayReport[], title: string, subtitle?: string, simplified = false, performance = false) => {
+    const html = buildDaysHtml(days, title, subtitle, simplified, performance)
     if (!html) return
     setPrintPreviewTitle(title)
     setPrintPreviewHtml(html)
@@ -449,6 +532,7 @@ export function KamsAssignmentReports() {
   const allTitle = withOffice(t('kams.assignmentReports'))
   const allSubtitle = t('kams.assignmentReportsHint')
   const simplifiedTitle = withOffice(t('kams.simplifiedReport'))
+  const performanceTitle = withOffice(t('kams.performanceReport'))
 
   if (loading && !data) return <LoadingScreen />
 
@@ -546,7 +630,8 @@ export function KamsAssignmentReports() {
                   <th className="min-w-36 bg-lhms px-4 py-2 font-semibold">{t('common.date')}</th>
                   <th className="min-w-44 bg-lhms px-4 py-2 font-semibold">{t('kams.dayClosedBy')}</th>
                   <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.assignments')}</th>
-                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.sold')}</th>
+                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.quantityOut')}</th>
+                  <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.soldQuantity')}</th>
                   <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.amountDue')}</th>
                   <th className="bg-lhms px-4 py-2 text-right font-semibold">{t('kams.cashCollected')}</th>
                   <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('common.actions')}</th>
@@ -555,13 +640,14 @@ export function KamsAssignmentReports() {
               <tbody>
                 {dayRows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                    <td colSpan={8} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
                   </tr>
                 ) : dayRows.map((day, index) => (
                   <tr key={day.date} className={cn('border-t border-line', index % 2 === 1 ? 'bg-emerald-50' : 'bg-white')}>
                     <td className="min-w-36 whitespace-nowrap px-4 py-2 font-semibold capitalize">{formatDay(day.date, locale, 'short')}</td>
                     <td className="min-w-44 px-4 py-2">{day.day_closed_by || '—'}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{day.totals.assignments}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{day.totals.assigned_units}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{day.totals.sold_units}</td>
                     <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.expected_amount)}</td>
                     <td className="px-4 py-2 text-right whitespace-nowrap tabular-nums">{money(day.totals.collected_amount)}</td>
@@ -659,6 +745,7 @@ export function KamsAssignmentReports() {
               onPrint={() => data && printDays(data.days.map(sortedDay), allTitle, allSubtitle)}
               onPreviewSimplified={() => data && previewDays(data.days.map(sortedDay), simplifiedTitle, allSubtitle, true)}
               onPrintSimplified={() => data && printDays(data.days.map(sortedDay), simplifiedTitle, allSubtitle, true)}
+              onPreviewPerformance={() => data && previewDays(data.days.map(sortedDay), performanceTitle, allSubtitle, false, true)}
             />
           </div>
         </div>
@@ -666,8 +753,9 @@ export function KamsAssignmentReports() {
 
       {totals ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-          <Card className="p-4 text-sm">{t('kams.agents')}: <b>{totals.agents}</b></Card>
-          <Card className="p-4 text-sm">{t('kams.sold')}: <b>{totals.sold_units}</b></Card>
+          <Card className="p-4 text-sm">{t('kams.fieldAgents')}: <b>{totals.agents}</b></Card>
+          <Card className="p-4 text-sm">{t('kams.quantityOut')}: <b>{totals.assigned_units}</b></Card>
+          <Card className="p-4 text-sm">{t('kams.soldQuantity')}: <b>{totals.sold_units}</b></Card>
           <Card className="flex flex-col gap-1 p-4 text-sm">
             <span className="whitespace-nowrap">{t('kams.amountDue')}:</span>
             <b>{money(totals.expected_amount)}</b>
@@ -681,8 +769,36 @@ export function KamsAssignmentReports() {
             <b>{money(totals.shortfall)}</b>
           </Card>
           <Card className="flex flex-col gap-1 p-4 text-sm">
-            <span className="whitespace-nowrap">{t('kams.surplus')}:</span>
-            <b>{money(totals.surplus)}</b>
+            <span className="whitespace-nowrap">{t('kams.agentSavings')}:</span>
+            <b>{money(totals.agent_savings || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.managerShare')}:</span>
+            <b>{money(totals.manager_share || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.netSales')}:</span>
+            <b>{money(totals.net_sales || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.hierarchySavings')}:</span>
+            <b>{money(totals.hierarchy_savings || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.dayExpenses')}:</span>
+            <b>{money(totals.expenses || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.manualDeposits')}:</span>
+            <b>{money(totals.manual_deposits || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.withdrawals')}:</span>
+            <b>{money(totals.withdrawals || 0)}</b>
+          </Card>
+          <Card className="flex flex-col gap-1 p-4 text-sm">
+            <span className="whitespace-nowrap">{t('kams.remainingTotal')}:</span>
+            <b>{money(totals.remaining_total || 0)}</b>
           </Card>
         </div>
       ) : null}
@@ -710,13 +826,19 @@ export function KamsAssignmentReports() {
           <table className="min-w-full text-sm">
             <thead className="bg-lhms text-white">
               <tr className="text-left text-xs font-semibold tracking-wide">
-                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.date')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.assignedAt')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.closedAt')}</th>
                 <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.agent')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.assignedBy')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.assignmentUpdatedBy')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.assignmentAddedBy')}</th>
                 <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.assignmentClosedBy')}</th>
+                <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.dayClosedBy')}</th>
                 <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.phoneWhatsapp')}</th>
                 <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.office')}</th>
                 <th className="bg-lhms px-4 py-1.5 font-semibold">{t('kams.reference')}</th>
-                <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.sold')}</th>
+                <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.quantityOut')}</th>
+                <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.soldQuantity')}</th>
                 <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.amountDue')}</th>
                 <th className="bg-lhms px-4 py-1.5 text-right font-semibold">{t('kams.cashCollected')}</th>
                 <th className="bg-lhms px-4 py-1.5 font-semibold">{t('common.status')}</th>
@@ -725,16 +847,21 @@ export function KamsAssignmentReports() {
             <tbody>
               {pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
+                  <td colSpan={16} className="px-4 py-8 text-center text-muted">{t('common.empty')}</td>
                 </tr>
-              ) : pageRows.map(({ date, assignment: row }, index) => {
+              ) : pageRows.map(({ assignment: row }, index) => {
                 const open = expandedAssignments.includes(row.id)
                 return (
                   <Fragment key={row.id}>
                     <tr className={cn('border-t border-line', index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white')}>
-                      <td className="w-px whitespace-nowrap px-3 py-1.5 text-muted">{formatDateTime(row.assigned_at || date, locale)}</td>
+                      <td className="w-px whitespace-nowrap px-3 py-1.5 text-muted">{whenLabel(row.assigned_at, locale)}</td>
+                      <td className="w-px whitespace-nowrap px-3 py-1.5 text-muted">{whenLabel(row.closed_at, locale)}</td>
                       <td className="px-4 py-1.5 font-semibold whitespace-nowrap">{agentLabel(row)}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.created_by?.name || '—'}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.updated_by?.name || '—'}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.added_by?.name || '—'}</td>
                       <td className="px-4 py-1.5 whitespace-nowrap">{row.closed_by?.name || '—'}</td>
+                      <td className="px-4 py-1.5 whitespace-nowrap">{row.day_closed_by?.name || '—'}</td>
                       <td className="px-4 py-1.5 whitespace-nowrap">{row.member?.phone || '—'}</td>
                       <td className="px-4 py-1.5 whitespace-nowrap">{row.office?.name || '—'}</td>
                       <td className="px-4 py-1.5 whitespace-nowrap">
@@ -743,6 +870,7 @@ export function KamsAssignmentReports() {
                           <ChevronDown size={14} className={cn('transition', open ? 'rotate-0' : '-rotate-90')} />
                         </button>
                       </td>
+                      <td className="px-4 py-1.5 text-right font-semibold tabular-nums">{assignmentOutUnits(row)}</td>
                       <td className="px-4 py-1.5 text-right font-semibold tabular-nums">{assignmentSoldUnits(row)}</td>
                       <td className="px-4 py-1.5 text-right whitespace-nowrap tabular-nums">{money(row.expected_amount)}</td>
                       <td className="px-4 py-1.5 text-right whitespace-nowrap tabular-nums">{money(row.collected_amount)}</td>
@@ -752,13 +880,13 @@ export function KamsAssignmentReports() {
                     </tr>
                     {open ? (
                       <tr className={index % 2 === 1 ? 'bg-lhms-soft' : 'bg-white'}>
-                        <td colSpan={10} className="px-4 pb-4">
+                        <td colSpan={16} className="px-4 pb-4">
                           <table className="min-w-full overflow-hidden rounded-xl border border-line text-sm">
                             <thead className="bg-lhms text-white">
                               <tr className="text-left text-xs font-semibold">
                                 <th className="bg-lhms px-3 py-2 font-semibold">{t('kams.product')}</th>
                                 <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.quantity')}</th>
-                                <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.sold')}</th>
+                                <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.soldQuantity')}</th>
                                 <th className="bg-lhms px-3 py-2 text-right font-semibold">{t('kams.salePrice')}</th>
                               </tr>
                             </thead>

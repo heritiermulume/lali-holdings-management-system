@@ -5,7 +5,7 @@ import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
-import { trackLoadSpinner } from '../../lib/dataSync'
+import { isSoftRefresh, trackLoadSpinner } from '../../lib/dataSync'
 import { money, roleLabel } from '../../lib/format'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
 import { KamsBankCard } from './KamsBankCard'
@@ -79,7 +79,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
 
   const load = (id?: number | '') => {
     const stop = trackLoadSpinner(setLoading)
-    setError('')
+    if (!isSoftRefresh()) setError('')
     const params: Record<string, number> = {}
     if (id) params.member_id = Number(id)
     if (officeId) params.office_id = officeId
@@ -88,9 +88,10 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
         setMissing(!res.data.data)
         const next = (res.data.data || null) as Account | null
         setData(next)
-        if (next?.member?.id) setMemberId(next.member.id)
+        if (next?.member?.id && !isSoftRefresh()) setMemberId(next.member.id)
       })
       .catch(() => {
+        if (isSoftRefresh()) return
         setMissing(true)
         setData(null)
       })
@@ -168,7 +169,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
     <>
       <Modal open={open} title={t('kams.agentAccount')} onClose={onClose} size="lg">
         <div className="space-y-4">
-          {loading ? <LoadingScreen /> : null}
+          {loading && !data ? <LoadingScreen /> : null}
           {!loading && missing ? <Empty>{t('kams.noAgentAccount')}</Empty> : null}
 
           {!loading && data ? (

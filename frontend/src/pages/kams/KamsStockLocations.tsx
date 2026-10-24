@@ -1,7 +1,7 @@
-import { Camera, ChevronDown, History, Home, Info, Package, PackagePlus, Pencil, Scale, Trash2, Truck } from 'lucide-react'
+import { ArrowLeftRight, Camera, ChevronDown, History, Home, Info, Package, PackageMinus, PackagePlus, Pencil, Scale, Trash2 } from 'lucide-react'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PhotoSourcePicker } from '../../components/PhotoSourcePicker'
 import { PaginationButtons, showListPagination } from '../../components/PaginationButtons'
 import { Button, Card, Empty, Field, Modal, Select } from '../../components/ui'
@@ -288,6 +288,7 @@ type StockTransfer = {
   id: number
   reference: string
   status?: string
+  from_depot_id?: number
   from_depot?: { id: number; name: string } | null
   to_depot_id?: number
   to_depot?: { id: number; name: string } | null
@@ -449,14 +450,178 @@ function OutgoingTransferList({
   )
 }
 
+function RefuseTransferModal({
+  transfer,
+  onClose,
+  onRefused,
+}: {
+  transfer: StockTransfer | null
+  onClose: () => void
+  onRefused: () => void
+}) {
+  const { t } = useTranslation()
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setReason('')
+    setError('')
+    setSaving(false)
+  }, [transfer?.id])
+
+  return (
+    <Modal open={Boolean(transfer)} title={t('kams.refuseTransfer')} onClose={onClose}>
+      <form className="space-y-3" onSubmit={(event) => {
+        event.preventDefault()
+        if (!transfer) return
+        const value = reason.trim()
+        if (!value) {
+          setError(t('kams.refuseTransferReasonRequired'))
+          return
+        }
+        setSaving(true)
+        setError('')
+        void api.post(`/modules/kams/stock/transfers/${transfer.id}/refuse`, { reason: value }).then(() => {
+          onRefused()
+          onClose()
+        }).catch((err) => {
+          const response = (err as { response?: { data?: { message?: string } } }).response?.data
+          setError(response?.message || t('kams.saveError'))
+        }).finally(() => setSaving(false))
+      }}>
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <p className="text-sm text-muted">
+          <span className="font-semibold text-ink">{transfer?.reference}</span>
+          {' · '}{transfer?.from_depot?.name} → {transfer?.to_depot?.name}
+        </p>
+        <Field label={t('kams.refuseTransferReason')} value={reason} onChange={(e) => setReason(e.target.value)} required />
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" disabled={saving}>{t('kams.refuseTransfer')}</Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+type StockReturnRequest = {
+  id: number
+  reference: string
+  status?: string
+  from_depot_id?: number
+  from_depot?: { id: number; name: string } | null
+  to_depot_id?: number
+  to_depot?: { id: number; name: string } | null
+  items?: StockTransferItem[]
+}
+
+function RemovalRequestList({
+  requests,
+  canDecide,
+  focusId,
+  onAccept,
+  onRefuse,
+}: {
+  requests: StockReturnRequest[]
+  canDecide: boolean
+  focusId?: number
+  onAccept: (row: StockReturnRequest) => void
+  onRefuse: (row: StockReturnRequest) => void
+}) {
+  const { t } = useTranslation()
+  if (requests.length === 0) return null
+  return (
+    <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div className="text-sm font-semibold text-amber-950">{t('kams.incomingRemovals')}</div>
+      {requests.map((row) => (
+        <div id={`return-${row.id}`} key={row.id} className={cn('flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2', focusId === row.id && 'ring-2 ring-lhms')}>
+          <div className="min-w-0 text-sm">
+            <div className="font-semibold">{row.reference}</div>
+            <div className="text-muted">{t('kams.transferOrigin')}: {row.from_depot?.name || '—'}</div>
+            <div className="text-xs text-muted">
+              {(row.items || []).map((item) => `${item.product?.name || '—'} × ${item.quantity}`).join(' · ')}
+            </div>
+          </div>
+          {canDecide ? (
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={() => onRefuse(row)}>{t('kams.refuseTransfer')}</Button>
+              <Button type="button" onClick={() => onAccept(row)}>{t('kams.acceptTransfer')}</Button>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RefuseRemovalModal({
+  request,
+  onClose,
+  onRefused,
+}: {
+  request: StockReturnRequest | null
+  onClose: () => void
+  onRefused: () => void
+}) {
+  const { t } = useTranslation()
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setReason('')
+    setError('')
+    setSaving(false)
+  }, [request?.id])
+
+  return (
+    <Modal open={Boolean(request)} title={t('kams.refuseRemoval')} onClose={onClose}>
+      <form className="space-y-3" onSubmit={(event) => {
+        event.preventDefault()
+        if (!request) return
+        const value = reason.trim()
+        if (!value) {
+          setError(t('kams.refuseTransferReasonRequired'))
+          return
+        }
+        setSaving(true)
+        setError('')
+        void api.post(`/modules/kams/stock/returns/${request.id}/refuse`, { reason: value }).then(() => {
+          onRefused()
+          onClose()
+        }).catch((err) => {
+          const response = (err as { response?: { data?: { message?: string } } }).response?.data
+          setError(response?.message || t('kams.saveError'))
+        }).finally(() => setSaving(false))
+      }}>
+        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <p className="text-sm text-muted">
+          <span className="font-semibold text-ink">{request?.reference}</span>
+          {' · '}{request?.from_depot?.name} → {request?.to_depot?.name}
+        </p>
+        <Field label={t('kams.refuseTransferReason')} value={reason} onChange={(e) => setReason(e.target.value)} required />
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
+          <Button type="submit" disabled={saving}>{t('kams.refuseTransfer')}</Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function IncomingTransferList({
   transfers,
   canAccept,
   onAccept,
+  onRefuse,
+  focusId,
 }: {
   transfers: StockTransfer[]
   canAccept: boolean
   onAccept: (row: StockTransfer) => void
+  onRefuse: (row: StockTransfer) => void
+  focusId?: number
 }) {
   const { t } = useTranslation()
   if (transfers.length === 0) return null
@@ -464,16 +629,19 @@ function IncomingTransferList({
     <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
       <div className="text-sm font-semibold text-amber-950">{t('kams.incomingTransfers')}</div>
       {transfers.map((row) => (
-        <div key={row.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2">
+        <div id={`transfer-${row.id}`} key={row.id} className={cn('flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2', focusId === row.id && 'ring-2 ring-lhms')}>
           <div className="min-w-0 text-sm">
             <div className="font-semibold">{row.reference}</div>
-            <div className="text-muted">{t('kams.fromWarehouse')}: {row.from_depot?.name || '—'}</div>
+            <div className="text-muted">{t('kams.transferOrigin')}: {row.from_depot?.name || '—'}</div>
             <div className="text-xs text-muted">
               {(row.items || []).map((item) => `${item.product?.name || '—'} × ${item.quantity}`).join(' · ')}
             </div>
           </div>
           {canAccept ? (
-            <Button type="button" onClick={() => onAccept(row)}>{t('kams.acceptTransfer')}</Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={() => onRefuse(row)}>{t('kams.refuseTransfer')}</Button>
+              <Button type="button" onClick={() => onAccept(row)}>{t('kams.acceptTransfer')}</Button>
+            </div>
           ) : null}
         </div>
       ))}
@@ -485,6 +653,9 @@ export function KamsWarehouses() {
   const { t, i18n } = useTranslation()
   const { hasPermission, user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const focusTransferId = Number(searchParams.get('transfer') || 0)
+  const focusReturnId = Number(searchParams.get('return') || 0)
   const [rows, setRows] = useState<Location[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [lookups, setLookups] = useState<Lookups | null>(null)
@@ -516,18 +687,45 @@ export function KamsWarehouses() {
   const [transferError, setTransferError] = useState('')
   const [transferLines, setTransferLines] = useState<Array<{ to_depot_id: string; quantity: string }>>([{ to_depot_id: '', quantity: '1' }])
   const [incoming, setIncoming] = useState<StockTransfer[]>([])
+  const [removals, setRemovals] = useState<StockReturnRequest[]>([])
+  const [refusingRemoval, setRefusingRemoval] = useState<StockReturnRequest | null>(null)
+  useEffect(() => {
+    if (!focusTransferId) return
+    const row = incoming.find((item) => item.id === focusTransferId)
+    const locationId = row?.to_depot?.id || row?.to_depot_id
+    if (!locationId) return
+    setOpenWarehouseIds((current) => current.includes(locationId) ? current : [...current, locationId])
+    const timer = window.setTimeout(() => {
+      document.getElementById(`transfer-${focusTransferId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [focusTransferId, incoming])
+  useEffect(() => {
+    if (!focusReturnId) return
+    const row = removals.find((item) => item.id === focusReturnId)
+    const locationId = row?.to_depot?.id || row?.to_depot_id
+    if (!locationId) return
+    setOpenWarehouseIds((current) => current.includes(locationId) ? current : [...current, locationId])
+    const timer = window.setTimeout(() => {
+      document.getElementById(`return-${focusReturnId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [focusReturnId, removals])
   const [accepting, setAccepting] = useState<StockTransfer | null>(null)
+  const [refusing, setRefusing] = useState<StockTransfer | null>(null)
   const [cancelling, setCancelling] = useState<StockTransfer | null>(null)
   const [cancelError, setCancelError] = useState('')
 
   const loadWarehouses = () => api.get('/modules/kams/depots', { params: { kind: 'warehouse', per_page: 100 } }).then((res) => setRows(res.data.data || []))
   const loadProducts = () => api.get('/modules/kams/products', { params: { per_page: 200 } }).then((res) => setProducts(res.data.data || []))
   const loadIncoming = () => api.get('/modules/kams/stock/transfers', { params: { status: 'in_transit', per_page: 100 } }).then((res) => setIncoming(res.data.data || [])).catch(() => setIncoming([]))
+  const loadRemovals = () => api.get('/modules/kams/stock/returns', { params: { status: 'requested', type: 'depot_to_warehouse', per_page: 100 } }).then((res) => setRemovals(res.data.data || [])).catch(() => setRemovals([]))
 
   useEffect(() => {
     void loadWarehouses()
     void loadProducts()
     void loadIncoming()
+    void loadRemovals()
     api.get('/modules/kams/stock/lookups').then((res) => setLookups(res.data.data))
   }, [])
 
@@ -535,7 +733,8 @@ export function KamsWarehouses() {
     void loadWarehouses()
     void loadProducts()
     void loadIncoming()
-  })
+    void loadRemovals()
+  }, { pollMs: 4000, cooldownMs: 1000 })
 
   const resetProductForm = () => {
     setEditingProduct(null)
@@ -1001,6 +1200,21 @@ export function KamsWarehouses() {
                     transfers={incoming.filter((item) => item.to_depot?.id === row.id || item.to_depot_id === row.id)}
                     canAccept={Boolean(lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.receive') || hasPermission('kams.stock.update')))}
                     onAccept={setAccepting}
+                    onRefuse={setRefusing}
+                    focusId={focusTransferId}
+                  />
+                  <RemovalRequestList
+                    requests={removals.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id)}
+                    canDecide={Boolean(lookups?.can_manage_warehouses && (hasPermission('kams.stock.warehouses.receive') || hasPermission('kams.stock.update')))}
+                    focusId={focusReturnId}
+                    onAccept={(request) => {
+                      void api.post(`/modules/kams/stock/returns/${request.id}/accept`).then(() => {
+                        void loadWarehouses()
+                        void loadProducts()
+                        void loadRemovals()
+                      })
+                    }}
+                    onRefuse={setRefusingRemoval}
                   />
                   {warehouseProducts.length === 0 ? (
                     <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p>
@@ -1052,7 +1266,7 @@ export function KamsWarehouses() {
                                   className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-sm text-ink hover:bg-surface"
                                   onClick={() => openTransfer(row, item.product, item.quantity)}
                                 >
-                                  <Truck size={16} />
+                                  <ArrowLeftRight size={16} />
                                 </button>
                               ) : null}
                               {hasPermission('kams.products.update') ? (
@@ -1537,6 +1751,24 @@ export function KamsWarehouses() {
           void loadIncoming()
         }}
       />
+      <RefuseTransferModal
+        transfer={refusing}
+        onClose={() => setRefusing(null)}
+        onRefused={() => {
+          void loadWarehouses()
+          void loadProducts()
+          void loadIncoming()
+        }}
+      />
+      <RefuseRemovalModal
+        request={refusingRemoval}
+        onClose={() => setRefusingRemoval(null)}
+        onRefused={() => {
+          void loadWarehouses()
+          void loadProducts()
+          void loadRemovals()
+        }}
+      />
       <Modal open={Boolean(cancelling)} title={t('kams.cancelTransfer')} onClose={() => setCancelling(null)}>
         <div className="space-y-4">
           {cancelError ? <p className="text-sm text-red-600">{cancelError}</p> : null}
@@ -1567,6 +1799,8 @@ export function KamsDepots() {
   const { t, i18n } = useTranslation()
   const { hasPermission, user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const focusTransferId = Number(searchParams.get('transfer') || 0)
   const [rows, setRows] = useState<Location[]>([])
   const [lookups, setLookups] = useState<Lookups | null>(null)
   const [openDepotIds, setOpenDepotIds] = useState<number[]>([])
@@ -1593,10 +1827,30 @@ export function KamsDepots() {
   const [saving, setSaving] = useState(false)
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({})
   const [incoming, setIncoming] = useState<StockTransfer[]>([])
+  const [removals, setRemovals] = useState<StockReturnRequest[]>([])
+  useEffect(() => {
+    if (!focusTransferId) return
+    const row = incoming.find((item) => item.id === focusTransferId)
+    const locationId = row?.to_depot?.id || row?.to_depot_id
+    if (!locationId) return
+    setOpenDepotIds((current) => current.includes(locationId) ? current : [...current, locationId])
+    const timer = window.setTimeout(() => {
+      document.getElementById(`transfer-${focusTransferId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [focusTransferId, incoming])
   const [accepting, setAccepting] = useState<StockTransfer | null>(null)
+  const [refusing, setRefusing] = useState<StockTransfer | null>(null)
+  const [transferTarget, setTransferTarget] = useState<{ depot: Location; product: Product; quantity: number } | null>(null)
+  const [transferForm, setTransferForm] = useState<Record<string, string>>({})
+  const [transferError, setTransferError] = useState('')
+  const [transferLines, setTransferLines] = useState<Array<{ to_depot_id: string; quantity: string }>>([{ to_depot_id: '', quantity: '1' }])
+  const [cancelling, setCancelling] = useState<StockTransfer | null>(null)
+  const [cancelError, setCancelError] = useState('')
 
   const load = () => api.get('/modules/kams/depots', { params: { kind: 'depot', per_page: 50 } }).then((res) => setRows(res.data.data))
   const loadIncoming = () => api.get('/modules/kams/stock/transfers', { params: { status: 'in_transit', per_page: 100 } }).then((res) => setIncoming(res.data.data || [])).catch(() => setIncoming([]))
+  const loadRemovals = () => api.get('/modules/kams/stock/returns', { params: { status: 'requested', type: 'depot_to_warehouse', per_page: 100 } }).then((res) => setRemovals(res.data.data || [])).catch(() => setRemovals([]))
 
   const saveOfficePrice = async (depot: Location, product: Product, raw: string) => {
     if (!depot.office_id) return
@@ -1633,13 +1887,15 @@ export function KamsDepots() {
   useEffect(() => {
     void load()
     void loadIncoming()
+    void loadRemovals()
     api.get('/modules/kams/stock/lookups').then((res) => setLookups(res.data.data))
   }, [])
 
   useLiveData(() => {
     void load()
     void loadIncoming()
-  })
+    void loadRemovals()
+  }, { pollMs: 4000, cooldownMs: 1000 })
 
   const assignedOfficeId = () => {
     if (user?.primary_office?.id && (lookups?.offices || []).some((office) => office.id === user.primary_office?.id)) {
@@ -1861,6 +2117,7 @@ export function KamsDepots() {
       setRemoveTarget(null)
       setRemoveForm({})
       void load()
+      void loadRemovals()
     } catch (err) {
       const response = (err as { response?: { data?: { message?: string } } }).response?.data
       setRemoveError(response?.message || t('kams.saveError'))
@@ -1976,10 +2233,23 @@ export function KamsDepots() {
                       </>
                     ) : null}
                   </div>
+                  <RemovalRequestList
+                    requests={removals.filter((item) => (item.from_depot?.id || item.from_depot_id) === row.id)}
+                    canDecide={false}
+                    onAccept={() => undefined}
+                    onRefuse={() => undefined}
+                  />
+                  <OutgoingTransferList
+                    transfers={incoming.filter((item) => (item.from_depot?.id || item.from_depot_id) === row.id)}
+                    canCancel={hasPermission('kams.stock.update') || hasPermission('kams.stock.depots.supply')}
+                    onCancel={(order) => { setCancelError(''); setCancelling(order) }}
+                  />
                   <IncomingTransferList
                     transfers={incoming.filter((item) => (item.to_depot?.id || item.to_depot_id) === row.id)}
                     canAccept={hasPermission('kams.stock.depots.receive') || hasPermission('kams.stock.update')}
                     onAccept={setAccepting}
+                    onRefuse={setRefusing}
+                    focusId={focusTransferId}
                   />
                   {products.length === 0 ? (
                     <p className="py-4 text-center text-sm text-muted">{t('common.empty')}</p>
@@ -2061,6 +2331,23 @@ export function KamsDepots() {
                                   <PackagePlus size={16} />
                                 </button>
                               ) : null}
+                              {item.product && item.quantity > 0 && (hasPermission('kams.stock.update') || hasPermission('kams.stock.depots.supply')) ? (
+                                <button
+                                  type="button"
+                                  aria-label={t('kams.transferStock')}
+                                  title={t('kams.transferStock')}
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-sm text-ink hover:bg-surface"
+                                  onClick={() => {
+                                    if (!item.product) return
+                                    setTransferTarget({ depot: row, product: item.product, quantity: item.quantity })
+                                    setTransferForm({ notes: '' })
+                                    setTransferLines([{ to_depot_id: '', quantity: '1' }])
+                                    setTransferError('')
+                                  }}
+                                >
+                                  <ArrowLeftRight size={16} />
+                                </button>
+                              ) : null}
                               {item.product && item.quantity > 0 && (hasPermission('kams.stock.depots.remove') || hasPermission('kams.stock.update')) ? (
                                 <button
                                   type="button"
@@ -2069,7 +2356,7 @@ export function KamsDepots() {
                                   className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-sm text-ink hover:bg-surface"
                                   onClick={() => item.product && openRemove(row, item.product, item.quantity)}
                                 >
-                                  <Truck size={16} />
+                                  <PackageMinus size={16} />
                                 </button>
                               ) : null}
                               {hasPermission('kams.stock.depots.adjust') || hasPermission('kams.stock.update') ? (
@@ -2375,6 +2662,123 @@ export function KamsDepots() {
           void loadIncoming()
         }}
       />
+      <RefuseTransferModal
+        transfer={refusing}
+        onClose={() => setRefusing(null)}
+        onRefused={() => {
+          void load()
+          void loadIncoming()
+        }}
+      />
+      <Modal open={Boolean(transferTarget)} title={t('kams.requestTransfer')} onClose={() => setTransferTarget(null)}>
+        <form className="space-y-3" onSubmit={(event) => {
+          event.preventDefault()
+          if (!transferTarget) return
+          setTransferError('')
+          const lines = transferLines
+            .filter((line) => line.to_depot_id && Number(line.quantity) > 0)
+            .map((line) => ({ to_depot_id: Number(line.to_depot_id), quantity: Number(line.quantity) }))
+          if (lines.length === 0) {
+            setTransferError(t('kams.transferDestinationRequired'))
+            return
+          }
+          const total = lines.reduce((sum, line) => sum + line.quantity, 0)
+          if (total > transferTarget.quantity) {
+            setTransferError(t('kams.transferQtyExceeded', { available: transferTarget.quantity }))
+            return
+          }
+          if (new Set(lines.map((line) => line.to_depot_id)).size !== lines.length) {
+            setTransferError(t('kams.transferDuplicateDestination'))
+            return
+          }
+          void (async () => {
+            try {
+              for (const line of lines) {
+                await api.post('/modules/kams/stock/transfers', {
+                  from_depot_id: transferTarget.depot.id,
+                  to_depot_id: line.to_depot_id,
+                  notes: transferForm.notes || null,
+                  auto_receive: false,
+                  items: [{ product_id: transferTarget.product.id, quantity: line.quantity }],
+                })
+              }
+              setTransferTarget(null)
+              void load()
+              void loadIncoming()
+            } catch (err) {
+              const response = (err as { response?: { data?: { message?: string } } }).response?.data
+              setTransferError(response?.message || t('kams.saveError'))
+            }
+          })()
+        }}>
+          {transferError ? <p className="text-sm text-red-600">{transferError}</p> : null}
+          <p className="text-sm text-muted">{transferTarget?.product.name} · {transferTarget?.depot.name} · {t('kams.availableQty')}: {transferTarget?.quantity}</p>
+          {transferLines.map((line, index) => {
+            const selectedElsewhere = new Set(transferLines.filter((_, i) => i !== index).map((item) => item.to_depot_id).filter(Boolean))
+            return (
+              <div key={index} className="grid gap-2 sm:grid-cols-[1fr_8rem_auto]">
+                <Select
+                  label={t('kams.transferDestination')}
+                  value={line.to_depot_id}
+                  onChange={(e) => setTransferLines((current) => current.map((item, i) => i === index ? { ...item, to_depot_id: e.target.value } : item))}
+                  required
+                >
+                  <option value="">—</option>
+                  <optgroup label={t('kams.warehouses')}>
+                    {(lookups?.warehouses || []).map((place) => (
+                      <option key={`w-${place.id}`} value={place.id} disabled={selectedElsewhere.has(String(place.id)) || place.id === transferTarget?.depot.id}>{place.name}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label={t('kams.depot')}>
+                    {(lookups?.depots || []).map((place) => (
+                      <option key={`d-${place.id}`} value={place.id} disabled={selectedElsewhere.has(String(place.id)) || place.id === transferTarget?.depot.id}>
+                        {place.name}{place.office?.name ? ` · ${place.office.name}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                </Select>
+                <Field
+                  label={t('kams.quantity')}
+                  type="number"
+                  min="1"
+                  max={String(transferTarget?.quantity || 1)}
+                  value={line.quantity}
+                  onChange={(e) => setTransferLines((current) => current.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))}
+                  required
+                />
+                {transferLines.length > 1 ? (
+                  <button type="button" className="mt-6 text-sm text-danger" onClick={() => setTransferLines((current) => current.filter((_, i) => i !== index))}>{t('kams.removeDestination')}</button>
+                ) : <span />}
+              </div>
+            )
+          })}
+          <button type="button" className="text-sm font-medium text-lhms" onClick={() => setTransferLines((current) => [...current, { to_depot_id: '', quantity: '1' }])}>{t('kams.addTransferDestination')}</button>
+          <Field label={t('kams.notes')} value={transferForm.notes || ''} onChange={(e) => setTransferForm({ ...transferForm, notes: e.target.value })} />
+          <p className="text-xs text-muted">{t('kams.transferRequestHint')}</p>
+          <Button type="submit" className="w-full">{t('kams.requestTransfer')}</Button>
+        </form>
+      </Modal>
+      <Modal open={Boolean(cancelling)} title={t('kams.cancelTransfer')} onClose={() => setCancelling(null)}>
+        <div className="space-y-4">
+          {cancelError ? <p className="text-sm text-red-600">{cancelError}</p> : null}
+          <p className="text-sm text-muted">{t('kams.cancelTransferConfirm', { reference: cancelling?.reference })}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCancelling(null)}>{t('common.cancel')}</Button>
+            <Button onClick={() => {
+              if (!cancelling) return
+              setCancelError('')
+              void api.post(`/modules/kams/stock/transfers/${cancelling.id}/cancel`).then(() => {
+                setCancelling(null)
+                void load()
+                void loadIncoming()
+              }).catch((err) => {
+                const response = (err as { response?: { data?: { message?: string } } }).response?.data
+                setCancelError(response?.message || t('kams.saveError'))
+              })
+            }}>{t('kams.cancelTransfer')}</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

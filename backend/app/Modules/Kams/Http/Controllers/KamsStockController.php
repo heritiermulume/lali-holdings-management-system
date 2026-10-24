@@ -4,9 +4,12 @@ namespace App\Modules\Kams\Http\Controllers;
 
 use App\Http\Controllers\Api\Concerns\RespondsWithJson;
 use App\Http\Controllers\Controller;
+use App\Core\Support\RoleCatalog;
+use App\Models\AppNotification;
 use App\Models\City;
 use App\Models\Company;
 use App\Models\Province;
+use App\Models\User;
 use App\Modules\Kams\Http\Controllers\Concerns\ResolvesKamsOffices;
 use App\Modules\Kams\Models\KamsClient;
 use App\Modules\Kams\Models\KamsDepot;
@@ -21,7 +24,10 @@ use App\Modules\Kams\Models\KamsStockBalance;
 use App\Modules\Kams\Models\KamsStockMovement;
 use App\Modules\Kams\Models\KamsStockReceipt;
 use App\Modules\Kams\Models\KamsStockReturn;
+use App\Modules\Kams\Models\KamsRevenueShare;
 use App\Modules\Kams\Models\KamsStockSale;
+use App\Modules\Kams\Models\KamsTreasuryEntry;
+use App\Modules\Kams\Support\RevenueRuleCatalog;
 use App\Modules\Kams\Models\KamsStockTransfer;
 use App\Modules\Kams\Models\KamsDailySettlement;
 use App\Modules\Kams\Models\KamsSavingsEntry;
@@ -233,9 +239,11 @@ class KamsStockController extends Controller
             })
             ->when(! $request->filled('to_depot_id') && $officeState['office_ids'] !== [], function ($q) use ($officeState, $request) {
                 $q->where(function ($inner) use ($officeState, $request) {
-                    $inner->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']));
+                    $inner->whereHas('toDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']))
+                        ->orWhereHas('fromDepot', fn ($depot) => $depot->whereIn('office_id', $officeState['office_ids']));
                     if ($this->canManageWarehouses($request)) {
-                        $inner->orWhereHas('fromDepot', fn ($depot) => $depot->where('kind', 'warehouse'));
+                        $inner->orWhereHas('fromDepot', fn ($depot) => $depot->where('kind', 'warehouse'))
+                            ->orWhereHas('toDepot', fn ($depot) => $depot->where('kind', 'warehouse'));
                     }
                 });
             })
@@ -258,6 +266,11 @@ class KamsStockController extends Controller
         $from = KamsDepot::query()->findOrFail($data['from_depot_id']);
         $to = KamsDepot::query()->findOrFail($data['to_depot_id']);
         $this->assertCompany($request, (int) $from->company_id);
+        if ($from->isWarehouse()) {
+            abort_unless($this->canManageWarehouses($request), 403);
+        } elseif ($from->office_id) {
+            abort_unless($request->user()->canAccessOffice((int) $from->office_id), 403);
+        }
         abort_unless(in_array($to->kind, ['depot', 'warehouse'], true), 422, __('Transfers must arrive in a warehouse or office depot.'));
         if ($to->kind === 'warehouse') {
             abort_unless($this->canManageWarehouses($request), 403);
@@ -278,6 +291,9 @@ class KamsStockController extends Controller
             'auto_receive' => $autoReceive,
             'status' => $transfer->status,
         ]);
+        if ($transfer->status === 'in_transit') {
+            $this->notifyTransferReceivers($transfer);
+        }
 
         return $this->created($transfer);
     }
@@ -316,12 +332,104 @@ class KamsStockController extends Controller
         return $this->ok($received);
     }
 
+    private function notifyTransferReceivers(KamsStockTransfer $transfer): void
+    {
+        $transfer->loadMissing(['fromDepot', 'toDepot', 'items.product']);
+        $to = $transfer->toDepot;
+        if (! $to) {
+            return;
+        }
+        $warehouseDestination = $to->kind === 'warehouse';
+        $permission = $warehouseDestination ? 'kams.stock.warehouses.receive' : 'kams.stock.depots.receive';
+        $senderId = (int) ($transfer->created_by ?: 0);
+        $companyId = (int) $transfer->company_id;
+        $officeId = $to->office_id ? (int) $to->office_id : null;
+
+        $recipients = User::query()
+            ->where('is_active', true)
+            ->when($senderId > 0, fn ($query) => $query->where('id', '!=', $senderId))
+            ->where(function ($query) use ($permission) {
+                $query->whereHas('roles', fn ($roles) => $roles->whereIn('slug', RoleCatalog::fullAccessSlugs()))
+                    ->orWhereHas('roles.permissions', fn ($permissions) => $permissions->whereIn('slug', [$permission, 'kams.stock.update']));
+            })
+            ->with(['roles.permissions', 'scopes'])
+            ->get();
+
+        $origin = $transfer->fromDepot?->name ?: '';
+        $destination = $to->name;
+        $products = $transfer->items
+            ->map(fn ($item) => trim(($item->product?->name ?: '').' × '.(int) $item->quantity))
+            ->filter()
+            ->implode(', ');
+        $path = ($warehouseDestination ? '/modules/kams/stock/warehouses' : '/modules/kams/stock/depots')
+            .'?transfer='.$transfer->id;
+
+        foreach ($recipients as $user) {
+            if (! $user->hasPermission($permission) && ! $user->hasPermission('kams.stock.update')) {
+                continue;
+            }
+            if (! $user->canAccessCompany($companyId)) {
+                continue;
+            }
+            if ($warehouseDestination) {
+                if (! $user->isGroupAdmin() && $user->isOfficeScoped()) {
+                    continue;
+                }
+            } elseif ($officeId && ! $user->canAccessOffice($officeId)) {
+                continue;
+            }
+
+            $locale = $user->locale === 'en' ? 'en' : 'fr';
+            $title = $locale === 'en' ? 'Transfer awaiting reception' : 'Transfert à recevoir';
+            $body = $locale === 'en'
+                ? "{$transfer->reference} from {$origin} to {$destination}".($products !== '' ? " ({$products})." : '.')
+                : "{$transfer->reference} de {$origin} vers {$destination}".($products !== '' ? " ({$products})." : '.');
+
+            AppNotification::query()->create([
+                'user_id' => $user->id,
+                'type' => 'stock_transfer',
+                'title' => $title,
+                'body' => $body,
+                'channel' => 'in_app',
+                'data' => [
+                    'module' => 'kams',
+                    'transfer_id' => $transfer->id,
+                    'path' => $path,
+                ],
+            ]);
+        }
+    }
+
+    public function refuseTransfer(Request $request, KamsStockTransfer $transfer): JsonResponse
+    {
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:1000'],
+        ]);
+        $this->assertCompany($request, (int) $transfer->company_id);
+        $transfer->loadMissing('toDepot');
+        if ($transfer->toDepot?->kind === 'warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+        } elseif ($transfer->toDepot?->office_id) {
+            abort_unless($request->user()->canAccessOffice((int) $transfer->toDepot->office_id), 403);
+        }
+        $refused = $this->inventory->refuseTransfer($transfer, $request->user()->id, $data['reason']);
+        StockJournal::record('update', $refused, ['status' => 'in_transit'], [
+            'status' => 'rejected',
+            'reason' => $data['reason'],
+        ]);
+
+        return $this->ok($refused);
+    }
+
     public function cancelTransfer(Request $request, KamsStockTransfer $transfer): JsonResponse
     {
         $this->assertCompany($request, (int) $transfer->company_id);
         $transfer->loadMissing('fromDepot');
-        abort_unless($transfer->fromDepot?->isWarehouse(), 422, __('Transfers start from a regional warehouse.'));
-        abort_unless($this->canManageWarehouses($request), 403);
+        if ($transfer->fromDepot?->isWarehouse()) {
+            abort_unless($this->canManageWarehouses($request), 403);
+        } elseif ($transfer->fromDepot?->office_id) {
+            abort_unless($request->user()->canAccessOffice((int) $transfer->fromDepot->office_id), 403);
+        }
         $cancelled = $this->inventory->cancelTransfer($transfer, $request->user()->id);
         StockJournal::record('update', $cancelled, [], ['status' => 'cancelled']);
 
@@ -337,7 +445,17 @@ class KamsStockController extends Controller
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
         $this->applyOfficeIds($scoped, $officeState);
         $query = KamsStockAssignment::query()
-            ->with(['member:id,full_name,member_code,phone,office_id,photo_path', 'office:id,name,code', 'depot:id,name,office_id', 'items.product:id,name,sku,price,cost,image_path'])
+            ->with([
+                'member:id,full_name,member_code,phone,office_id,photo_path',
+                'office:id,name,code',
+                'depot:id,name,office_id',
+                'items.product:id,name,sku,price,cost,image_path',
+                'createdBy:id,name',
+                'updatedBy:id,name',
+                'addedBy:id,name',
+                'closedBy:id,name',
+                'dayClosedBy:id,name',
+            ])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId));
         $this->applyOfficeIds($query, $officeState);
         $query = $query
@@ -396,6 +514,9 @@ class KamsStockController extends Controller
                 'member:id,full_name,member_code,phone,office_id',
                 'office:id,name,code',
                 'depot:id,name',
+                'createdBy:id,name',
+                'updatedBy:id,name',
+                'addedBy:id,name',
                 'closedBy:id,name',
                 'dayClosedBy:id,name',
                 'items.product:id,name,sku,price,cost,image_path',
@@ -445,6 +566,15 @@ class KamsStockController extends Controller
                     ],
                     'assignments' => [],
                     'day_closed_by' => [],
+                    'office_ids' => [],
+                    'assignment_ids' => [],
+                    'hierarchy_savings' => 0.0,
+                    'expenses' => 0.0,
+                    'net_sales' => 0.0,
+                    'agent_savings' => 0.0,
+                    'manager_share' => 0.0,
+                    'manual_deposits' => 0.0,
+                    'withdrawals' => 0.0,
                 ];
             }
 
@@ -478,6 +608,10 @@ class KamsStockController extends Controller
                 $days[$date]['totals']['agents'][$memberId] = true;
             }
             $days[$date]['assignments'][] = $assignment;
+            $days[$date]['assignment_ids'][] = (int) $assignment->id;
+            if ($assignment->office_id) {
+                $days[$date]['office_ids'][(int) $assignment->office_id] = true;
+            }
             $closer = $assignment->dayClosedBy?->name;
             if ($closer) {
                 $days[$date]['day_closed_by'][$closer] = true;
@@ -497,6 +631,8 @@ class KamsStockController extends Controller
             }
         }
 
+        $this->attachAssignmentDayFinance($days, $companyId, $selectedOfficeId);
+
         krsort($days);
 
         $normalize = function (array $row): array {
@@ -511,9 +647,44 @@ class KamsStockController extends Controller
             return $row;
         };
 
-        $dayRows = array_values(array_map(function (array $day) use ($normalize) {
+        $financeTotals = [
+            'hierarchy_savings' => 0.0,
+            'expenses' => 0.0,
+            'net_sales' => 0.0,
+            'agent_savings' => 0.0,
+            'manager_share' => 0.0,
+            'manual_deposits' => 0.0,
+            'withdrawals' => 0.0,
+            'remaining_total' => 0.0,
+        ];
+        $dayRows = array_values(array_map(function (array $day) use ($normalize, &$financeTotals) {
             $day['totals'] = $normalize($day['totals']);
+            $hierarchy = round((float) ($day['hierarchy_savings'] ?? 0), 2);
+            $expenses = round((float) ($day['expenses'] ?? 0), 2);
+            $netSales = round((float) ($day['net_sales'] ?? 0), 2);
+            $agentSavings = round((float) ($day['agent_savings'] ?? 0), 2);
+            $managerShare = round((float) ($day['manager_share'] ?? 0), 2);
+            $manualDeposits = round((float) ($day['manual_deposits'] ?? 0), 2);
+            $withdrawals = round((float) ($day['withdrawals'] ?? 0), 2);
+            $remaining = round($netSales - $hierarchy - $expenses + $manualDeposits - $withdrawals, 2);
+            $day['totals']['hierarchy_savings'] = $hierarchy;
+            $day['totals']['expenses'] = $expenses;
+            $day['totals']['net_sales'] = $netSales;
+            $day['totals']['agent_savings'] = $agentSavings;
+            $day['totals']['manager_share'] = $managerShare;
+            $day['totals']['manual_deposits'] = $manualDeposits;
+            $day['totals']['withdrawals'] = $withdrawals;
+            $day['totals']['remaining_total'] = $remaining;
+            $financeTotals['hierarchy_savings'] += $hierarchy;
+            $financeTotals['expenses'] += $expenses;
+            $financeTotals['net_sales'] += $netSales;
+            $financeTotals['agent_savings'] += $agentSavings;
+            $financeTotals['manager_share'] += $managerShare;
+            $financeTotals['manual_deposits'] += $manualDeposits;
+            $financeTotals['withdrawals'] += $withdrawals;
+            $financeTotals['remaining_total'] += $remaining;
             $day['day_closed_by'] = implode(', ', array_keys($day['day_closed_by'] ?? []));
+            unset($day['office_ids'], $day['assignment_ids'], $day['hierarchy_savings'], $day['expenses'], $day['net_sales'], $day['agent_savings'], $day['manager_share'], $day['manual_deposits'], $day['withdrawals']);
 
             return $day;
         }, $days));
@@ -526,7 +697,16 @@ class KamsStockController extends Controller
             ],
             'office_name' => $selectedOfficeName,
             'can_delete' => $request->user()?->hasPermission('kams.stock.reports.delete') ?? false,
-            'totals' => $normalize($totals),
+            'totals' => array_merge($normalize($totals), [
+                'hierarchy_savings' => round($financeTotals['hierarchy_savings'], 2),
+                'expenses' => round($financeTotals['expenses'], 2),
+                'net_sales' => round($financeTotals['net_sales'], 2),
+                'agent_savings' => round($financeTotals['agent_savings'], 2),
+                'manager_share' => round($financeTotals['manager_share'], 2),
+                'manual_deposits' => round($financeTotals['manual_deposits'], 2),
+                'withdrawals' => round($financeTotals['withdrawals'], 2),
+                'remaining_total' => round($financeTotals['remaining_total'], 2),
+            ]),
             'days' => $dayRows,
         ], $this->officeFilterPayload($officeState)));
     }
@@ -740,6 +920,8 @@ class KamsStockController extends Controller
         $query = KamsStockReturn::query()
             ->with(['member:id,full_name,member_code', 'sale:id,reference', 'fromDepot:id,name,kind', 'toDepot:id,name,kind', 'items.product:id,name,sku'])
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')->toString()))
+            ->when($request->filled('type'), fn ($q) => $q->where('type', $request->string('type')->toString()))
             ->latest();
 
         return $this->paginated($query->paginate($request->integer('per_page', 50)));
@@ -786,6 +968,9 @@ class KamsStockController extends Controller
                 $data['reason'] ?? null,
             );
             StockJournal::record('create', $returned, [], $data);
+            if ($returned->status === 'requested') {
+                $this->notifyReturnReceivers($returned);
+            }
 
             return $this->created($returned);
         }
@@ -815,10 +1000,79 @@ class KamsStockController extends Controller
     public function acceptReturn(Request $request, KamsStockReturn $stockReturn): JsonResponse
     {
         $this->assertCompany($request, (int) $stockReturn->company_id);
+        $stockReturn->loadMissing('toDepot');
+        if ($stockReturn->type === 'depot_to_warehouse') {
+            abort_unless($this->canManageWarehouses($request), 403);
+        }
         $accepted = $this->inventory->acceptReturn($stockReturn, $request->user()->id);
         StockJournal::record('update', $accepted, [], ['status' => $accepted->status]);
 
         return $this->ok($accepted);
+    }
+
+    public function refuseReturn(Request $request, KamsStockReturn $stockReturn): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $this->assertCompany($request, (int) $stockReturn->company_id);
+        $stockReturn->loadMissing('toDepot');
+        abort_unless($this->canManageWarehouses($request), 403);
+        $refused = $this->inventory->refuseReturn($stockReturn, $request->user()->id, $data['reason']);
+        StockJournal::record('update', $refused, [], ['status' => 'rejected', 'reason' => $data['reason']]);
+
+        return $this->ok($refused);
+    }
+
+    private function notifyReturnReceivers(KamsStockReturn $return): void
+    {
+        $return->loadMissing(['fromDepot', 'toDepot', 'items.product']);
+        $to = $return->toDepot;
+        if (! $to || $to->kind !== 'warehouse') {
+            return;
+        }
+        $senderId = (int) ($return->created_by ?: 0);
+        $companyId = (int) $return->company_id;
+        $permission = 'kams.stock.warehouses.receive';
+        $recipients = User::query()
+            ->where('is_active', true)
+            ->when($senderId > 0, fn ($query) => $query->where('id', '!=', $senderId))
+            ->where(function ($query) use ($permission) {
+                $query->whereHas('roles', fn ($roles) => $roles->whereIn('slug', RoleCatalog::fullAccessSlugs()))
+                    ->orWhereHas('roles.permissions', fn ($permissions) => $permissions->whereIn('slug', [$permission, 'kams.stock.update']));
+            })
+            ->with(['roles.permissions', 'scopes'])
+            ->get();
+        $origin = $return->fromDepot?->name ?: '';
+        $products = $return->items
+            ->map(fn ($item) => trim(($item->product?->name ?: '').' × '.(int) $item->quantity))
+            ->filter()
+            ->implode(', ');
+        $path = '/modules/kams/stock/warehouses?return='.$return->id;
+        foreach ($recipients as $user) {
+            if (! $user->hasPermission($permission) && ! $user->hasPermission('kams.stock.update')) {
+                continue;
+            }
+            if (! $user->canAccessCompany($companyId)) {
+                continue;
+            }
+            if (! $user->isGroupAdmin() && $user->isOfficeScoped()) {
+                continue;
+            }
+            $locale = $user->locale === 'en' ? 'en' : 'fr';
+            AppNotification::query()->create([
+                'user_id' => $user->id,
+                'type' => 'stock_return',
+                'title' => $locale === 'en' ? 'Removal awaiting reception' : 'Retrait à recevoir',
+                'body' => $locale === 'en'
+                    ? "{$return->reference} from {$origin} to {$to->name}".($products !== '' ? " ({$products})." : '.')
+                    : "{$return->reference} de {$origin} vers {$to->name}".($products !== '' ? " ({$products})." : '.'),
+                'channel' => 'in_app',
+                'data' => [
+                    'module' => 'kams',
+                    'return_id' => $return->id,
+                    'path' => $path,
+                ],
+            ]);
+        }
     }
 
     public function adjustments(Request $request): JsonResponse
@@ -1236,10 +1490,32 @@ class KamsStockController extends Controller
             }
         }
 
+        $assignmentIds = array_values(array_unique($idsByEntity['KamsStockAssignment']));
+        $assignmentRows = KamsStockAssignment::query()
+            ->with([
+                'createdBy:id,name',
+                'updatedBy:id,name',
+                'addedBy:id,name',
+                'closedBy:id,name',
+                'dayClosedBy:id,name',
+            ])
+            ->whereIn('id', $assignmentIds)
+            ->get();
+
         return [
-            'assignments' => KamsStockAssignment::query()
-                ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockAssignment'])))
-                ->pluck('reference', 'id'),
+            'assignments' => $assignmentRows->pluck('reference', 'id'),
+            'assignment_actors' => $assignmentRows->mapWithKeys(fn (KamsStockAssignment $assignment) => [
+                $assignment->id => [
+                    'assigned_by' => $assignment->createdBy?->name,
+                    'updated_by' => $assignment->updatedBy?->name,
+                    'added_by' => $assignment->addedBy?->name,
+                    'closed_by' => $assignment->closedBy?->name,
+                    'day_closed_by' => $assignment->dayClosedBy?->name,
+                    'assigned_at' => optional($assignment->assigned_at)?->toIso8601String(),
+                    'closed_at' => optional($assignment->closed_at)?->toIso8601String(),
+                    'settled_at' => optional($assignment->settled_at)?->toIso8601String(),
+                ],
+            ]),
             'transfers' => KamsStockTransfer::query()
                 ->whereIn('id', array_values(array_unique($idsByEntity['KamsStockTransfer'])))
                 ->pluck('reference', 'id'),
@@ -1305,6 +1581,139 @@ class KamsStockController extends Controller
         }
 
         return $priors;
+    }
+
+    /**
+     * Hierarchy savings of office openers, office expenses, and sales after the manager percent.
+     *
+     * @param  array<string, array<string, mixed>>  $days
+     */
+    private function attachAssignmentDayFinance(array &$days, ?int $companyId, ?int $selectedOfficeId): void
+    {
+        if ($days === []) {
+            return;
+        }
+
+        $assignmentIds = [];
+        foreach ($days as $day) {
+            foreach ($day['assignment_ids'] ?? [] as $id) {
+                $assignmentIds[] = (int) $id;
+            }
+        }
+
+        $sales = $assignmentIds === []
+            ? collect()
+            : KamsStockSale::query()
+                ->whereIn('assignment_id', array_values(array_unique($assignmentIds)))
+                ->get(['id', 'assignment_id', 'subtotal']);
+        $saleIds = $sales->pluck('id')->all();
+        $shares = $saleIds === []
+            ? collect()
+            : KamsRevenueShare::query()
+                ->whereIn('sale_id', $saleIds)
+                ->where('amount', '!=', 0)
+                ->get(['sale_id', 'rule_code', 'amount']);
+        $sharesBySale = $shares->groupBy('sale_id');
+        $dateByAssignment = [];
+        foreach ($days as $date => $day) {
+            foreach ($day['assignment_ids'] ?? [] as $id) {
+                $dateByAssignment[(int) $id] = $date;
+            }
+        }
+
+        $hierarchyCodes = [
+            RevenueRuleCatalog::MANAGER_OFFICE,
+            RevenueRuleCatalog::MANAGER_DESCENDANT_OFFICE,
+            RevenueRuleCatalog::MANAGER_CERTIFIED_OFFICE,
+            RevenueRuleCatalog::DIVISIONNAIRE_OFFICE,
+            RevenueRuleCatalog::DIVISIONNAIRE_CERTIFIED_OFFICE,
+            RevenueRuleCatalog::SECRETARY_OFFICE,
+        ];
+
+        foreach ($sales as $sale) {
+            $date = $dateByAssignment[(int) $sale->assignment_id] ?? null;
+            if (! $date || ! isset($days[$date])) {
+                continue;
+            }
+            $saleShares = $sharesBySale->get($sale->id, collect());
+            $managerShare = (float) $saleShares
+                ->where('rule_code', RevenueRuleCatalog::MANAGER_SALE)
+                ->sum('amount');
+            $hierarchy = (float) $saleShares
+                ->whereIn('rule_code', $hierarchyCodes)
+                ->sum('amount');
+            $days[$date]['manager_share'] += $managerShare;
+            $days[$date]['net_sales'] += round(max(0, (float) $sale->subtotal - $managerShare), 2);
+            $days[$date]['hierarchy_savings'] += $hierarchy;
+        }
+
+        if ($assignmentIds !== []) {
+            $deposits = KamsSavingsEntry::query()
+                ->where('status', 'posted')
+                ->where('type', 'deposit')
+                ->where('source_type', KamsStockAssignment::class)
+                ->whereIn('source_id', array_values(array_unique($assignmentIds)))
+                ->get(['source_id', 'amount']);
+            foreach ($deposits as $deposit) {
+                $date = $dateByAssignment[(int) $deposit->source_id] ?? null;
+                if (! $date || ! isset($days[$date])) {
+                    continue;
+                }
+                $days[$date]['agent_savings'] += abs((float) $deposit->amount);
+            }
+        }
+
+        $dates = array_keys($days);
+        $officeIds = $selectedOfficeId ? [$selectedOfficeId] : [];
+        if ($officeIds === []) {
+            foreach ($days as $day) {
+                foreach (array_keys($day['office_ids'] ?? []) as $officeId) {
+                    $officeIds[] = (int) $officeId;
+                }
+            }
+            $officeIds = array_values(array_unique($officeIds));
+        }
+
+        if ($officeIds === [] || $dates === []) {
+            return;
+        }
+
+        $movements = KamsTreasuryEntry::query()
+            ->where('status', 'posted')
+            ->whereIn('type', ['expense', 'deposit', 'withdrawal'])
+            ->when($companyId, fn ($query) => $query->where('company_id', $companyId))
+            ->whereIn('office_id', $officeIds)
+            ->whereIn('occurred_on', $dates)
+            ->get(['office_id', 'occurred_on', 'type', 'amount', 'savings_entry_id', 'notes']);
+
+        foreach ($movements as $entry) {
+            $date = optional($entry->occurred_on)->toDateString();
+            if (! $date || ! isset($days[$date])) {
+                continue;
+            }
+            if (! $selectedOfficeId && ! isset($days[$date]['office_ids'][(int) $entry->office_id])) {
+                continue;
+            }
+            $amount = abs((float) $entry->amount);
+            if ($entry->type === 'expense') {
+                $days[$date]['expenses'] += $amount;
+                continue;
+            }
+            // Surplus de clôture and sale collection are posted automatically.
+            if ($entry->savings_entry_id) {
+                continue;
+            }
+            $notes = (string) ($entry->notes ?? '');
+            if ($entry->type === 'deposit' && str_starts_with($notes, 'Encaissement clôture')) {
+                continue;
+            }
+            if ($entry->type === 'deposit') {
+                $days[$date]['manual_deposits'] += $amount;
+            }
+            if ($entry->type === 'withdrawal') {
+                $days[$date]['withdrawals'] += $amount;
+            }
+        }
     }
 
     /**
@@ -1378,6 +1787,9 @@ class KamsStockController extends Controller
             'subject' => $this->journalSubject($entity, $old, $new, $log->auditable_id, $lookups),
             'details' => $this->journalDetails($entity, $old, $new, $lookups),
             'changes' => $this->journalChanges($old, $new, $lookups),
+            'actors' => $entity === 'KamsStockAssignment' && $log->auditable_id
+                ? ($lookups['assignment_actors'][(int) $log->auditable_id] ?? null)
+                : null,
             'created_at' => $log->created_at?->toIso8601String(),
             'ip_address' => $log->ip_address,
             'user' => $log->user ? [
@@ -1400,6 +1812,9 @@ class KamsStockController extends Controller
             }
             if ($action === 'delete') {
                 return 'assignment_delete';
+            }
+            if (($new['status'] ?? null) === 'settled') {
+                return 'assignment_day_close';
             }
             if (array_key_exists('quantity_returned', data_get($new, 'items.0', []))
                 || array_key_exists('collected_amount', $new) && array_key_exists('items', $new)
@@ -1424,6 +1839,9 @@ class KamsStockController extends Controller
             if (($new['status'] ?? null) === 'received' || ($new['auto_receive'] ?? false)) {
                 return 'transfer_receive';
             }
+            if (($new['status'] ?? null) === 'rejected') {
+                return 'transfer_refuse';
+            }
 
             return $action === 'create' ? 'transfer_create' : 'transfer_update';
         }
@@ -1440,6 +1858,9 @@ class KamsStockController extends Controller
         }
 
         if ($entity === 'KamsStockReturn') {
+            if (($new['status'] ?? null) === 'rejected') {
+                return 'return_refuse';
+            }
             if (array_key_exists('status', $new) || ($new['auto_accept'] ?? false)) {
                 return 'return_accept';
             }

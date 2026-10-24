@@ -5,7 +5,7 @@ import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
-import { trackLoadSpinner } from '../../lib/dataSync'
+import { isSoftRefresh, trackLoadSpinner } from '../../lib/dataSync'
 import { money } from '../../lib/format'
 import type { User } from '../../types'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
@@ -230,6 +230,7 @@ export function KamsAccountPage() {
         setData(res.data.data || null)
       })
       .catch(() => {
+        if (isSoftRefresh()) return
         setMissing(true)
         setData(null)
       })
@@ -316,7 +317,7 @@ export function KamsAccountPage() {
     || entry.source?.entry_type === 'commission_transfer',
   )
 
-  if (loading) return <LoadingScreen />
+  if (loading && !data) return <LoadingScreen />
   if (missing || !data) {
     return <Empty>{t('kams.noAgentAccount')}</Empty>
   }

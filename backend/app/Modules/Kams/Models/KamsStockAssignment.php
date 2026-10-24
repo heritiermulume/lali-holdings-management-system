@@ -11,8 +11,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'company_id', 'reference', 'office_id', 'depot_id', 'member_id', 'status',
-    'assigned_at', 'settled_at', 'expected_amount', 'collected_amount', 'profit_amount', 'loss_amount',
-    'deposit_surplus', 'notes', 'created_by', 'closed_by', 'day_closed_by',
+    'assigned_at', 'settled_at', 'closed_at', 'expected_amount', 'collected_amount', 'profit_amount', 'loss_amount',
+    'deposit_surplus', 'notes', 'created_by', 'closed_by', 'day_closed_by', 'updated_by', 'added_by',
 ])]
 class KamsStockAssignment extends Model
 {
@@ -21,6 +21,7 @@ class KamsStockAssignment extends Model
         return [
             'assigned_at' => 'datetime',
             'settled_at' => 'datetime',
+            'closed_at' => 'datetime',
             'expected_amount' => 'float',
             'collected_amount' => 'float',
             'profit_amount' => 'float',
@@ -62,5 +63,15 @@ class KamsStockAssignment extends Model
     public function dayClosedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'day_closed_by');
+    }
+
+    public function updatedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function addedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'added_by');
     }
 }

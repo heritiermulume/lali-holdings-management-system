@@ -176,7 +176,7 @@ export function KamsWarehouseMovements() {
   const statusLabel = (value: string) => t(`kams.status.${value}`, { defaultValue: value })
   const statusTone = (value: string): 'green' | 'amber' | 'red' | 'slate' => {
     if (value === 'in_transit' || value === 'partial') return 'amber'
-    if (value === 'cancelled') return 'red'
+    if (value === 'cancelled' || value === 'rejected') return 'red'
     if (value === 'received' || value === 'posted') return 'green'
     return 'slate'
   }

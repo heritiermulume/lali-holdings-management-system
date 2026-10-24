@@ -7,6 +7,7 @@ import { SearchCombobox, type SearchComboboxItem } from '../../components/Search
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
+import { isSoftRefresh } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import { money, roleLabel } from '../../lib/format'
 import { KamsAccountTransactions, KamsTransactionsPrintMenu, type KamsAccountTransactionsHandle } from './KamsAccountTransactions'
@@ -196,10 +197,7 @@ export function KamsCompanyAccountPage() {
     return api.get('/modules/kams/finance/company-accounts').then((res) => {
       const next = (res.data.data || []) as Summary[]
       setRows(next)
-      const stillVisible = selected != null && next.some((row) => row.id === selected)
-      if (!stillVisible) {
-        setSelected(next[0]?.id ?? null)
-      }
+      setSelected((current) => current ?? next[0]?.id ?? null)
     }).catch(() => setRows([]))
   }
 
@@ -211,7 +209,9 @@ export function KamsCompanyAccountPage() {
     }
     return api.get(`/modules/kams/finance/company-accounts/${selected}`)
       .then((res) => setData(res.data.data))
-      .catch(() => setData(null))
+      .catch(() => {
+        if (!isSoftRefresh()) setData(null)
+      })
   }
 
   useEffect(() => { void loadList() }, [])

@@ -289,7 +289,7 @@ export function SettingsForm({
     }
   }
 
-  if (loading) {
+  if (loading && Object.keys(values).length === 0) {
     return <LoadingScreen />
   }
 

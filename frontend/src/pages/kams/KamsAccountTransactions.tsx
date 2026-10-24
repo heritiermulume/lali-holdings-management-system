@@ -154,6 +154,8 @@ export function KamsTransactionsPrintMenu({
   onPrint,
   onPreviewSimplified,
   onPrintSimplified,
+  onPreviewPerformance,
+  onPrintPerformance,
   canPreview = true,
   canPrint = true,
   disabled = false,
@@ -165,6 +167,8 @@ export function KamsTransactionsPrintMenu({
   onPrint: () => void
   onPreviewSimplified?: () => void
   onPrintSimplified?: () => void
+  onPreviewPerformance?: () => void
+  onPrintPerformance?: () => void
   canPreview?: boolean
   canPrint?: boolean
   disabled?: boolean
@@ -176,6 +180,7 @@ export function KamsTransactionsPrintMenu({
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const hasSimplified = Boolean(onPreviewSimplified || onPrintSimplified)
+  const hasPerformance = Boolean(onPreviewPerformance || onPrintPerformance)
 
   useEffect(() => {
     const onClick = (event: MouseEvent) => {
@@ -204,7 +209,7 @@ export function KamsTransactionsPrintMenu({
         <Printer size={16} /> {iconOnly ? null : t('common.print')}
       </Button>
       {open ? (
-        <div className={cn('absolute right-0 z-30 mt-1 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl', hasSimplified ? 'w-60' : 'w-48')}>
+        <div className={cn('absolute right-0 z-30 mt-1 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-xl', hasPerformance ? 'w-72' : hasSimplified ? 'w-60' : 'w-48')}>
           {canPreview ? (
             <button
               type="button"
@@ -240,6 +245,19 @@ export function KamsTransactionsPrintMenu({
               }}
             >
               <Eye size={16} className="text-lhms" /> {t('kams.simplifiedReport')}
+            </button>
+          ) : null}
+          {onPreviewPerformance || onPrintPerformance ? (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
+              onClick={() => {
+                setOpen(false)
+                if (onPreviewPerformance) onPreviewPerformance()
+                else onPrintPerformance?.()
+              }}
+            >
+              <Eye size={16} className="text-lhms" /> {t('kams.performanceReport')}
             </button>
           ) : null}
         </div>
@@ -416,7 +434,7 @@ export const KamsAccountTransactions = forwardRef<KamsAccountTransactionsHandle,
 
   useEffect(() => {
     setPage(1)
-  }, [entries, type, status, walletKind, from, to, perPage])
+  }, [type, status, walletKind, from, to, perPage])
 
   const filtersActive = Boolean(type || status || walletKind || from || to)
   const colSpan = (showMember ? 8 : 7) + (showProvenance ? 1 : 0)

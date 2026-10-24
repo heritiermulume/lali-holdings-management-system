@@ -400,7 +400,7 @@ export function RolesSettingsPage() {
     )
   }
 
-  if (loading) {
+  if (loading && roles.length === 0) {
     return <LoadingScreen />
   }
 

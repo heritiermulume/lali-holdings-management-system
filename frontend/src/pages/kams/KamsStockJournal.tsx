@@ -26,7 +26,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
 import { withBusy } from '../../lib/busy'
-import { trackLoadSpinner } from '../../lib/dataSync'
+import { isSoftRefresh, trackLoadSpinner } from '../../lib/dataSync'
 import { cn } from '../../lib/cn'
 import type { OperationsOfficeFilter } from './KamsStockFlows'
 
@@ -42,6 +42,16 @@ type JournalEntry = {
   created_at?: string | null
   ip_address?: string | null
   user?: { id: number; name: string; email?: string } | null
+  actors?: {
+    assigned_by?: string | null
+    updated_by?: string | null
+    added_by?: string | null
+    closed_by?: string | null
+    day_closed_by?: string | null
+    assigned_at?: string | null
+    closed_at?: string | null
+    settled_at?: string | null
+  } | null
 }
 
 type ActionFilter = '' | 'create' | 'update' | 'delete'
@@ -172,6 +182,24 @@ function JournalDetail({ entry, locale }: { entry: JournalEntry; locale: string 
           {entry.ip_address ? <div className="text-xs text-muted">{entry.ip_address}</div> : null}
         </div>
       </div>
+      {entry.actors ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {([
+            ['kams.assignedBy', entry.actors.assigned_by],
+            ['kams.assignmentUpdatedBy', entry.actors.updated_by],
+            ['kams.assignmentAddedBy', entry.actors.added_by],
+            ['kams.assignmentClosedBy', entry.actors.closed_by],
+            ['kams.dayClosedBy', entry.actors.day_closed_by],
+            ['kams.assignedAt', entry.actors.assigned_at ? new Date(entry.actors.assigned_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : null],
+            ['kams.closedAt', entry.actors.closed_at ? new Date(entry.actors.closed_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : null],
+          ] as const).map(([label, name]) => (
+            <div key={label} className="rounded-xl border border-line px-3 py-2">
+              <div className="text-xs text-muted">{t(label)}</div>
+              <div className="font-semibold">{name || '—'}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {changes.length === 0 ? (
         <p className="text-muted">{t('kams.journalNoChanges')}</p>
       ) : (
@@ -255,6 +283,7 @@ export function KamsStockJournal() {
         setTotal(Number(res.data.meta?.total ?? (res.data.data || []).length))
       })
     }).catch(() => {
+      if (isSoftRefresh()) return
       startTransition(() => {
         setRows([])
         setLastPage(1)
@@ -400,7 +429,17 @@ export function KamsStockJournal() {
                           {' · '}{formatClock(row.created_at, locale)}
                           {' · '}{userName}
                         </div>
-                        {row.details.length > 0 ? (
+                        {row.actors ? (
+                          <div className="mt-1 truncate text-xs text-muted">
+                            {[
+                              row.actors.assigned_by ? `${t('kams.assignedBy')}: ${row.actors.assigned_by}` : '',
+                              row.actors.updated_by ? `${t('kams.assignmentUpdatedBy')}: ${row.actors.updated_by}` : '',
+                              row.actors.added_by ? `${t('kams.assignmentAddedBy')}: ${row.actors.added_by}` : '',
+                              row.actors.closed_by ? `${t('kams.assignmentClosedBy')}: ${row.actors.closed_by}` : '',
+                              row.actors.day_closed_by ? `${t('kams.dayClosedBy')}: ${row.actors.day_closed_by}` : '',
+                            ].filter(Boolean).join(' · ') || row.details.join(' · ')}
+                          </div>
+                        ) : row.details.length > 0 ? (
                           <div className="mt-1 truncate text-xs text-muted">{row.details.join(' · ')}</div>
                         ) : null}
                       </button>

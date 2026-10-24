@@ -6,7 +6,7 @@ import { LoadingScreen } from '../../components/LoadingScreen'
 import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import api from '../../lib/api'
-import { trackLoadSpinner } from '../../lib/dataSync'
+import { isSoftRefresh, trackLoadSpinner } from '../../lib/dataSync'
 import { settingGroups } from './catalog'
 import { SettingsForm } from './SettingsPages'
 
@@ -74,11 +74,16 @@ export function FinanceSettingsPage() {
     const countryRows = (data.countries ?? []) as CountryTax[]
     const currencyRows = ((data.currencies ?? []) as EnabledCurrency[]).filter((row) => row.is_active)
     setCountries(countryRows)
-    setDrafts(Object.fromEntries(countryRows.map((row) => [row.id, row])))
+    setDrafts((current) => Object.fromEntries(countryRows.map((row) => {
+      const existing = current[row.id]
+      return [row.id, existing && countryTaxDirty(row, existing) ? existing : row]
+    })))
     setCurrencies(currencyRows)
     const savedDefault = currencyRows.find((row) => row.is_default)?.code || data.default || ''
-    setDefaultCurrency(savedDefault)
-    setDefaultDraft(savedDefault)
+    setDefaultCurrency((previous) => {
+      setDefaultDraft((draft) => (draft !== previous ? draft : savedDefault))
+      return savedDefault
+    })
     setCatalog(list.data.data ?? [])
   }
 
@@ -86,8 +91,17 @@ export function FinanceSettingsPage() {
     setKamsError('')
     try {
       const ruleRes = await api.get('/modules/kams/revenue/rules')
-      setRules(ruleRes.data.data ?? [])
+      const nextRules = (ruleRes.data.data ?? []) as RevenueRule[]
+      setRules(nextRules)
+      setRuleDrafts((current) => {
+        const next = { ...current }
+        nextRules.forEach((rule) => {
+          if (next[rule.id] != null && Number(next[rule.id]) === Number(rule.percent)) delete next[rule.id]
+        })
+        return next
+      })
     } catch (err: unknown) {
+      if (isSoftRefresh()) return
       const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
       setKamsError(message || t('settings.kamsRevenue.empty'))
       setRules([])
@@ -169,7 +183,7 @@ export function FinanceSettingsPage() {
   const label = (item: { code?: string; name: string; name_fr: string }) =>
     localeFr ? item.name_fr : item.name
 
-  if (loading) return <LoadingScreen />
+  if (loading && currencies.length === 0 && countries.length === 0) return <LoadingScreen />
 
   return (
     <div className="space-y-6">

@@ -152,7 +152,7 @@ class StockInventory
     ): KamsStockTransfer {
         abort_unless($from->id !== $to->id, 422, __('Choose two different locations.'));
         abort_unless($from->company_id === $to->company_id, 422, __('Locations must belong to the same company.'));
-        abort_unless($from->isWarehouse(), 422, __('Transfers start from a regional warehouse.'));
+        abort_unless(in_array($from->kind, ['depot', 'warehouse'], true), 422, __('Transfers start from a warehouse or office depot.'));
         abort_unless(in_array($to->kind, ['depot', 'warehouse'], true), 422, __('Transfers must arrive in a warehouse or office depot.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
 
@@ -332,6 +332,57 @@ class StockInventory
         });
     }
 
+    public function refuseTransfer(KamsStockTransfer $transfer, int $userId, string $reason): KamsStockTransfer
+    {
+        $reason = trim($reason);
+        abort_unless($reason !== '', 422, __('A refusal reason is required.'));
+        abort_unless($transfer->status === 'in_transit', 422, __('This transfer is not in transit.'));
+
+        return DB::transaction(function () use ($transfer, $userId, $reason) {
+            $transfer = KamsStockTransfer::query()->whereKey($transfer->id)->lockForUpdate()->firstOrFail();
+            abort_unless($transfer->status === 'in_transit', 422, __('This transfer is not in transit.'));
+            $from = $transfer->fromDepot;
+            $to = $transfer->toDepot;
+            foreach ($transfer->items()->with('product')->get() as $line) {
+                if (! $line->product) {
+                    continue;
+                }
+                $this->changeBalance($from, $line->product, -(int) $line->quantity, 'in_transit');
+                $this->changeBalance($from, $line->product, (int) $line->quantity, 'available');
+                $this->recordMovement(
+                    $line->product,
+                    (int) $line->quantity,
+                    'transfer',
+                    $userId,
+                    $to?->id,
+                    $from?->id,
+                    $transfer,
+                    null,
+                    $reason,
+                    'available',
+                    $userId,
+                    (float) $line->unit_cost,
+                    'rejected',
+                );
+                $this->syncProductStock($line->product);
+            }
+            $this->syncTransferMovementStatus($transfer, 'rejected', $reason);
+            $transfer->update([
+                'status' => 'rejected',
+                'notes' => trim(($transfer->notes ? $transfer->notes."\n" : '').$reason),
+            ]);
+
+            return $transfer->fresh([
+                'fromDepot',
+                'toDepot.office',
+                'items.product',
+                'createdBy:id,name',
+                'dispatchedBy:id,name',
+                'receivedBy:id,name',
+            ]);
+        });
+    }
+
     /**
      * @param  list<array{product_id:int, quantity:int}>  $items
      */
@@ -385,7 +436,7 @@ class StockInventory
                 $this->syncProductStock($product);
             }
 
-            return $assignment->load(['member', 'office', 'depot', 'items.product']);
+            return $this->freshAssignment($assignment);
         });
     }
 
@@ -539,6 +590,7 @@ class StockInventory
             if ($collectedAmount > 0) {
                 $updates['collected_amount'] = round((float) $assignment->collected_amount + $collectedAmount, 2);
             }
+            $updates['added_by'] = $userId;
             if ($notes) {
                 $updates['notes'] = trim(($assignment->notes ? $assignment->notes."\n" : '').$notes);
             } elseif ($collectedAmount > 0) {
@@ -547,11 +599,9 @@ class StockInventory
                 ]);
                 $updates['notes'] = trim(($assignment->notes ? $assignment->notes."\n" : '').$cashNote);
             }
-            if ($updates !== []) {
-                $assignment->update($updates);
-            }
+            $assignment->update($updates);
 
-            return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            return $this->freshAssignment($assignment);
         });
     }
 
@@ -646,13 +696,14 @@ class StockInventory
             $remaining = $assignment->items()->count();
             abort_unless($remaining > 0, 422, __('An assignment must keep at least one product.'));
 
-            if ($notes) {
-                $assignment->update([
-                    'notes' => trim(($assignment->notes ? $assignment->notes."\n" : '').$notes),
-                ]);
-            }
+            $assignment->update([
+                'updated_by' => $userId,
+                'notes' => $notes
+                    ? trim(($assignment->notes ? $assignment->notes."\n" : '').$notes)
+                    : $assignment->notes,
+            ]);
 
-            return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            return $this->freshAssignment($assignment);
         });
     }
 
@@ -871,13 +922,19 @@ class StockInventory
                     $to = KamsDepot::query()->findOrFail($return->to_depot_id);
                     abort_unless($from->kind === 'depot', 422, __('Returns of this type must leave an office depot.'));
                     abort_unless($to->isWarehouse(), 422, __('Returns of this type must arrive in a warehouse.'));
-                    abort_unless($this->quantityAt($from, $line->product, 'available') >= (int) $line->quantity, 422, __('Insufficient stock for :product at :location.', [
-                        'product' => $line->product->name,
-                        'location' => $from->name,
-                    ]));
-                    $this->changeBalance($from, $line->product, -$line->quantity, 'available');
+                    $reserved = $this->quantityAt($from, $line->product, 'in_transit');
+                    if ($reserved >= (int) $line->quantity) {
+                        $this->changeBalance($from, $line->product, -$line->quantity, 'in_transit');
+                    } else {
+                        abort_unless($this->quantityAt($from, $line->product, 'available') >= (int) $line->quantity, 422, __('Insufficient stock for :product at :location.', [
+                            'product' => $line->product->name,
+                            'location' => $from->name,
+                        ]));
+                        $this->changeBalance($from, $line->product, -$line->quantity, 'available');
+                    }
                     $this->changeBalance($to, $line->product, $line->quantity, 'available');
-                    $this->recordMovement($line->product, $line->quantity, 'return', $userId, $from->id, $to->id, $return, null, $return->reason, 'available', $userId, (float) $line->unit_cost);
+                    $this->recordMovement($line->product, $line->quantity, 'return', $userId, $from->id, $to->id, $return, null, $return->reason, 'available', $userId, (float) $line->unit_cost, 'received');
+                    $this->syncReferencedMovementStatus($return, 'return', 'received');
                 } elseif ($return->type === 'defective' && $return->from_depot_id) {
                     $from = KamsDepot::query()->findOrFail($return->from_depot_id);
                     $this->changeBalance($from, $line->product, -$line->quantity, 'available');
@@ -913,19 +970,97 @@ class StockInventory
         abort_unless($from->company_id === $to->company_id, 422, __('Locations must belong to the same company.'));
         abort_unless($items !== [], 422, __('Add at least one product.'));
 
-        $return = $this->createReturn(
-            'depot_to_warehouse',
-            $items,
-            null,
-            null,
-            $from,
-            $to,
-            'available',
-            $notes ?: __('Returned to warehouse'),
-            $userId,
-        );
+        return DB::transaction(function () use ($from, $to, $items, $userId, $notes) {
+            $return = $this->createReturn(
+                'depot_to_warehouse',
+                $items,
+                null,
+                null,
+                $from,
+                $to,
+                'available',
+                $notes ?: __('Returned to warehouse'),
+                $userId,
+            );
+            foreach ($return->items as $line) {
+                abort_unless($this->quantityAt($from, $line->product, 'available') >= (int) $line->quantity, 422, __('Insufficient stock for :product at :location.', [
+                    'product' => $line->product->name,
+                    'location' => $from->name,
+                ]));
+                $this->changeBalance($from, $line->product, -(int) $line->quantity, 'available');
+                $this->changeBalance($from, $line->product, (int) $line->quantity, 'in_transit');
+                $this->recordMovement(
+                    $line->product,
+                    (int) $line->quantity,
+                    'return',
+                    $userId,
+                    $from->id,
+                    $to->id,
+                    $return,
+                    null,
+                    $return->reason,
+                    'in_transit',
+                    $userId,
+                    (float) $line->unit_cost,
+                    'in_transit',
+                );
+                $this->syncProductStock($line->product);
+            }
 
-        return $this->acceptReturn($return, (int) $userId);
+            return $return->fresh(['items.product', 'member', 'fromDepot', 'toDepot', 'sale']);
+        });
+    }
+
+    public function refuseReturn(KamsStockReturn $return, int $userId, string $reason): KamsStockReturn
+    {
+        $reason = trim($reason);
+        abort_unless($reason !== '', 422, __('A refusal reason is required.'));
+        abort_unless($return->status === 'requested', 422, __('This return cannot be accepted.'));
+        abort_unless($return->type === 'depot_to_warehouse', 422, __('This return cannot be accepted.'));
+
+        return DB::transaction(function () use ($return, $userId, $reason) {
+            $return = KamsStockReturn::query()->whereKey($return->id)->lockForUpdate()->firstOrFail();
+            abort_unless($return->status === 'requested', 422, __('This return cannot be accepted.'));
+            $from = KamsDepot::query()->findOrFail($return->from_depot_id);
+            $to = KamsDepot::query()->findOrFail($return->to_depot_id);
+            foreach ($return->items()->with('product')->get() as $line) {
+                if (! $line->product) {
+                    continue;
+                }
+                $reserved = $this->quantityAt($from, $line->product, 'in_transit');
+                abort_unless($reserved >= (int) $line->quantity, 422, __('Insufficient stock for :product at :location.', [
+                    'product' => $line->product->name,
+                    'location' => $from->name,
+                ]));
+                $this->changeBalance($from, $line->product, -(int) $line->quantity, 'in_transit');
+                $this->changeBalance($from, $line->product, (int) $line->quantity, 'available');
+                $this->recordMovement(
+                    $line->product,
+                    (int) $line->quantity,
+                    'return',
+                    $userId,
+                    $to->id,
+                    $from->id,
+                    $return,
+                    null,
+                    $reason,
+                    'available',
+                    $userId,
+                    (float) $line->unit_cost,
+                    'rejected',
+                );
+                $this->syncProductStock($line->product);
+            }
+            $this->syncReferencedMovementStatus($return, 'return', 'rejected', $reason);
+            $return->update([
+                'status' => 'rejected',
+                'reason' => trim(($return->reason ? $return->reason."\n" : '').$reason),
+                'validated_by' => $userId,
+                'validated_at' => now(),
+            ]);
+
+            return $return->fresh(['items.product', 'member', 'fromDepot', 'toDepot', 'sale']);
+        });
     }
 
     public function resolveReturnWarehouse(KamsDepot $depot, ?int $productId = null): ?KamsDepot
@@ -1057,6 +1192,21 @@ class StockInventory
         });
     }
 
+    private function freshAssignment(KamsStockAssignment $assignment): KamsStockAssignment
+    {
+        return $assignment->fresh([
+            'member',
+            'office',
+            'depot',
+            'items.product',
+            'createdBy:id,name',
+            'updatedBy:id,name',
+            'addedBy:id,name',
+            'closedBy:id,name',
+            'dayClosedBy:id,name',
+        ]);
+    }
+
     public function quantityAt(KamsDepot $location, KamsProduct $product, string $condition = 'available'): int
     {
         return (int) KamsStockBalance::query()
@@ -1110,6 +1260,7 @@ class StockInventory
 
             $assignment->update([
                 'status' => 'closed',
+                'closed_at' => now(),
                 'expected_amount' => $totals['expected'],
                 'collected_amount' => round($collectedAmount, 2),
                 'profit_amount' => $totals['profit'],
@@ -1119,7 +1270,7 @@ class StockInventory
                 'closed_by' => $userId,
             ]);
 
-            return $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            return $this->freshAssignment($assignment);
         });
     }
 
@@ -1616,7 +1767,7 @@ class StockInventory
                 'day_closed_by' => $userId ?? $assignment->day_closed_by,
             ]);
 
-            $fresh = $assignment->fresh(['member', 'office', 'depot', 'items.product']);
+            $fresh = $this->freshAssignment($assignment);
             if ($sale) {
                 $fresh->setAttribute('posted_sale', $sale);
             }
@@ -1717,13 +1868,29 @@ class StockInventory
         ]);
     }
 
-    private function syncTransferMovementStatus(KamsStockTransfer $transfer, string $status): void
+    private function syncReferencedMovementStatus(object $reference, string $type, string $status, ?string $notes = null): void
     {
-        KamsStockMovement::query()
-            ->where('reference_type', $transfer::class)
-            ->where('reference_id', $transfer->id)
-            ->where('type', 'transfer')
-            ->update(['status' => $status]);
+        $query = KamsStockMovement::query()
+            ->where('reference_type', $reference::class)
+            ->where('reference_id', $reference->id)
+            ->where('type', $type)
+            ->where('status', '!=', 'rejected');
+        if ($notes === null) {
+            $query->update(['status' => $status]);
+
+            return;
+        }
+        foreach ($query->get() as $movement) {
+            $movement->update([
+                'status' => $status,
+                'notes' => trim(($movement->notes ? $movement->notes."\n" : '').$notes),
+            ]);
+        }
+    }
+
+    private function syncTransferMovementStatus(KamsStockTransfer $transfer, string $status, ?string $notes = null): void
+    {
+        $this->syncReferencedMovementStatus($transfer, 'transfer', $status, $notes);
     }
 
     private function syncProductStock(KamsProduct $product): void

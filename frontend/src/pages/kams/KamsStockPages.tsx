@@ -52,6 +52,7 @@ type StockData = {
     inventory_value: number
     open_assignments: number
     sold_units: number
+    issued_units?: number
     lost_units?: number
     active_sellers: number
     commissions_payable: number
@@ -169,8 +170,8 @@ export function KamsStockStats() {
 
   const kpis = [
     { key: 'availableStock', value: data.totals.units },
+    { key: 'issuedProducts', value: data.totals.issued_units || 0 },
     { key: 'soldUnits', value: data.totals.sold_units },
-    { key: 'lostProducts', value: data.totals.lost_units || 0 },
     { key: 'inTransit', value: data.totals.in_transit, hint: `${t('kams.quarantine')}: ${data.totals.quarantine}` },
     { key: 'openAssignments', value: data.totals.open_assignments },
     { key: 'withAgents', value: data.totals.with_agents },
