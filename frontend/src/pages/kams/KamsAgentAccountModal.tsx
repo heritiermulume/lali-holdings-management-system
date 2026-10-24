@@ -33,7 +33,6 @@ type Account = {
     id: number
     full_name: string
     member_code: string
-    rank?: string | null
     office?: { id: number; name: string; code: string } | null
     role?: { id: number; name: string; slug: string } | null
   }
@@ -180,7 +179,7 @@ export function KamsAgentAccountModal({ open, onClose, initialMemberId = null, o
                   <p className="text-sm text-muted">
                     {data.member.member_code}
                     {data.member.office ? ` · ${data.member.office.name}` : ''}
-                    {data.member.role ? ` · ${roleLabel(t, data.member.role)}` : data.member.rank ? ` · ${t(`kams.rank.${data.member.rank}`, { defaultValue: data.member.rank })}` : ''}
+                    {data.member.role ? ` · ${roleLabel(t, data.member.role)}` : ''}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

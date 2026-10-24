@@ -2,6 +2,7 @@
 
 namespace App\Modules\Kams\Services;
 
+use App\Models\Role;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsStockSaleItem;
 use Illuminate\Support\Collection;
@@ -231,7 +232,7 @@ class PromotionEligibilityService
             $query->where('office_id', $officeId);
         }
 
-        return $query->get(['id', 'company_id', 'office_id', 'coach_member_id', 'role_id', 'rank', 'status']);
+        return $query->get(['id', 'company_id', 'office_id', 'coach_member_id', 'role_id', 'status']);
     }
 
     /**
@@ -357,20 +358,11 @@ class PromotionEligibilityService
             return $slug;
         }
 
-        $rank = mb_strtolower(trim((string) $member->rank));
-        if ($rank === '') {
+        if (! $member->role_id) {
             return null;
         }
 
-        return match (true) {
-            str_contains($rank, 'divisionnaire') => 'divisionnaire',
-            str_contains($rank, 'assistant') => 'assistant_manager',
-            str_contains($rank, 'secrétaire') || str_contains($rank, 'secretary') => 'secretary',
-            str_contains($rank, 'manager') => 'manager',
-            str_contains($rank, 'chef') || str_contains($rank, 'leader') || str_contains($rank, 'cheffe') => 'chef',
-            str_contains($rank, 'distribut') || str_contains($rank, 'guy') => 'distributor',
-            default => null,
-        };
+        return Role::query()->whereKey($member->role_id)->value('slug');
     }
 
     private function isBelowChef(?string $slug): bool

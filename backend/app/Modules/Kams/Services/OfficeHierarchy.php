@@ -3,6 +3,7 @@
 namespace App\Modules\Kams\Services;
 
 use App\Models\Office;
+use App\Models\Role;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsOfficeHistory;
 use App\Modules\Kams\Models\KamsStockSale;
@@ -73,18 +74,11 @@ class OfficeHierarchy
         if ($slug) {
             return $slug;
         }
-        $rank = mb_strtolower((string) $member->rank);
+        if (! $member->role_id) {
+            return null;
+        }
 
-        return match (true) {
-            str_contains($rank, 'divisionnaire') => 'divisionnaire',
-            str_contains($rank, 'vice') && str_contains($rank, 'président') => 'vice_president',
-            str_contains($rank, 'vice') && str_contains($rank, 'president') => 'vice_president',
-            str_contains($rank, 'partner') || str_contains($rank, 'partenaire') => 'partner',
-            str_contains($rank, 'assistant') => 'assistant_manager',
-            str_contains($rank, 'secrétaire') || str_contains($rank, 'secretary') => 'secretary',
-            str_contains($rank, 'manager') => 'manager',
-            default => null,
-        };
+        return Role::query()->whereKey($member->role_id)->value('slug');
     }
 
     /**
@@ -128,7 +122,6 @@ class OfficeHierarchy
                     ->value('id');
                 if ($roleId) {
                     $member->role_id = $roleId;
-                    $member->rank = 'Manager';
                 }
             }
             $member->save();
@@ -260,14 +253,7 @@ class OfficeHierarchy
             ->where('company_id', $office->company_id)
             ->where('office_id', $office->id)
             ->where(function ($q) {
-                $q->whereHas('role', fn ($role) => $role->where('slug', 'secretary'))
-                    ->orWhere(function ($legacy) {
-                        $legacy->whereNull('role_id')->where(function ($rank) {
-                            $rank->where('rank', 'like', '%Secretary%')
-                                ->orWhere('rank', 'like', '%Secrétaire%')
-                                ->orWhere('rank', 'like', '%Secretaire%');
-                        });
-                    });
+                $q->whereHas('role', fn ($role) => $role->where('slug', 'secretary'));
             })
             ->get();
     }

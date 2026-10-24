@@ -70,7 +70,6 @@ export const moduleSettingFields: Record<string, SettingField[]> = {
     { key: 'low_stock_notify', type: 'boolean' },
     { key: 'interview_hours', type: 'string' },
     { key: 'observation_hours', type: 'string' },
-    { key: 'default_member_rank', type: 'combobox', source: 'kams_roles' },
   ],
   'heavy-equipment': [
     { key: 'default_rental_days', type: 'number' },

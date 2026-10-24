@@ -53,7 +53,6 @@ class SettingsCatalog
                 'interview_hours' => ['type' => 'string', 'default' => '12:00-16:00'],
                 'observation_hours' => ['type' => 'string', 'default' => '07:30-17:30'],
                 'stock_loss_alert_percent' => ['type' => 'number', 'default' => '10'],
-                'default_member_rank' => ['type' => 'string', 'default' => 'Distributor'],
             ],
             'heavy-equipment' => [
                 'default_rental_days' => ['type' => 'number', 'default' => '7'],

@@ -2,7 +2,6 @@
 
 namespace App\Modules\Kams\Services;
 
-use App\Support\SettingsCatalog;
 use App\Modules\Kams\Models\KamsMember;
 use App\Modules\Kams\Models\KamsMemberHistory;
 use App\Modules\Kams\Models\KamsObservationDay;
@@ -59,7 +58,6 @@ class MemberRegistrationService
                 'trainer_user_id' => $coach?->user_id,
                 'coach_member_id' => $coach?->id,
                 'coach_name' => $coach?->full_name ?: $observation->supervisor_name,
-                'rank' => SettingsCatalog::string('kams', 'default_member_rank'),
                 'origin' => 'new_recruit',
                 'status' => 'active',
                 'joined_on' => now()->toDateString(),
@@ -96,7 +94,7 @@ class MemberRegistrationService
 
     public function applyProfileChange(KamsMember $member, string $field, mixed $value, ?string $reason, bool $requiresApproval = false): void
     {
-        $tracked = ['office_id', 'trainer_name', 'trainer_user_id', 'coach_member_id', 'coach_name', 'manager_name', 'manager_member_id', 'assistant_manager_member_id', 'fixed_salary', 'team_name', 'rank', 'role_id', 'status', 'phone', 'address'];
+        $tracked = ['office_id', 'trainer_name', 'trainer_user_id', 'coach_member_id', 'coach_name', 'manager_name', 'manager_member_id', 'assistant_manager_member_id', 'fixed_salary', 'team_name', 'role_id', 'status', 'phone', 'address'];
 
         if (! in_array($field, $tracked, true)) {
             $member->forceFill([$field => $value])->save();

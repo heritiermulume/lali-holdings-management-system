@@ -34,7 +34,6 @@ use App\Modules\Kams\Services\RecruitmentMetrics;
 use App\Modules\Kams\Support\DomainOptions;
 use App\Modules\Kams\Support\PersonName;
 use App\Support\ProfileContact;
-use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -76,7 +75,7 @@ class KamsRecruitmentController extends Controller
             ->whereIn('status', ['active', 'verified', 'pending_verification'])
             ->orderBy('full_name')
             ->limit(500)
-            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id', 'rank']);
+            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id']);
 
         $members = $this->mergeHierarchyEncadreurs($members, $office_links);
 
@@ -106,7 +105,6 @@ class KamsRecruitmentController extends Controller
         $settings = [
             'interview_hours' => InterviewHours::label(),
             'observation_hours' => ObservationHours::label(),
-            'default_member_rank' => SettingsCatalog::string('kams', 'default_member_rank'),
         ];
 
         return $this->ok(array_merge(
@@ -532,7 +530,6 @@ class KamsRecruitmentController extends Controller
             'manager_member_id' => ['nullable', 'exists:kams_members,id'],
             'assistant_manager_member_id' => ['nullable', 'exists:kams_members,id'],
             'fixed_salary' => ['nullable', 'numeric', 'min:0'],
-            'rank' => ['nullable', 'string', 'max:64'],
             'role_id' => ['nullable', 'exists:roles,id'],
             'joined_on' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
@@ -552,7 +549,6 @@ class KamsRecruitmentController extends Controller
             ...$data,
             'member_code' => $this->identity->nextMemberCode((int) $data['company_id']),
             'photo_path' => $photoPath,
-            'rank' => $data['rank'] ?? SettingsCatalog::string('kams', 'default_member_rank'),
             'origin' => 'migrated',
             'status' => 'active',
             'joined_on' => $data['joined_on'] ?? now()->toDateString(),
@@ -598,7 +594,7 @@ class KamsRecruitmentController extends Controller
         $coached = $member->coachedMembers()
             ->with(['office:id,name,code', 'role:id,name,slug'])
             ->orderBy('full_name')
-            ->get(['id', 'member_code', 'full_name', 'phone', 'photo_path', 'office_id', 'role_id', 'rank', 'gender', 'status']);
+            ->get(['id', 'member_code', 'full_name', 'phone', 'photo_path', 'office_id', 'role_id', 'gender', 'status']);
 
         $member->setAttribute('coached_members_count', $coached->count());
         $member->setAttribute('coached_members', $coached);
@@ -640,7 +636,6 @@ class KamsRecruitmentController extends Controller
             'assistant_manager_member_id' => ['nullable', 'exists:kams_members,id'],
             'fixed_salary' => ['nullable', 'numeric', 'min:0'],
             'team_name' => ['nullable', 'string'],
-            'rank' => ['nullable', 'string'],
             'role_id' => ['nullable', 'exists:roles,id'],
             'joined_on' => ['nullable', 'date'],
             'status' => ['nullable', 'in:pending_verification,verified,active,inactive,disputed'],
@@ -951,7 +946,7 @@ class KamsRecruitmentController extends Controller
             ->with('role:id,slug')
             ->whereIn('user_id', $userIds)
             ->whereIn('status', ['active', 'verified', 'pending_verification'])
-            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id', 'rank']);
+            ->get(['id', 'company_id', 'office_id', 'user_id', 'member_code', 'full_name', 'phone', 'role_id']);
 
         $hierarchy = app(OfficeHierarchy::class);
         foreach ($extra as $member) {

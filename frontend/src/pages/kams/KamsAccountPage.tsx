@@ -74,7 +74,6 @@ type Account = {
     id: number
     full_name: string
     member_code: string
-    rank?: string | null
     office?: { id: number; name: string; code: string } | null
     role?: { id: number; name: string; slug: string } | null
   }

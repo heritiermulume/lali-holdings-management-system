@@ -116,7 +116,6 @@ type CommissionMember = {
   full_name: string
   member_code: string
   photo_url?: string | null
-  rank?: string | null
   role?: { id: number; name: string; slug: string } | null
   office?: { id: number; name: string; code: string } | null
 }
@@ -863,7 +862,7 @@ export function KamsCompanyAccountPage() {
                       {commissions.beneficiaries.map((row) => {
                         const profile = row.member.role
                           ? roleLabel(t, row.member.role)
-                          : (row.member.rank || '—')
+                          : '—'
                         return (
                           <tr key={row.member.id} className="border-t border-line">
                             <td className="px-4 py-3">
@@ -1008,7 +1007,7 @@ export function KamsCompanyAccountPage() {
               <div className="min-w-0">
                 <div className="font-semibold text-ink">{detailMember.full_name}</div>
                 <div className="text-sm text-muted">
-                  {detailMember.role ? roleLabel(t, detailMember.role) : (detailMember.rank || detailMember.member_code)}
+                  {detailMember.role ? roleLabel(t, detailMember.role) : detailMember.member_code}
                 </div>
               </div>
               <div className="ml-auto text-right">

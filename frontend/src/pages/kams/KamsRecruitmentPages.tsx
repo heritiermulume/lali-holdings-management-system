@@ -56,7 +56,7 @@ function presetRange(period: Exclude<ListPeriod, 'custom'>) {
 type LookupOffice = { id: number; company_id: number; name: string; code: string }
 type OfficeLink = { id: number; company_id: number; parent_office_id?: number | null; creator_user_id?: number | null; manager_user_id?: number | null }
 type LookupCompany = { id: number; name: string; code: string }
-type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null; rank?: string | null }
+type LookupPerson = { id: number; company_id: number; office_id?: number | null; user_id?: number | null; member_code: string; full_name: string; phone?: string | null; role_id?: number | null }
 type LookupRole = { id: number; name: string; slug?: string; level?: number; offices?: Array<{ id: number; company_id: number }> }
 type Candidate = {
   id: number
@@ -130,7 +130,6 @@ type Member = {
   team_name?: string | null
   guardian_name?: string | null
   guardian_phone?: string | null
-  rank?: string | null
   role_id?: number | null
   role?: { id: number; name: string; slug?: string } | null
   is_certified?: boolean
@@ -151,7 +150,6 @@ type Member = {
     phone?: string | null
     photo_url?: string | null
     gender?: string | null
-    rank?: string | null
     role?: { id: number; name: string; slug?: string } | null
     office?: { name?: string; code?: string } | null
   }>
@@ -180,16 +178,6 @@ function canRecordInterview(status: string) {
 
 function canRecordObservation(status: string) {
   return ['observation', 'interview_admitted'].includes(status)
-}
-
-function memberRankLabel(
-  t: (key: string, options?: { defaultValue?: string }) => string,
-  rank?: string | null,
-  gender?: string | null,
-) {
-  if (!rank) return '—'
-  if (rank === 'Distributor' && gender === 'female') return t('kams.rank.Distributrice')
-  return t(`kams.rank.${rank}`, { defaultValue: rank })
 }
 
 function csvCell(value: unknown) {
@@ -405,7 +393,6 @@ const AGENT_IMPORT_HEADERS = [
   'coach_member_code',
   'joined_on',
   'status',
-  'rank',
   'team_name',
   'guardian_name',
   'guardian_phone',
@@ -444,7 +431,6 @@ function agentImportRow(row: Member): string[] {
     row.coach?.member_code || '',
     row.joined_on ? row.joined_on.slice(0, 10) : '',
     row.status || '',
-    row.rank || '',
     row.team_name || '',
     row.guardian_name || '',
     row.guardian_phone || '',
@@ -827,7 +813,7 @@ export function KamsAgents() {
   const memberRoleLabel = memberDetail
     ? (memberDetail.role
       ? roleLabel(t, memberDetail.role, memberDetail.gender)
-      : memberRankLabel(t, memberDetail.rank, memberDetail.gender))
+      : '—')
     : ''
   const memberEncadreur = memberDetail
     ? (memberDetail.coach?.full_name || memberDetail.coach_name || memberDetail.trainer?.name || memberDetail.trainer_name || '—')
@@ -837,7 +823,7 @@ export function KamsAgents() {
   const coachedTerm = coachedQuery.trim().toLowerCase()
   const filteredCoached = coachedMembers.filter((item) => {
     if (!coachedTerm) return true
-    const role = item.role ? roleLabel(t, item.role, item.gender) : memberRankLabel(t, item.rank, item.gender)
+    const role = item.role ? roleLabel(t, item.role, item.gender) : ''
     return [item.full_name, item.member_code, item.phone, item.office?.name, role].join(' ').toLowerCase().includes(coachedTerm)
   })
   const coachedLastPage = Math.max(1, Math.ceil(filteredCoached.length / coachedPerPage) || 1)
@@ -1011,7 +997,7 @@ export function KamsAgents() {
     row.phone || '',
     row.email || '',
     row.office?.name || '',
-    row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender),
+    row.role ? roleLabel(t, row.role, row.gender) : '',
     memberCoachName(row),
     t(`kams.status.${row.status}`, { defaultValue: row.status }),
   ]
@@ -1084,10 +1070,7 @@ export function KamsAgents() {
   const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
   const companySelected = Boolean(form.company_id)
   const distributorRoleIds = new Set(roles.filter((role) => role.slug === 'distributor').map((role) => String(role.id)))
-  const isDistributor = (person: LookupPerson) => (
-    (person.role_id != null && distributorRoleIds.has(String(person.role_id)))
-    || (person.rank || '').toLowerCase().includes('distributor')
-  )
+  const isDistributor = (person: LookupPerson) => person.role_id != null && distributorRoleIds.has(String(person.role_id))
   const officeLink = officeLinks.find((link) => String(link.id) === form.office_id)
   const officeOpener = officeLink?.creator_user_id
     ? people.find((person) => String(person.user_id) === String(officeLink.creator_user_id))
@@ -1324,7 +1307,7 @@ export function KamsAgents() {
             <td className="px-4 py-1.5 whitespace-nowrap text-muted">{row.member_code}</td>
             <td className="px-4 py-1.5 whitespace-nowrap">{row.phone || '—'}</td>
             <td className="px-4 py-1.5 whitespace-nowrap">{row.office?.name || '—'}</td>
-            <td className="w-28 max-w-28 truncate px-4 py-1.5" title={row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender)}>{row.role ? roleLabel(t, row.role, row.gender) : memberRankLabel(t, row.rank, row.gender)}</td>
+            <td className="w-28 max-w-28 truncate px-4 py-1.5" title={row.role ? roleLabel(t, row.role, row.gender) : '—'}>{row.role ? roleLabel(t, row.role, row.gender) : '—'}</td>
             <td className="px-4 py-1.5 whitespace-nowrap">
               <Badge tone={toneFor(row.status)}>{t(`kams.status.${row.status}`, { defaultValue: row.status })}</Badge>
             </td>
@@ -1656,7 +1639,7 @@ export function KamsAgents() {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{item.full_name}</div>
                 <div className="truncate text-xs text-muted">
-                  {[item.member_code, item.office?.name, item.role ? roleLabel(t, item.role, item.gender) : memberRankLabel(t, item.rank, item.gender)].filter(Boolean).join(' · ')}
+                  {[item.member_code, item.office?.name, item.role ? roleLabel(t, item.role, item.gender) : null].filter(Boolean).join(' · ')}
                 </div>
               </div>
             </div>
@@ -1742,7 +1725,6 @@ export function KamsCandidates() {
   const [recruitmentSettings, setRecruitmentSettings] = useState<{
     interview_hours?: string
     observation_hours?: string
-    default_member_rank?: string
   }>({})
   const [open, setOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)

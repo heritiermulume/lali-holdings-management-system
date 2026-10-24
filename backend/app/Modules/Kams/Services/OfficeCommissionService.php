@@ -25,7 +25,7 @@ class OfficeCommissionService
 
         $rows = $this->payableQuery((int) $account->company_id, (int) $account->office_id)
             ->with([
-                'beneficiary:id,full_name,member_code,office_id,role_id,rank,photo_path',
+                'beneficiary:id,full_name,member_code,office_id,role_id,photo_path',
                 'beneficiary.role:id,name,slug',
                 'beneficiary.office:id,name,code',
             ])
@@ -50,7 +50,6 @@ class OfficeCommissionService
                     'full_name' => $member->full_name,
                     'member_code' => $member->member_code,
                     'photo_url' => $member->photo_url,
-                    'rank' => $member->rank,
                     'role' => $member->role ? [
                         'id' => $member->role->id,
                         'name' => $member->role->name,
@@ -97,7 +96,6 @@ class OfficeCommissionService
                 'full_name' => $member->full_name,
                 'member_code' => $member->member_code,
                 'photo_url' => $member->photo_url,
-                'rank' => $member->rank,
                 'role' => $member->role ? [
                     'id' => $member->role->id,
                     'name' => $member->role->name,
