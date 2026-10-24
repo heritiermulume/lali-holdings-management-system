@@ -78,10 +78,11 @@ function applyInputValidityMessage(
 export function Field({
   label,
   className,
+  error,
   onInvalid,
   onInput,
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & { label: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string }) {
   const { t } = useTranslation()
 
   return (
@@ -94,6 +95,7 @@ export function Field({
         className={cn(
           'min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none ring-lhms/20 focus:border-lhms focus:ring-4',
           (props.readOnly || props.disabled) && 'bg-surface text-muted',
+          error && 'border-danger',
           className,
         )}
         {...props}
@@ -106,6 +108,7 @@ export function Field({
           onInput?.(event)
         }}
       />
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
     </label>
   )
 }
@@ -116,8 +119,11 @@ export function Select({
   className,
   onInvalid,
   onChange,
+  onOpen,
+  onFocus,
+  onMouseDown,
   ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & { label: string; children: ReactNode }) {
+}: SelectHTMLAttributes<HTMLSelectElement> & { label: string; children: ReactNode; onOpen?: () => void }) {
   const { t } = useTranslation()
 
   return (
@@ -136,6 +142,14 @@ export function Select({
         onInvalid={(event) => {
           applyInputValidityMessage(event.currentTarget, t)
           onInvalid?.(event)
+        }}
+        onFocus={(event) => {
+          onOpen?.()
+          onFocus?.(event)
+        }}
+        onMouseDown={(event) => {
+          onOpen?.()
+          onMouseDown?.(event)
         }}
         onChange={(event) => {
           event.currentTarget.setCustomValidity('')

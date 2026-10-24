@@ -15,6 +15,7 @@ use App\Modules\Kams\Services\KamsAccountProvisioner;
 use App\Modules\Kams\Services\PeoplePhotoStorage;
 use App\Modules\Kams\Support\SpreadsheetRows;
 use App\Services\UserCredentialsService;
+use App\Support\ProfileContact;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -259,8 +260,8 @@ class UserController extends Controller
             'first_name' => [$userId ? 'sometimes' : 'required', 'string', 'max:120'],
             'last_name' => [$userId ? 'sometimes' : 'required', 'string', 'max:120'],
             'gender' => ['nullable', Rule::in(['male', 'female'])],
-            'email' => [$userId ? 'sometimes' : 'required', 'email', Rule::unique('users', 'email')->ignore($userId)],
-            'phone' => ['nullable', 'string', 'max:40'],
+            'email' => [$userId ? 'sometimes' : 'required', 'email', ProfileContact::emailRule($userId)],
+            'phone' => ['nullable', 'string', 'max:40', ProfileContact::phoneRule($userId)],
             'locale' => ['nullable', 'in:fr,en,sw'],
             'timezone' => ['nullable', 'string', 'max:64'],
             'is_active' => ['boolean'],
@@ -574,7 +575,10 @@ class UserController extends Controller
         $activeValue = strtolower($this->rowValue($row, ['is_active', 'actif', 'status', 'statut']));
 
         abort_unless($firstName && $lastName && $email, 422, __('First name, last name and email are required.'));
-        abort_if(User::query()->where('email', $email)->exists(), 422, __('A user with this email already exists.'));
+        abort_if(ProfileContact::emailTaken($email, ['users' => [], 'members' => [], 'candidates' => [], 'clients' => []]), 422, __('This email address is already linked to another profile.'));
+        if ($phone) {
+            abort_if(ProfileContact::phoneTaken($phone, ['users' => [], 'members' => [], 'candidates' => [], 'clients' => []]), 422, __('This phone number is already linked to another profile.'));
+        }
 
         $isActive = ! in_array($activeValue, ['0', 'false', 'inactive', 'inactif', 'no', 'non'], true);
 

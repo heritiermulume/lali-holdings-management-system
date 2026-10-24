@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
+import { contactFieldErrors } from '../../lib/formErrors'
 import { trackLoadSpinner } from '../../lib/dataSync'
 import { withBusy } from '../../lib/busy'
 import { cn } from '../../lib/cn'
@@ -116,6 +117,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
   const [deleting, setDeleting] = useState<Client | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({ email: '', phone: '' })
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [filterOpen, setFilterOpen] = useState(false)
@@ -179,7 +181,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
 
   useLiveData(() => load(query))
 
-  useEffect(() => {
+  const loadLookups = (resetWarehouseDefaults = false) => {
     api.get('/modules/kams/clients/lookups').then((res) => {
       const list = (res.data.data.offices || []) as Office[]
       const warehouseList = (res.data.data.warehouses || []) as Location[]
@@ -187,10 +189,20 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
       setWarehouses(warehouseList)
       setSegments(res.data.data.options?.client_segments ?? [])
       setStatuses(res.data.data.options?.client_statuses ?? [])
-      setSelectedWarehouseIds(warehouseList.map((row) => row.id))
-      setAssignAllWarehouses(true)
+      if (resetWarehouseDefaults) {
+        setSelectedWarehouseIds(warehouseList.map((row) => row.id))
+        setAssignAllWarehouses(true)
+      }
     })
+  }
+
+  useEffect(() => {
+    loadLookups(true)
   }, [])
+
+  useEffect(() => {
+    if (formOpen) loadLookups(false)
+  }, [formOpen])
 
   const resetForm = () => {
     setEditing(null)
@@ -271,6 +283,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
     }
     setSaving(true)
     setFormError('')
+    setFieldErrors({ email: '', phone: '' })
     try {
       if (editing) {
         await api.put(`/modules/kams/clients/${editing.id}`, payload)
@@ -282,8 +295,9 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
       void load()
     } catch (error) {
       const response = (error as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } }).response?.data
-      const firstError = response?.errors ? Object.values(response.errors).flat()[0] : undefined
-      setFormError(firstError || response?.message || t('kams.saveError'))
+      const parsed = contactFieldErrors(response, t('kams.saveError'))
+      setFieldErrors({ email: parsed.email, phone: parsed.phone })
+      setFormError(parsed.form)
     } finally {
       setSaving(false)
     }
@@ -571,7 +585,7 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
               <p className="py-2 text-center text-sm text-muted">{t('kams.noWarehousesYet')}</p>
             )
           ) : canChooseOffice ? (
-            <Select label={t('kams.office')} required value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>
+            <Select label={t('kams.office')} required onOpen={() => loadLookups(false)} value={form.office_id || ''} onChange={(e) => setForm({ ...form, office_id: e.target.value })}>
               <option value="">—</option>
               {offices.map((office) => (
                 <option key={office.id} value={office.id}>
@@ -582,8 +596,8 @@ function KamsPartyDirectory({ kind }: { kind: PartyKind }) {
           ) : null}
           <Field label={t('org.name')} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={t('kams.phone')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-            <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <Field label={t('kams.phone')} error={fieldErrors.phone} value={form.phone || ''} onChange={(e) => { setFieldErrors((current) => ({ ...current, phone: '' })); setForm({ ...form, phone: e.target.value }) }} />
+            <Field label={t('kams.email')} type="email" error={fieldErrors.email} value={form.email || ''} onChange={(e) => { setFieldErrors((current) => ({ ...current, email: '' })); setForm({ ...form, email: e.target.value }) }} />
           </div>
           <div className={cn('grid gap-3', isSupplier ? '' : 'sm:grid-cols-2')}>
             <Field label={t('kams.city')} value={form.city || ''} onChange={(e) => setForm({ ...form, city: e.target.value })} />

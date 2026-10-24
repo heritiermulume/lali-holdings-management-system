@@ -115,13 +115,21 @@ export function KamsPatrimoinePage() {
     return () => document.removeEventListener('click', onClick)
   }, [])
 
-  useEffect(() => {
+  const loadLookups = () => {
     api.get('/modules/kams/patrimoine/lookups').then((res) => {
       setOffices((res.data.data?.offices ?? []) as Office[])
       setCategories(res.data.data?.categories ?? [])
       setStatuses(res.data.data?.statuses ?? [])
     }).catch(() => undefined)
+  }
+
+  useEffect(() => {
+    loadLookups()
   }, [])
+
+  useEffect(() => {
+    if (formOpen) loadLookups()
+  }, [formOpen])
 
   useEffect(() => {
     void reload()

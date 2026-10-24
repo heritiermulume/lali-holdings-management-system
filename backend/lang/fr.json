@@ -61,5 +61,7 @@
     "A transfer request is already pending for this beneficiary.": "Une demande de transfert est déjà en attente pour ce bénéficiaire.",
     "Office commission transfer (:count lines)": "Transfert de commissions bureau (:count lignes)",
     "Commission transfer requested. Waiting for the beneficiary to accept it in My account.": "Transfert de commissions demandé. En attente d'acceptation par le bénéficiaire dans Mon compte.",
-    "Commission transfers must be accepted by the beneficiary in My account.": "Les transferts de commission doivent être acceptés par le bénéficiaire dans Mon compte."
+    "Commission transfers must be accepted by the beneficiary in My account.": "Les transferts de commission doivent être acceptés par le bénéficiaire dans Mon compte.",
+    "This email address is already linked to another profile.": "Cette adresse e-mail est déjà liée à un autre profil.",
+    "This phone number is already linked to another profile.": "Ce numéro de téléphone est déjà lié à un autre profil."
 }

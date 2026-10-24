@@ -75,7 +75,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'first_name' => ['sometimes', 'string', 'max:120'],
             'last_name' => ['sometimes', 'string', 'max:120'],
-            'phone' => ['nullable', 'string', 'max:40'],
+            'phone' => ['nullable', 'string', 'max:40', \App\Support\ProfileContact::phoneRule($user->id)],
             'locale' => ['sometimes', 'in:fr,en,sw'],
             'timezone' => ['sometimes', 'string', 'max:64'],
             'avatar' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],

@@ -9,6 +9,7 @@ import { LoadingScreen } from '../components/LoadingScreen'
 import { useAuth } from '../context/AuthContext'
 import { useLiveData } from '../hooks/useLiveData'
 import api from '../lib/api'
+import { contactFieldErrors } from '../lib/formErrors'
 import { withBusy } from '../lib/busy'
 import { trackLoadSpinner } from '../lib/dataSync'
 import { cn } from '../lib/cn'
@@ -168,6 +169,7 @@ export function UsersPage() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(emptyForm())
   const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({ email: '', phone: '' })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
@@ -281,10 +283,18 @@ export function UsersPage() {
 
   useLiveData(() => load(query, page, perPage))
 
-  useEffect(() => {
+  const loadCatalogs = () => {
     api.get('/roles').then((res) => setRoles(res.data.data))
     api.get('/companies', { params: { business: 1, per_page: 50 } }).then((res) => setCompanies(res.data.data))
+  }
+
+  useEffect(() => {
+    loadCatalogs()
   }, [])
+
+  useEffect(() => {
+    if (open) loadCatalogs()
+  }, [open])
 
   useEffect(() => {
     if (!formCanBeCertified && form.is_certified) {
@@ -495,6 +505,7 @@ export function UsersPage() {
     if (editing && photoRemoved && !photo) payload.append('remove_avatar', '1')
     setSaving(true)
     setFormError('')
+    setFieldErrors({ email: '', phone: '' })
     try {
       if (editing) {
         payload.append('_method', 'PUT')
@@ -520,8 +531,9 @@ export function UsersPage() {
       void load()
     } catch (error) {
       const response = (error as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } }).response?.data
-      const firstError = response?.errors ? Object.values(response.errors).flat()[0] : undefined
-      setFormError(firstError || response?.message || t('users.saveError'))
+      const parsed = contactFieldErrors(response, t('users.saveError'))
+      setFieldErrors({ email: parsed.email, phone: parsed.phone })
+      setFormError(parsed.form)
     } finally {
       setSaving(false)
     }
@@ -952,8 +964,8 @@ export function UsersPage() {
             <option value="male">{t('users.genderMale')}</option>
             <option value="female">{t('users.genderFemale')}</option>
           </Select>
-          <Field label={t('users.email')} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-          <Field label={t('users.phone')} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          <Field label={t('users.email')} type="email" error={fieldErrors.email} value={form.email} onChange={(e) => { setFieldErrors((current) => ({ ...current, email: '' })); setForm({ ...form, email: e.target.value }) }} required />
+          <Field label={t('users.phone')} error={fieldErrors.phone} value={form.phone} onChange={(e) => { setFieldErrors((current) => ({ ...current, phone: '' })); setForm({ ...form, phone: e.target.value }) }} />
           <div className="flex items-end gap-3">
             <div className="min-w-0 flex-1">
               <Select label={t('common.status')} value={form.is_active ? '1' : '0'} onChange={(e) => setForm({ ...form, is_active: e.target.value === '1' })}>
@@ -980,7 +992,7 @@ export function UsersPage() {
               <p className="text-xs text-muted">{t('users.certifiedHint')}</p>
             </div>
           ) : null}
-          <Select label={t('users.platformRole')} value={form.platform_role_id} onChange={(e) => setForm({ ...form, platform_role_id: e.target.value })}>
+          <Select label={t('users.platformRole')} onOpen={loadCatalogs} value={form.platform_role_id} onChange={(e) => setForm({ ...form, platform_role_id: e.target.value })}>
             <option value="">{t('users.noPlatformRole')}</option>
             {platformRoles.map((role) => <option key={role.id} value={role.id}>{roleLabel(t, role)}</option>)}
           </Select>
@@ -1011,6 +1023,7 @@ export function UsersPage() {
                   <div className="min-w-0 flex-1">
                     <Select
                       label={t('users.company')}
+                      onOpen={loadCatalogs}
                       value={membership.company_id}
                       onChange={(e) => updateMembership(index, { company_id: e.target.value })}
                     >
@@ -1032,6 +1045,7 @@ export function UsersPage() {
                     <>
                       <Select
                         label={t('users.membershipRole')}
+                        onOpen={loadCatalogs}
                         value={membership.role_id}
                         onChange={(e) => updateMembership(index, { role_id: e.target.value })}
                         disabled={!membership.company_id}
@@ -1057,6 +1071,7 @@ export function UsersPage() {
                           <div className="min-w-0 flex-1 space-y-2">
                             <Select
                               label={t('users.office')}
+                              onOpen={loadCatalogs}
                               value={assigned.office_id ? String(assigned.office_id) : ''}
                               onChange={(e) => updateOfficeRow(index, officeIndex, { office_id: Number(e.target.value) || 0 })}
                               disabled={!membership.company_id}
@@ -1074,6 +1089,7 @@ export function UsersPage() {
                             </Select>
                             <Select
                               label={t('users.officeRole')}
+                              onOpen={loadCatalogs}
                               value={assigned.role_id}
                               onChange={(e) => updateOfficeRow(index, officeIndex, { role_id: e.target.value })}
                               disabled={!assigned.office_id || companyRoles.length === 0}

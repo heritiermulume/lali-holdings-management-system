@@ -31,6 +31,7 @@ export function SearchCombobox({
   disabled,
   emptyLabel,
   required,
+  onOpen,
   onSelect,
 }: {
   label: string
@@ -40,6 +41,7 @@ export function SearchCombobox({
   disabled?: boolean
   emptyLabel?: string
   required?: boolean
+  onOpen?: () => void
   onSelect: (item: SearchComboboxItem | null) => void
 }) {
   const [query, setQuery] = useState('')
@@ -120,6 +122,7 @@ export function SearchCombobox({
             if (disabled) return
             setQuery('')
             setOpen(true)
+            onOpen?.()
           }}
           autoComplete="off"
         />

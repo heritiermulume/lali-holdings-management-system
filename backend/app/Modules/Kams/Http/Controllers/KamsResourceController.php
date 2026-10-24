@@ -18,6 +18,7 @@ use App\Modules\Kams\Services\StockInventory;
 use App\Modules\Kams\Services\StockJournal;
 use App\Modules\Kams\Support\DomainOptions;
 use App\Modules\Kams\Support\KamsDocumentRefs;
+use App\Support\ProfileContact;
 use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -77,8 +78,8 @@ class KamsResourceController extends Controller
             'assign_all_warehouses' => ['nullable', 'boolean'],
             'kind' => ['nullable', 'in:client,supplier'],
             'name' => ['required', 'string'],
-            'email' => ['nullable', 'email'],
-            'phone' => ['nullable', 'string'],
+            'email' => ['nullable', 'email', ProfileContact::emailRule()],
+            'phone' => ['nullable', 'string', ProfileContact::phoneRule()],
             'city' => ['nullable', 'string'],
             'segment' => ['nullable', 'string'],
             'status' => ['nullable', 'in:active,inactive,prospect'],
@@ -124,8 +125,8 @@ class KamsResourceController extends Controller
             'assign_all_warehouses' => ['nullable', 'boolean'],
             'kind' => ['nullable', 'in:client,supplier'],
             'name' => ['sometimes', 'string'],
-            'email' => ['nullable', 'email'],
-            'phone' => ['nullable', 'string'],
+            'email' => ['nullable', 'email', ProfileContact::emailRule(ignoreClientId: $client->id)],
+            'phone' => ['nullable', 'string', ProfileContact::phoneRule(ignoreClientId: $client->id)],
             'city' => ['nullable', 'string'],
             'segment' => ['nullable', 'string'],
             'status' => ['nullable', 'in:active,inactive,prospect'],

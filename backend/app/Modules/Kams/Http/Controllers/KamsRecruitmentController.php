@@ -33,6 +33,7 @@ use Illuminate\Validation\Rules\Password;
 use App\Modules\Kams\Services\RecruitmentMetrics;
 use App\Modules\Kams\Support\DomainOptions;
 use App\Modules\Kams\Support\PersonName;
+use App\Support\ProfileContact;
 use App\Support\SettingsCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -195,8 +196,8 @@ class KamsRecruitmentController extends Controller
             'last_name' => ['required', 'string', 'max:120'],
             'gender' => ['required', 'in:male,female'],
             'birth_date' => ['required', 'date', 'before:today'],
-            'phone' => ['required', 'string', 'max:64'],
-            'email' => ['required', 'email'],
+            'phone' => ['required', 'string', 'max:64', ProfileContact::phoneRule()],
+            'email' => ['required', 'email', ProfileContact::emailRule()],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'address' => ['nullable', 'string'],
             'guardian_name' => ['nullable', 'string', 'max:255'],
@@ -259,8 +260,8 @@ class KamsRecruitmentController extends Controller
             'full_name' => ['sometimes', 'string', 'max:255'],
             'gender' => ['nullable', 'in:male,female'],
             'birth_date' => ['required', 'date', 'before:today'],
-            'phone' => ['nullable', 'string', 'max:64'],
-            'email' => ['required', 'email'],
+            'phone' => ['nullable', 'string', 'max:64', ProfileContact::phoneRule(ignoreCandidateId: $candidate->id)],
+            'email' => ['required', 'email', ProfileContact::emailRule(ignoreCandidateId: $candidate->id)],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'remove_photo' => ['sometimes', 'boolean'],
             'address' => ['nullable', 'string'],
@@ -520,8 +521,8 @@ class KamsRecruitmentController extends Controller
             'last_name' => ['required', 'string', 'max:120'],
             'gender' => ['required', 'in:male,female'],
             'birth_date' => ['nullable', 'date', 'before:today'],
-            'phone' => ['required', 'string', 'max:64'],
-            'email' => ['nullable', 'email'],
+            'phone' => ['required', 'string', 'max:64', ProfileContact::phoneRule()],
+            'email' => ['nullable', 'email', ProfileContact::emailRule()],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'address' => ['nullable', 'string'],
             'trainer_name' => ['nullable', 'string', 'max:255'],
@@ -626,8 +627,8 @@ class KamsRecruitmentController extends Controller
             'last_name' => ['sometimes', 'string', 'max:120'],
             'gender' => ['nullable', 'in:male,female'],
             'birth_date' => ['nullable', 'date', 'before:today'],
-            'phone' => ['nullable', 'string'],
-            'email' => ['nullable', 'email'],
+            'phone' => ['nullable', 'string', ProfileContact::phoneRule(ignoreMemberId: $member->id)],
+            'email' => ['nullable', 'email', ProfileContact::emailRule(ignoreMemberId: $member->id)],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'remove_photo' => ['sometimes', 'boolean'],
             'address' => ['nullable', 'string'],
@@ -848,8 +849,8 @@ class KamsRecruitmentController extends Controller
             'last_name' => ['required', 'string', 'max:120'],
             'gender' => ['required', 'in:male,female'],
             'birth_date' => ['nullable', 'date', 'before:today'],
-            'phone' => ['required', 'string', 'max:64'],
-            'email' => ['nullable', 'email'],
+            'phone' => ['required', 'string', 'max:64', ProfileContact::phoneRule()],
+            'email' => ['nullable', 'email', ProfileContact::emailRule()],
             'photo' => ['nullable', 'file', 'max:2048', 'mimes:jpg,jpeg,png,webp'],
             'address' => ['nullable', 'string'],
             'guardian_name' => ['nullable', 'string', 'max:255'],

@@ -197,6 +197,10 @@ export function KamsTransfers() {
     void loadLookups()
   }, [])
 
+  useEffect(() => {
+    if (open) void loadLookups()
+  }, [open])
+
   useLiveData(load)
 
   useEffect(() => {
@@ -605,6 +609,10 @@ export function KamsAssignments() {
   useEffect(() => {
     void reloadLookups()
   }, [officeId])
+
+  useEffect(() => {
+    if (open) void reloadLookups()
+  }, [open])
 
   // Hide agents who already have an open (not yet closed) assignment.
   const busyAgentIds = new Set(

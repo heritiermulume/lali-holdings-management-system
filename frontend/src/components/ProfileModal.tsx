@@ -19,6 +19,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [photoRemoved, setPhotoRemoved] = useState(false)
   const [photoError, setPhotoError] = useState('')
+  const [phoneError, setPhoneError] = useState('')
   const [passwordOpen, setPasswordOpen] = useState(false)
 
   const clearPreview = () => {
@@ -43,6 +44,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
     setPhotoRemoved(false)
     setSaved(false)
     setPhotoError('')
+    setPhoneError('')
     setPasswordOpen(false)
     setPhotoPreview((current) => {
       if (current?.startsWith('blob:')) URL.revokeObjectURL(current)
@@ -74,6 +76,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
   const save = async () => {
     setSaving(true)
     setSaved(false)
+    setPhoneError('')
     try {
       const payload = new FormData()
       payload.append('_method', 'PUT')
@@ -85,6 +88,9 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
       await api.post('/auth/profile', payload)
       await refresh()
       setSaved(true)
+    } catch (error) {
+      const response = (error as { response?: { data?: { errors?: Record<string, string[]> } } }).response?.data
+      setPhoneError(response?.errors?.phone?.[0] || t('users.saveError'))
     } finally {
       setSaving(false)
     }
@@ -148,8 +154,9 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
           <Field label={t('users.email')} type="email" value={user?.email || ''} readOnly />
           <Field
             label={t('users.phone')}
+            error={phoneError}
             value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })}
+            onChange={(e) => { setPhoneError(''); setForm({ ...form, phone: e.target.value }) }}
           />
           <Field label={t('users.role')} value={roleLabel(t, user?.roles?.[0], user?.gender) || '—'} readOnly />
           <Field label={t('users.company')} value={user?.primary_company?.name || '—'} readOnly />

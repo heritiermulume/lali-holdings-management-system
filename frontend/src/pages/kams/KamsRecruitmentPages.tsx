@@ -18,6 +18,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useLiveData } from '../../hooks/useLiveData'
 import { useOfficeScope } from '../../hooks/useOfficeScope'
 import api from '../../lib/api'
+import { contactFieldErrors } from '../../lib/formErrors'
 import { withBusy } from '../../lib/busy'
 import { trackLoadSpinner } from '../../lib/dataSync'
 import { KamsWorkspaceTabs } from './KamsWorkspaceTabs'
@@ -164,51 +165,7 @@ function roleIsCertifiable(role?: { slug?: string } | null) {
   return Boolean(role?.slug && CERTIFIABLE_ROLE_SLUGS.has(role.slug))
 }
 
-const HIERARCHY_ENCADREUR_SLUGS = new Set(['divisionnaire', 'manager'])
 const OPENER_AS_ENCADREUR_SLUGS = new Set(['partner', 'vice_president', 'divisionnaire', 'manager'])
-
-function personRoleSlug(person: LookupPerson, roles: LookupRole[]) {
-  const slug = roles.find((role) => String(role.id) === String(person.role_id))?.slug
-  if (slug) return slug
-  const rank = (person.rank || '').toLowerCase()
-  if (rank.includes('divisionnaire')) return 'divisionnaire'
-  if (rank.includes('assistant')) return 'assistant_manager'
-  if (rank.includes('manager')) return 'manager'
-  return ''
-}
-
-function hierarchicalEncadreurs(
-  officeId: string | undefined,
-  companyId: string | undefined,
-  links: OfficeLink[],
-  people: LookupPerson[],
-  roles: LookupRole[],
-) {
-  if (!officeId) return []
-  const byId = new Map(links.map((link) => [String(link.id), link]))
-  const byUser = new Map<string, LookupPerson>()
-  for (const person of people) {
-    if (!person.user_id) continue
-    if (companyId && String(person.company_id) !== companyId) continue
-    byUser.set(String(person.user_id), person)
-  }
-  const ordered: LookupPerson[] = []
-  const seen = new Set<string>()
-  let current = byId.get(String(officeId))
-  let guard = 0
-  while (current && guard++ < 40) {
-    for (const userId of [current.creator_user_id, current.manager_user_id]) {
-      if (!userId) continue
-      const person = byUser.get(String(userId))
-      if (!person || seen.has(String(person.id))) continue
-      if (!HIERARCHY_ENCADREUR_SLUGS.has(personRoleSlug(person, roles))) continue
-      seen.add(String(person.id))
-      ordered.push(person)
-    }
-    current = current.parent_office_id ? byId.get(String(current.parent_office_id)) : undefined
-  }
-  return ordered
-}
 function membersFromImport(data: { rows?: Array<{ member?: Member }> } | undefined): Member[] {
   return (data?.rows || []).map((row) => row.member).filter((member): member is Member => Boolean(member))
 }
@@ -536,11 +493,19 @@ export function KamsRecruitmentWorkspace() {
   const range = period === 'custom' ? { from, to } : presetRange(period)
   const formatDay = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString(locale)
 
-  useEffect(() => {
+  const loadOffices = () => {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
       setOffices(res.data.data.offices ?? [])
     })
+  }
+
+  useEffect(() => {
+    loadOffices()
   }, [])
+
+  useEffect(() => {
+    if (filtersOpen) loadOffices()
+  }, [filtersOpen])
 
   return (
     <div>
@@ -660,6 +625,7 @@ export function KamsAgents() {
   const [photoRemoved, setPhotoRemoved] = useState(false)
   const [photoError, setPhotoError] = useState('')
   const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({ email: '', phone: '' })
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ password: '', confirmation: '' })
   const [pendingPassword, setPendingPassword] = useState<string | null>(null)
@@ -712,7 +678,7 @@ export function KamsAgents() {
 
   useLiveData(() => load(query))
 
-  useEffect(() => {
+  const loadLookups = () => {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
       setCompanies(res.data.data.companies)
       setOffices(res.data.data.offices)
@@ -729,7 +695,15 @@ export function KamsAgents() {
         }))
       }
     })
+  }
+
+  useEffect(() => {
+    loadLookups()
   }, [])
+
+  useEffect(() => {
+    if (formOpen) loadLookups()
+  }, [formOpen])
 
   const resolveKamsCompanyId = (list = companies) => {
     if (list.length === 0) return ''
@@ -918,6 +892,7 @@ export function KamsAgents() {
 
     setSaving(true)
     setFormError('')
+    setFieldErrors({ email: '', phone: '' })
     try {
       if (editing) {
         payload.append('_method', 'PUT')
@@ -952,8 +927,9 @@ export function KamsAgents() {
       void load()
     } catch (error) {
       const response = (error as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } }).response?.data
-      const firstError = response?.errors ? Object.values(response.errors).flat()[0] : undefined
-      setFormError(firstError || response?.message || t('kams.saveError'))
+      const parsed = contactFieldErrors(response, t('kams.saveError'))
+      setFieldErrors({ email: parsed.email, phone: parsed.phone })
+      setFormError(parsed.form)
     } finally {
       setSaving(false)
     }
@@ -1107,30 +1083,28 @@ export function KamsAgents() {
     }))
   const selectedOffice = officeOptions.find((item) => item.id === form.office_id) ?? null
   const companySelected = Boolean(form.company_id)
-  const companyPeople = people.filter((person) => (
-    (!form.company_id || String(person.company_id) === form.company_id)
-    && (!form.office_id || !person.office_id || String(person.office_id) === form.office_id)
-  ))
+  const distributorRoleIds = new Set(roles.filter((role) => role.slug === 'distributor').map((role) => String(role.id)))
+  const isDistributor = (person: LookupPerson) => (
+    (person.role_id != null && distributorRoleIds.has(String(person.role_id)))
+    || (person.rank || '').toLowerCase().includes('distributor')
+  )
   const officeLink = officeLinks.find((link) => String(link.id) === form.office_id)
   const officeOpener = officeLink?.creator_user_id
     ? people.find((person) => String(person.user_id) === String(officeLink.creator_user_id))
     : undefined
-  const openerOutsideOffice = Boolean(
+  const openerAllowed = Boolean(
     officeOpener
-    && form.office_id
-    && String(officeOpener.office_id || '') !== String(form.office_id),
+    && OPENER_AS_ENCADREUR_SLUGS.has(formRole?.slug || '')
+    && (!editing || String(officeOpener.id) !== String(editing.id)),
   )
-  const hideRemoteOpener = openerOutsideOffice && !OPENER_AS_ENCADREUR_SLUGS.has(formRole?.slug || '')
-  const hierarchyCoaches = hierarchicalEncadreurs(form.office_id, form.company_id, officeLinks, people, roles)
-    .filter((person) => !editing || String(person.id) !== String(editing.id))
-  const coachPeople = [
-    ...hierarchyCoaches,
-    ...companyPeople.filter((person) => (
-      Boolean(person.user_id)
-      && (!editing || String(person.id) !== String(editing.id))
-      && !hierarchyCoaches.some((coach) => String(coach.id) === String(person.id))
-    )),
-  ].filter((person) => !hideRemoteOpener || !officeOpener || String(person.id) !== String(officeOpener.id))
+  const coachPeople = people.filter((person) => {
+    if (editing && String(person.id) === String(editing.id)) return false
+    if (form.company_id && String(person.company_id) !== form.company_id) return false
+    const sameOffice = Boolean(form.office_id) && String(person.office_id || '') === String(form.office_id)
+    const isOpener = Boolean(officeOpener) && String(person.id) === String(officeOpener?.id)
+    if (isOpener && openerAllowed) return true
+    return sameOffice && !isDistributor(person)
+  })
   const actorLevel = Math.max(0, ...(user?.roles ?? []).map((role) => role.level ?? 0))
   const assignableRoles = (user?.is_super_admin || user?.is_group_admin)
     ? roles
@@ -1473,6 +1447,7 @@ export function KamsAgents() {
           {showOfficeFilter ? (
             <SearchCombobox
               label={t('kams.office')}
+              onOpen={loadLookups}
               value={selectedOffice}
               items={officeOptions}
               disabled={!companySelected}
@@ -1492,6 +1467,7 @@ export function KamsAgents() {
           <Select
             label={t('users.role')}
             required
+            onOpen={loadLookups}
             disabled={!form.office_id}
             value={form.role_id || ''}
             onChange={(e) => setForm({ ...form, role_id: e.target.value })}
@@ -1527,11 +1503,12 @@ export function KamsAgents() {
             </Select>
             <Field label={t('kams.birthDate')} type="date" value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
           </div>
-          <Field label={t('kams.phoneWhatsapp')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
-          <Field label={t('kams.email')} type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <Field label={t('kams.phoneWhatsapp')} error={fieldErrors.phone} value={form.phone || ''} onChange={(e) => { setFieldErrors((current) => ({ ...current, phone: '' })); setForm({ ...form, phone: e.target.value }) }} required />
+          <Field label={t('kams.email')} type="email" error={fieldErrors.email} value={form.email || ''} onChange={(e) => { setFieldErrors((current) => ({ ...current, email: '' })); setForm({ ...form, email: e.target.value }) }} />
           <Field label={t('kams.address')} value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           <SearchCombobox
             label={t('kams.trainerCoach')}
+            onOpen={loadLookups}
             value={selectedCoach}
             items={coachOptions}
             placeholder={t('kams.pickSupervisor')}
@@ -1778,6 +1755,7 @@ export function KamsCandidates() {
   const [photoError, setPhotoError] = useState('')
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({ email: '', phone: '' })
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -1821,7 +1799,7 @@ export function KamsCandidates() {
 
   useLiveData(() => load(query))
 
-  useEffect(() => {
+  const loadLookups = () => {
     api.get('/modules/kams/recruitment/lookups').then((res) => {
       setCompanies(res.data.data.companies)
       setOffices(res.data.data.offices)
@@ -1832,7 +1810,15 @@ export function KamsCandidates() {
       setObservationResults(res.data.data.options?.observation_results ?? [])
       setRecruitmentSettings(res.data.data.settings ?? {})
     })
+  }
+
+  useEffect(() => {
+    loadLookups()
   }, [])
+
+  useEffect(() => {
+    if (open || action) loadLookups()
+  }, [open, action])
 
   const resolveKamsCompanyId = (list = companies) => {
     if (list.length === 0) return ''
@@ -1956,6 +1942,7 @@ export function KamsCandidates() {
 
     setSaving(true)
     setFormError('')
+    setFieldErrors({ email: '', phone: '' })
     try {
       if (editingId) {
         payload.append('_method', 'PUT')
@@ -1968,8 +1955,9 @@ export function KamsCandidates() {
       void load()
     } catch (error) {
       const response = (error as { response?: { data?: { message?: string; errors?: Record<string, string[]> } } }).response?.data
-      const firstError = response?.errors ? Object.values(response.errors).flat()[0] : undefined
-      setFormError(firstError || response?.message || t('kams.saveError'))
+      const parsed = contactFieldErrors(response, t('kams.saveError'))
+      setFieldErrors({ email: parsed.email, phone: parsed.phone })
+      setFormError(parsed.form)
     } finally {
       setSaving(false)
     }
@@ -2371,6 +2359,7 @@ export function KamsCandidates() {
             <SearchCombobox
               label={t('kams.office')}
               required
+              onOpen={loadLookups}
               value={selectedOffice}
               items={officeOptions}
               disabled={!companySelected}
@@ -2391,10 +2380,10 @@ export function KamsCandidates() {
             </Select>
             <Field label={t('kams.birthDate')} type="date" required value={form.birth_date || ''} onChange={(e) => setForm({ ...form, birth_date: e.target.value })} />
           </div>
-          <Field label={t('kams.phoneWhatsapp')} value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
-          <Field label={t('kams.email')} type="email" required value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <Field label={t('kams.phoneWhatsapp')} error={fieldErrors.phone} value={form.phone || ''} onChange={(e) => { setFieldErrors((current) => ({ ...current, phone: '' })); setForm({ ...form, phone: e.target.value }) }} required />
+          <Field label={t('kams.email')} type="email" required error={fieldErrors.email} value={form.email || ''} onChange={(e) => { setFieldErrors((current) => ({ ...current, email: '' })); setForm({ ...form, email: e.target.value }) }} />
           <Field label={t('kams.address')} value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
-          <Select label={t('kams.recruitmentSource')} required value={form.source || ''} onChange={(e) => setForm({ ...form, source: e.target.value })}>
+          <Select label={t('kams.recruitmentSource')} required onOpen={loadLookups} value={form.source || ''} onChange={(e) => setForm({ ...form, source: e.target.value })}>
             <option value="">—</option>
             {candidateSources.map((source) => (
               <option key={source} value={source}>{t(`kams.source.${source}`)}</option>
@@ -2432,6 +2421,7 @@ export function KamsCandidates() {
               ) : null}
               <SearchCombobox
                 label={`${t('kams.interviewer')} *`}
+                onOpen={loadLookups}
                 value={selectedInterviewer}
                 items={interviewerOptions}
                 placeholder={t('kams.searchUser')}
@@ -2489,6 +2479,7 @@ export function KamsCandidates() {
               <SearchCombobox
                 label={t('kams.supervisor')}
                 required
+                onOpen={loadLookups}
                 value={selectedSupervisor}
                 items={supervisorPeople}
                 placeholder={t('kams.searchPerson')}
